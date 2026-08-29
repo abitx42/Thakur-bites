@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "391012293021",
+    "project_id": "adi-thakur-bite",
+    "storage_bucket": "adi-thakur-bite.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:391012293021:android:3928767c76769bc6c97774",
+        "android_client_info": {
+          "package_name": "com.thakurbites.thakur_bites"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDGfh8OsP4XLi8leD2_cbVLFVQk194RNFA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
