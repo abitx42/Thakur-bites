@@ -1,0 +1,77 @@
+rules_version = '2';
+
+// Thakur Bites — Firestore Security Rules
+// ────────────────────────────────────────
+// These rules enforce:
+//  - Menu items: public read, staff-only write
+//  - Orders: authenticated create, owner or staff read, staff-only status updates
+//  - Daily board: public read, staff-only write
+//  - Student profiles: owner-only read/write
+//
+// Staff access is controlled via a custom claim: request.auth.token.staff == true
+// Set this manually via Firebase Admin SDK for the 4 canteen workers.
+//
+// NOTE: During Phase 1 smoke testing (before Auth is wired in Phase 7),
+// temporarily use the permissive rules at the bottom of this file.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Menu Items ────────────────────────────────────────────
+    // Anyone can read (students browsing the menu)
+    // Only authenticated staff can create/edit/delete items
+    match /menuItems/{itemId} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.auth.token.staff == true;
+    }
+
+    // ─── Orders ────────────────────────────────────────────────
+    // Authenticated students can create orders
+    // Students can read their own orders; staff can read all
+    // Only staff can update order status (preparing → ready → collected)
+    // Nobody can delete orders (audit trail)
+    match /orders/{orderId} {
+      allow create: if request.auth != null;
+      allow read: if request.auth != null
+                  && (resource.data.studentId == request.auth.uid
+                      || request.auth.token.staff == true);
+      allow update: if request.auth != null
+                    && request.auth.token.staff == true;
+      allow delete: if false;
+    }
+
+    // ─── Daily Board ───────────────────────────────────────────
+    // Anyone can read (students see today's specials)
+    // Only staff can update (set today's sabjis, announcements)
+    match /dailyBoard/{docId} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.auth.token.staff == true;
+    }
+
+    // ─── Student Profiles ──────────────────────────────────────
+    // Students can only read/write their own profile document
+    match /students/{uid} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == uid;
+    }
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// TEMPORARY PERMISSIVE RULES (Phase 1 smoke testing only)
+// ════════════════════════════════════════════════════════════════
+// Uncomment the block below and comment out the rules above
+// ONLY during initial smoke testing before Auth is set up.
+// IMPORTANT: Switch back to the production rules above before
+// any real data or users touch the database.
+//
+// service cloud.firestore {
+//   match /databases/{database}/documents {
+//     match /{document=**} {
+//       allow read, write: if true;
+//     }
+//   }
+// }
