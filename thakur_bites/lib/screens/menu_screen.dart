@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/menu_item.dart';
+import '../providers/cart_provider.dart';
+import '../screens/cart_screen.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/category_tabs.dart';
@@ -165,33 +168,39 @@ class _MenuScreenState extends State<MenuScreen> {
               ),
             ],
           ),
-          // Cart button (Phase 3 wires this)
-          GestureDetector(
-            onTap: () {
-              // Phase 3: navigate to cart
+          // Cart button — live badge from CartProvider
+          Consumer<CartProvider>(
+            builder: (context, cart, _) {
+              return GestureDetector(
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const CartScreen()),
+                  );
+                },
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: const BoxDecoration(
+                    color: AppColors.ink,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Stack(
+                    children: [
+                      const Center(
+                        child: Icon(Icons.shopping_cart_outlined,
+                            color: AppColors.surface, size: 17),
+                      ),
+                      Positioned(
+                        top: 0,
+                        right: 0,
+                        child: _CartBadge(count: cart.totalItemCount),
+                      ),
+                    ],
+                  ),
+                ),
+              );
             },
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: const BoxDecoration(
-                color: AppColors.ink,
-                shape: BoxShape.circle,
-              ),
-              child: const Stack(
-                children: [
-                  Center(
-                    child: Icon(Icons.shopping_cart_outlined,
-                        color: AppColors.surface, size: 17),
-                  ),
-                  // Badge — shows 0 for now, Phase 3 will wire to cart count
-                  Positioned(
-                    top: 0,
-                    right: 0,
-                    child: _CartBadge(count: 0),
-                  ),
-                ],
-              ),
-            ),
           ),
         ],
       ),

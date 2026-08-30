@@ -1,25 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import '../models/menu_item.dart';
+import '../providers/cart_provider.dart';
 import '../theme/app_theme.dart';
 
-/// Menu item card with Swiggy/Zomato-style add-to-cart stepper.
-/// - Mustard background for cooked items ("~X min" badge)
-/// - Green background for instant items ("Ready now" badge)
-/// - First tap on "+" morphs into a stepper (−/qty/+)
-class MenuItemCard extends StatefulWidget {
+/// Menu item card with Swiggy/Zomato-style morphing add-to-cart stepper.
+/// Now wired to the central CartProvider.
+class MenuItemCard extends StatelessWidget {
   final MenuItem item;
 
   const MenuItemCard({super.key, required this.item});
-
-  @override
-  State<MenuItemCard> createState() => _MenuItemCardState();
-}
-
-class _MenuItemCardState extends State<MenuItemCard> {
-  int _qty = 0;
-
-  MenuItem get item => widget.item;
 
   @override
   Widget build(BuildContext context) {
@@ -67,7 +58,6 @@ class _MenuItemCardState extends State<MenuItemCard> {
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 8),
 
                 // Icon circle
@@ -86,7 +76,6 @@ class _MenuItemCardState extends State<MenuItemCard> {
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 10),
 
                 // Item name
@@ -101,7 +90,6 @@ class _MenuItemCardState extends State<MenuItemCard> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-
                 const SizedBox(height: 3),
 
                 // Price
@@ -116,16 +104,21 @@ class _MenuItemCardState extends State<MenuItemCard> {
             ),
           ),
 
-          // Add control — morphs from "+" to stepper
+          // Add control — reads qty from CartProvider
           Positioned(
             bottom: 11,
             left: 12,
             right: 12,
-            child: SizedBox(
-              height: 30,
-              child: _qty == 0
-                  ? _buildAddButton()
-                  : _buildStepper(),
+            child: Consumer<CartProvider>(
+              builder: (context, cart, _) {
+                final qty = cart.getQty(item.id);
+                return SizedBox(
+                  height: 30,
+                  child: qty == 0
+                      ? _buildAddButton(context)
+                      : _buildStepper(context, qty),
+                );
+              },
             ),
           ),
         ],
@@ -133,20 +126,19 @@ class _MenuItemCardState extends State<MenuItemCard> {
     );
   }
 
-  /// Initial "+" button (right-aligned circle)
-  Widget _buildAddButton() {
+  Widget _buildAddButton(BuildContext context) {
     return Align(
       alignment: Alignment.centerRight,
       child: GestureDetector(
         onTap: () {
           HapticFeedback.selectionClick();
-          setState(() => _qty = 1);
+          context.read<CartProvider>().addItem(item);
         },
         child: Container(
-          width: 44, // minimum 44x44 tap target
+          width: 44,
           height: 44,
           alignment: Alignment.center,
-          color: Colors.transparent, // expanded tap area
+          color: Colors.transparent,
           child: Container(
             width: 30,
             height: 30,
@@ -161,15 +153,13 @@ class _MenuItemCardState extends State<MenuItemCard> {
     );
   }
 
-  /// Stepper (−/qty/+) — animated pop-in, pill shape
-  Widget _buildStepper() {
+  Widget _buildStepper(BuildContext context, int qty) {
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.85, end: 1.0),
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOut,
-      builder: (context, scale, child) {
-        return Transform.scale(scale: scale, child: child);
-      },
+      builder: (context, scale, child) =>
+          Transform.scale(scale: scale, child: child),
       child: Container(
         decoration: BoxDecoration(
           color: AppColors.ink,
@@ -179,70 +169,42 @@ class _MenuItemCardState extends State<MenuItemCard> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // Minus button
+            // Minus
             GestureDetector(
               onTap: () {
                 HapticFeedback.selectionClick();
-                setState(() {
-                  _qty--;
-                  if (_qty <= 0) _qty = 0;
-                });
+                context.read<CartProvider>().removeItem(item.id);
               },
-              child: Container(
+              child: const SizedBox(
                 width: 44,
                 height: 44,
-                alignment: Alignment.center,
-                color: Colors.transparent,
-                child: Container(
-                  width: 24,
-                  height: 24,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Center(
-                    child: Text('–',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500)),
-                  ),
+                child: Center(
+                  child: Text('–',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500)),
                 ),
               ),
             ),
-
             // Qty
-            Text(
-              '$_qty',
-              style: AppFonts.mono(
-                fontSize: 12.5,
-                color: Colors.white,
-              ),
-            ),
-
-            // Plus button
+            Text('$qty',
+                style: AppFonts.mono(fontSize: 12.5, color: Colors.white)),
+            // Plus
             GestureDetector(
               onTap: () {
                 HapticFeedback.selectionClick();
-                setState(() => _qty++);
+                context.read<CartProvider>().addItem(item);
               },
-              child: Container(
+              child: const SizedBox(
                 width: 44,
                 height: 44,
-                alignment: Alignment.center,
-                color: Colors.transparent,
-                child: Container(
-                  width: 24,
-                  height: 24,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Center(
-                    child: Text('+',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500)),
-                  ),
+                child: Center(
+                  child: Text('+',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500)),
                 ),
               ),
             ),
@@ -252,7 +214,6 @@ class _MenuItemCardState extends State<MenuItemCard> {
     );
   }
 
-  /// Map iconKey to a Material icon
   static IconData _iconForKey(String key) {
     switch (key) {
       case 'dosa':
