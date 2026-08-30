@@ -2,20 +2,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/menu_item.dart';
 
 /// Firestore service for Thakur Bites.
-/// Handles all database operations — read, write, real-time streams.
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // ─── Collection References ────────────────────────────────────────
   CollectionReference<Map<String, dynamic>> get _menuItems =>
       _db.collection('menuItems');
 
-  // ─── Menu Items (Stream) ──────────────────────────────────────────
-
   /// Real-time stream of available menu items.
-  /// Uses a stream (not one-time .get()) so live stock/availability
-  /// changes propagate instantly — costs nothing extra and future-proofs
-  /// for Phase 11 staff toggles.
   Stream<List<MenuItem>> menuItemsStream() {
     return _menuItems
         .where('available', isEqualTo: true)
@@ -25,36 +18,16 @@ class FirestoreService {
             .toList());
   }
 
-  /// Write a menu item to Firestore (uses item.id as document ID)
   Future<void> writeMenuItem(MenuItem item) async {
     await _menuItems.doc(item.id).set(item.toFirestore());
   }
 
-  /// Read a single menu item by ID
-  Future<MenuItem?> readMenuItem(String itemId) async {
-    final doc = await _menuItems.doc(itemId).get();
-    if (!doc.exists || doc.data() == null) return null;
-    return MenuItem.fromFirestore(doc.id, doc.data()!);
-  }
-
-  /// Read all menu items (one-shot)
-  Future<List<MenuItem>> readAllMenuItems() async {
-    final snapshot = await _menuItems.get();
-    return snapshot.docs
-        .map((doc) => MenuItem.fromFirestore(doc.id, doc.data()))
-        .toList();
-  }
-
-  /// Delete a menu item
   Future<void> deleteMenuItem(String itemId) async {
     await _menuItems.doc(itemId).delete();
   }
 
-  // ─── Seed Demo Data (Phase 2) ─────────────────────────────────────
-
-  /// Clears existing menu items and seeds the 6 items from the Phase 2 spec.
+  /// Clears existing items and seeds the 6 Phase 2 demo items.
   Future<void> seedPhase2MenuItems() async {
-    // Delete old Phase 1 items first
     final existing = await _menuItems.get();
     for (final doc in existing.docs) {
       await doc.reference.delete();
@@ -68,6 +41,7 @@ class FirestoreService {
         category: 'dosa',
         type: 'cooked',
         prepMinutes: 6,
+        iconKey: 'dosa',
       ),
       MenuItem(
         id: 'roti_bhaji',
@@ -76,6 +50,7 @@ class FirestoreService {
         category: 'rotibhaji',
         type: 'cooked',
         prepMinutes: 8,
+        iconKey: 'roti',
       ),
       MenuItem(
         id: 'masala_chai',
@@ -84,6 +59,7 @@ class FirestoreService {
         category: 'drinks',
         type: 'cooked',
         prepMinutes: 3,
+        iconKey: 'chai',
       ),
       MenuItem(
         id: 'cold_drink',
@@ -92,6 +68,7 @@ class FirestoreService {
         category: 'drinks',
         type: 'instant',
         prepMinutes: 0,
+        iconKey: 'bottle',
       ),
       MenuItem(
         id: 'chocolate',
@@ -100,6 +77,7 @@ class FirestoreService {
         category: 'snacks',
         type: 'instant',
         prepMinutes: 0,
+        iconKey: 'choc',
       ),
       MenuItem(
         id: 'chips',
@@ -108,6 +86,7 @@ class FirestoreService {
         category: 'snacks',
         type: 'instant',
         prepMinutes: 0,
+        iconKey: 'chips',
       ),
     ];
 

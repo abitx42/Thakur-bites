@@ -38,6 +38,7 @@ dependencies:
   cloud_firestore: ^6.9.0
   firebase_auth: ^6.6.1
   google_fonts: ^8.2.1
+  shimmer: ^4.0.0
 
 dev_dependencies:
   flutter_test:

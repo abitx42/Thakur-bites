@@ -1,23 +1,15 @@
-/// Thakur Bites — Simplified Menu Item Model (Phase 2)
+/// Thakur Bites — Menu Item Model (Phase 2)
 /// Maps to the `menuItems` Firestore collection.
-///
-/// Schema:
-///   name       : string   — "Masala Dosa"
-///   price      : number   — 50
-///   category   : string   — "dosa"
-///   type       : string   — "cooked" or "instant"
-///   prepMinutes: number   — 6 (0 for instant items)
-///   available  : boolean  — true (staff toggle in Phase 11)
-///   imageUrl   : string   — "" (real photos in Phase 14)
 class MenuItem {
   final String id;
   final String name;
   final double price;
-  final String category;
-  final String type; // 'cooked' | 'instant'
-  final int prepMinutes;
-  final bool available;
-  final String imageUrl;
+  final String category; // "dosa" | "rotibhaji" | "drinks" | "snacks"
+  final String type; // "cooked" | "instant"
+  final int prepMinutes; // 0 for instant items
+  final bool available; // staff toggle (Phase 11)
+  final String imageUrl; // real photos (Phase 14)
+  final String iconKey; // placeholder icon key until real photos
 
   MenuItem({
     required this.id,
@@ -28,6 +20,7 @@ class MenuItem {
     required this.prepMinutes,
     this.available = true,
     this.imageUrl = '',
+    this.iconKey = '',
   });
 
   bool get isCooked => type == 'cooked';
@@ -36,7 +29,6 @@ class MenuItem {
   /// Human-friendly badge: "~6 min" for cooked, "Ready now" for instant
   String get badgeText => isInstant ? 'Ready now' : '~$prepMinutes min';
 
-  /// Create from Firestore document
   factory MenuItem.fromFirestore(String docId, Map<String, dynamic> data) {
     return MenuItem(
       id: docId,
@@ -47,10 +39,10 @@ class MenuItem {
       prepMinutes: data['prepMinutes'] ?? 0,
       available: data['available'] ?? true,
       imageUrl: data['imageUrl'] ?? '',
+      iconKey: data['iconKey'] ?? data['category'] ?? '',
     );
   }
 
-  /// Convert to Firestore document
   Map<String, dynamic> toFirestore() {
     return {
       'name': name,
@@ -60,6 +52,7 @@ class MenuItem {
       'prepMinutes': prepMinutes,
       'available': available,
       'imageUrl': imageUrl,
+      'iconKey': iconKey,
     };
   }
 }
