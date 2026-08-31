@@ -111,7 +111,73 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       throw new Error(`Payment amount or currency mismatch. Expected ${expectedPaise} ${expectedCurrency}, received ${amountPaise} ${currency}.`);
     }
 
-    // 4. Idempotency check: Evaluated AFTER all immutable validations pass (Phase 1 Fix)
+    // 4. Cancelled Order / Orphaned Payment Handling (TB-003 Remediation)
+    // Invariant: Cancelled orders are NEVER resurrected. Late payment is recorded as ORPHANED for automated refund.
+    if (orderData.status === 'cancelled' || orderData.paymentStatus === 'cancelled') {
+      const paymentId = `orphan_${gatewayPaymentId}`;
+      const orphanRef = db.collection('orphanedPayments').doc(paymentId);
+      const orphanRecord = {
+        paymentId,
+        orderId,
+        studentId: orderData.studentId || 'unknown',
+        gateway: source === 'webhook' ? 'razorpay_webhook' : 'razorpay_direct',
+        gatewayOrderId,
+        gatewayPaymentId,
+        amountPaise: expectedPaise,
+        amount: expectedPaise / 100,
+        currency: expectedCurrency,
+        orderStatusAtCapture: orderData.status,
+        capturedAt: now,
+        refundStatus: 'REFUND_QUEUED',
+      };
+      transaction.set(orphanRef, orphanRecord);
+
+      const finTxRef = db.collection('financialTransactions').doc();
+      transaction.set(finTxRef, {
+        transactionId: finTxRef.id,
+        orderId,
+        type: 'ORPHANED_PAYMENT_CAPTURE',
+        amount: expectedPaise / 100,
+        amountPaise: expectedPaise,
+        currency: 'INR',
+        postings: [
+          {
+            account: 'GATEWAY_RECEIVABLE',
+            debitPaise: expectedPaise,
+            creditPaise: 0,
+          },
+          {
+            account: 'ORPHAN_SUSPENSE',
+            debitPaise: 0,
+            creditPaise: expectedPaise,
+          },
+        ],
+        gatewayTransactionId: gatewayPaymentId,
+        gatewayOrderId,
+        actorId,
+        timestamp: now,
+        status: 'ORPHANED',
+      });
+
+      logSecurityEvent({
+        eventType: 'ORPHANED_PAYMENT_ON_CANCELLED_ORDER',
+        orderId,
+        actorUid: actorId,
+        severity: 'HIGH',
+        details: { gatewayPaymentId, amountPaise: expectedPaise, reason: 'Payment arrived after order cancellation' },
+      }).catch(() => {});
+
+      return {
+        success: true,
+        alreadyCaptured: false,
+        orderId,
+        tokenNumber: orderData.tokenNumber || '',
+        amountPaise: expectedPaise,
+        status: 'confirmed' as const,
+      };
+    }
+
+    // 5. Idempotency check: Evaluated AFTER all immutable validations pass (Phase 1 Fix)
     if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
       return {
         success: true,

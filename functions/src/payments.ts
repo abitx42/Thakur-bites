@@ -515,7 +515,7 @@ export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: s
     // 2. Update order state
     transaction.update(orderRef, {
       status: 'cancelled',
-      paymentStatus: 'unpaid',
+      paymentStatus: 'cancelled',
       cancelledAt: now,
       cancellationReason: reason,
       cancelledBy: request.auth!.uid,

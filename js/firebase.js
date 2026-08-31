@@ -45,56 +45,15 @@ export const auth = getAuth(app);
 export async function staffLogin(email, password) {
   const cleanEmail = email.trim().toLowerCase();
   
-  try {
-    const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
-    const tokenResult = await cred.user.getIdTokenResult();
-    let role = tokenResult.claims.role;
+  const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+  const tokenResult = await cred.user.getIdTokenResult(true);
+  const role = tokenResult.claims.role || 'staff';
 
-    if (!role) {
-      // Check staffUsers collection
-      try {
-        const staffDoc = await getDoc(doc(db, 'staffUsers', cred.user.uid));
-        if (staffDoc.exists()) {
-          role = staffDoc.data()?.role;
-        }
-      } catch (e) {
-        console.warn("Notice reading staffUsers document:", e);
-      }
-    }
-
-    if (!role && cleanEmail === 'moreaboutastram@gmail.com') {
-      role = 'admin';
-    }
-
-    return { user: cred.user, role: role || 'admin' };
-  } catch (err) {
-    // If testing credential matches authorized testing account
-    if (cleanEmail === 'moreaboutastram@gmail.com' && password === 'mAc@080147') {
-      let user = auth.currentUser;
-      if (!user) {
-        try {
-          const anonCred = await signInAnonymously(auth);
-          user = anonCred.user;
-        } catch (e) {
-          user = { uid: 'astram_staff_admin', email: cleanEmail, displayName: 'Astram Staff Admin' };
-        }
-      }
-      return { user, role: 'admin' };
-    }
-    throw err;
-  }
+  return { user: cred.user, role };
 }
 
-/**
- * Fast development staff authentication
- */
-export async function staffQuickAuth(role = 'manager') {
-  let user = auth.currentUser;
-  if (!user) {
-    const cred = await signInAnonymously(auth);
-    user = cred.user;
-  }
-  return { user, role };
+export async function staffQuickAuth() {
+  throw new Error('Quick authorization has been disabled in production for security.');
 }
 
 export async function staffLogout() {

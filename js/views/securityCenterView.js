@@ -11,6 +11,17 @@ let lastScanResult = null;
 let simulationResult = null;
 let simRunning = false;
 
+function escapeHtml(str) {
+  if (typeof str !== 'string') str = String(str ?? '');
+  return str.replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[m]));
+}
+
 export function renderSecurityCenterView(container) {
   if (unsubscribeSecurity) {
     unsubscribeSecurity();
@@ -201,16 +212,21 @@ export function renderSecurityCenterView(container) {
               const badgeColor = isCrit ? '#DC2626' : (isWarn ? '#D97706' : '#2563EB');
               const bgColor = isCrit ? '#FEF2F2' : (isWarn ? '#FFFBEB' : '#EFF6FF');
 
+              const safeEventType = escapeHtml(e.eventType || 'SECURITY_EVENT');
+              const safeIncidentId = e.incidentId ? escapeHtml(e.incidentId) : '';
+              const safeActor = e.actorUid ? `Actor: ${escapeHtml(e.actorUid.slice(0, 16))}...` : 'System Boundary';
+              const safeDetails = e.details ? escapeHtml(JSON.stringify(e.details)) : '';
+
               return `
                 <div style="background: ${bgColor}; border: 1px solid ${badgeColor}40; border-radius: 10px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; font-family: var(--font-mono); font-size: 0.85rem;">
                   <div>
                     <span style="background: ${badgeColor}; color: #FFF; padding: 2px 8px; border-radius: 4px; font-weight: 800; font-size: 0.75rem; margin-right: 8px;">
-                      ${e.eventType || 'SECURITY_EVENT'}
+                      ${safeEventType}
                     </span>
-                    ${e.incidentId ? `<span style="font-size: 0.75rem; color: var(--ink-secondary); font-weight: 700; margin-right: 8px;">[${e.incidentId}]</span>` : ''}
-                    <strong style="color: var(--ink-primary);">${e.actorUid ? `Actor: ${e.actorUid.slice(0, 12)}...` : 'System Boundary'}</strong>
-                    ${e.suppressedOccurrences > 1 ? `<span style="background: #E2E8F0; color: #334155; font-size: 0.7rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; margin-left: 6px;">×${e.suppressedOccurrences}</span>` : ''}
-                    ${e.details ? `<div style="font-size: 0.75rem; color: var(--ink-secondary); margin-top: 3px;">${JSON.stringify(e.details)}</div>` : ''}
+                    ${safeIncidentId ? `<span style="font-size: 0.75rem; color: var(--ink-secondary); font-weight: 700; margin-right: 8px;">[${safeIncidentId}]</span>` : ''}
+                    <strong style="color: var(--ink-primary);">${safeActor}</strong>
+                    ${e.suppressedOccurrences > 1 ? `<span style="background: #E2E8F0; color: #334155; font-size: 0.7rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; margin-left: 6px;">×${Number(e.suppressedOccurrences)}</span>` : ''}
+                    ${safeDetails ? `<div style="font-size: 0.75rem; color: var(--ink-secondary); margin-top: 3px;">${safeDetails}</div>` : ''}
                   </div>
                   <div style="color: var(--ink-secondary); font-size: 0.75rem;">
                     ${e.lastSeen ? new Date(e.lastSeen.toDate ? e.lastSeen.toDate() : e.lastSeen).toLocaleTimeString() : (e.firstSeen ? new Date(e.firstSeen.toDate ? e.firstSeen.toDate() : e.firstSeen).toLocaleTimeString() : 'Just now')}

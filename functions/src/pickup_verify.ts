@@ -119,15 +119,31 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
       }
     }
 
-    // 2. Check Zero-Knowledge PIN Hash Verification
+    // 2. Check Zero-Knowledge PIN Hash Verification (PBKDF2 Hardened)
     if (!isVerified && pinCode && typeof pinCode === 'string') {
       verificationMethod = 'PIN';
       const cleanPin = pinCode.trim();
-      const inputHash = crypto.createHash('sha256').update(cleanPin).digest('hex');
       const targetHash = secretData?.pickupPinHash || orderData.pickupPinHash;
+      const salt = secretData?.salt || orderData?.salt || '';
 
-      if (targetHash && targetHash === inputHash) {
-        isVerified = true;
+      if (targetHash) {
+        if (salt) {
+          const pbkdf2Hash = crypto.pbkdf2Sync(cleanPin, salt, 10000, 32, 'sha256').toString('hex');
+          const expBuf = Buffer.from(targetHash, 'hex');
+          const actBuf = Buffer.from(pbkdf2Hash, 'hex');
+          if (expBuf.length === actBuf.length && crypto.timingSafeEqual(expBuf, actBuf)) {
+            isVerified = true;
+          }
+        }
+        // Legacy SHA-256 fallback
+        if (!isVerified) {
+          const sha256Hash = crypto.createHash('sha256').update(cleanPin).digest('hex');
+          const expBuf = Buffer.from(targetHash, 'hex');
+          const actBuf = Buffer.from(sha256Hash, 'hex');
+          if (expBuf.length === actBuf.length && crypto.timingSafeEqual(expBuf, actBuf)) {
+            isVerified = true;
+          }
+        }
       }
     }
 
@@ -190,6 +206,12 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
     }
 
     transaction.update(orderRef, updates);
+
+    // Release Faculty Priority Lock (TB-004) so faculty can place another priority order
+    if (orderData.studentId) {
+      const facultyLockRef = db.collection('facultyPriorityLocks').doc(orderData.studentId);
+      transaction.delete(facultyLockRef);
+    }
 
     // Record immutable order event
     const eventRef = db.collection('orderEvents').doc();

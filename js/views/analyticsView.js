@@ -18,6 +18,17 @@ let currentFeatureFlags = {
 let isSimulating = false;
 let simulationLogs = [];
 
+function escapeHtml(str) {
+  if (typeof str !== 'string') str = String(str ?? '');
+  return str.replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[m]));
+}
+
 export function renderAnalyticsView(container) {
   if (unsubscribeOrders) unsubscribeOrders();
   if (unsubscribeMenu) unsubscribeMenu();
@@ -304,7 +315,7 @@ export function renderAnalyticsView(container) {
                 ${stockoutForecasting.map(item => `
                   <tr style="border-bottom: 1px solid var(--border-light); background: ${item.isUrgent ? '#FEF2F2' : 'transparent'};">
                     <td style="padding: 12px 10px; font-weight: 700; color: var(--ink-primary);">
-                      ${item.name}
+                      ${escapeHtml(item.name)}
                     </td>
                     <td style="padding: 12px 10px; font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary);">
                       ${item.type === 'instant' ? '🏪 Store' : '🍳 Cooked'}

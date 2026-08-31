@@ -4,11 +4,10 @@ import * as crypto from 'crypto';
 import { CheckoutRequest, OrderDocument, OrderItemSnapshot, OrderSecretDoc } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
-import { reserveInventoryInTransaction, commitInventoryInTransaction } from './inventory_reservation';
+import { reserveInventoryInTransaction } from './inventory_reservation';
 import { assertOperationalMode } from './kill_switch';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
-import { evaluateOrderPriorityLevel } from './priority_queue';
 import { updatePublicLiveQueueProjection } from './tv_projection';
 
 const db = admin.firestore();
@@ -79,7 +78,6 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   // 2. Fetch user profile details (checks users collection first, fallback to students)
   let studentName = 'Student';
   let studentRoll = 'TCET';
-  let userAccountType: any = 'STUDENT';
   let userPriorityLevel: any = 1;
 
   const userDoc = await db.collection('users').doc(studentId).get();
@@ -90,7 +88,6 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
     }
     studentName = userData.displayName || 'Customer';
     studentRoll = userData.rollNo || (userData.accountType === 'TEACHER' ? 'FACULTY' : 'TCET');
-    userAccountType = userData.accountType || 'STUDENT';
     userPriorityLevel = typeof userData.priorityLevel === 'number' ? userData.priorityLevel : 1;
   } else {
     const studentDoc = await db.collection('students').doc(studentId).get();
@@ -102,18 +99,12 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
     studentRoll = studentData.rollNo || 'TCET';
   }
 
-  // Authoritative Priority Assessment & Fairness Throttling
-  const { assignedPriority, priorityReason } = await evaluateOrderPriorityLevel(
-    studentId,
-    userAccountType,
-    userPriorityLevel
-  );
-
   const now = admin.firestore.Timestamp.now();
   const nowDate = new Date();
   const dateStr = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}-${String(nowDate.getDate()).padStart(2, '0')}`;
   const counterRef = db.collection('counters').doc(`orders_${dateStr}`);
   const newOrderRef = db.collection('orders').doc();
+  const facultyLockRef = db.collection('facultyPriorityLocks').doc(studentId);
 
   // Deduplicated item document references
   const itemRefs = consolidatedItems.map(i => db.collection('menuItems').doc(i.itemId));
@@ -135,6 +126,26 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
               isReplay: true,
             };
           }
+        }
+      }
+
+      // Inside-Transaction Faculty Priority Invariant (TB-004 & TB-005)
+      let assignedPriority = userPriorityLevel;
+      let priorityReason = 'STANDARD_QUEUE';
+
+      if (userPriorityLevel >= 2) {
+        const facultyLockSnap = await transaction.get(facultyLockRef);
+        if (facultyLockSnap.exists && facultyLockSnap.data()?.activeOrderId) {
+          assignedPriority = 1;
+          priorityReason = 'FAIRNESS_MAX_ACTIVE_PRIORITY_REACHED';
+        } else {
+          assignedPriority = userPriorityLevel;
+          priorityReason = 'FACULTY_PRIORITY_APPLIED';
+          transaction.set(facultyLockRef, {
+            userId: studentId,
+            activeOrderId: newOrderRef.id,
+            grantedAt: now,
+          });
         }
       }
 
@@ -218,21 +229,18 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       }
 
       // ═════════════════════════════════════════════════════════════
-      // 3. GENERATE DAILY SEQUENTIAL TOKEN (TB-001, TB-002, ...)
+      // 3. GENERATE MONOTONIC TOKENS & SECURITY CREDENTIALS
       // ═════════════════════════════════════════════════════════════
-      let nextSeq = 1;
-      if (counterSnap.exists) {
-        nextSeq = (counterSnap.data()?.count || 0) + 1;
-      }
+      const currentSeq = counterSnap.exists ? (counterSnap.data()?.count || 0) : 0;
+      const nextSeq = currentSeq + 1;
       const tokenNumber = `TB-${String(nextSeq).padStart(3, '0')}`;
 
-      // Cryptographically secure CSPRNG 6-digit PIN (P0: 14)
-      const rawPin = String(crypto.randomInt(100000, 1000000));
-      const pinHash = crypto.createHash('sha256').update(rawPin).digest('hex');
-
-      // Signed QR Token (valid for 2 hours)
-      const qrNonce = crypto.randomBytes(8).toString('hex');
-      const qrExpiresAt = Math.floor(Date.now() / 1000) + 7200;
+      // Cryptographic Pickup PIN & QR Nonce
+      const rawPin = String(crypto.randomInt(1000, 10000));
+      const salt = crypto.randomBytes(16).toString('hex');
+      const pinHash = crypto.pbkdf2Sync(rawPin, salt, 10000, 32, 'sha256').toString('hex');
+      const qrNonce = crypto.randomBytes(16).toString('hex');
+      const qrExpiresAt = Math.floor(Date.now() / 1000) + 1200; // 20-minute validity
       const qrSigningSecret = getRequiredSecret('QR_SIGNING_SECRET');
       const qrSignature = crypto.createHmac('sha256', qrSigningSecret)
         .update(`${newOrderRef.id}:${studentId}:${qrNonce}:${qrExpiresAt}`)
@@ -243,6 +251,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       const isCounterCash = paymentMethod === 'counter_cash';
 
       // Zero-Knowledge Clean Order Document: Zero secrets in readable orders document
+      // Cash Lifecycle (TB-012): Cash orders start in payment_pending with reserved inventory
       const orderDoc: OrderDocument = {
         id: newOrderRef.id,
         idempotencyKey,
@@ -250,8 +259,8 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         studentId,
         studentName,
         studentRoll,
-        status: isCounterCash ? 'confirmed' : 'payment_pending',
-        paymentStatus: isCounterCash ? 'unpaid' : 'pending',
+        status: 'payment_pending',
+        paymentStatus: 'pending',
         paymentMethod: isCounterCash ? 'counter_cash' : 'online',
         totalAmount: calculatedTotalPaise / 100,
         totalAmountPaise: calculatedTotalPaise,
@@ -269,6 +278,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       // ═════════════════════════════════════════════════════════════
 
       // a. Reserve instant store items (Phase 2 Two-Phase Inventory Lifecycle)
+      // Stock is committed ONLY when cash or online payment is authoritatively finalized
       await reserveInventoryInTransaction(
         transaction,
         db,
@@ -277,10 +287,6 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         consolidatedItems,
         15 // 15-minute reservation TTL
       );
-
-      if (isCounterCash) {
-        await commitInventoryInTransaction(transaction, db, newOrderRef.id, studentId);
-      }
 
       // b. Update sequence counter
       transaction.set(counterRef, {
@@ -306,6 +312,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         orderId: newOrderRef.id,
         studentId,
         pickupPinHash: pinHash,
+        salt,
         qrNonce,
         qrExpiresAt,
         failedPinAttempts: 0,

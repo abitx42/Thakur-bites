@@ -76,10 +76,11 @@ export async function evaluateOrderPriorityLevel(
       priorityReason: 'FACULTY_PRIORITY_APPLIED',
     };
   } catch (error) {
-    console.warn('Error checking active priority count, falling back safely:', error);
+    console.warn('Error checking active priority count, failing closed to standard queue:', error);
+    // Invariant: Fail-closed security posture (TB-005) - never grant unverified elevated priority
     return {
-      assignedPriority: userPriorityLevel,
-      priorityReason: 'FACULTY_PRIORITY_DEFAULT',
+      assignedPriority: 1 as PriorityLevel,
+      priorityReason: 'FAIL_CLOSED_STANDARD_QUEUE',
     };
   }
 }

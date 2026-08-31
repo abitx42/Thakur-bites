@@ -21,7 +21,7 @@ service firebase.storage {
     match /verification_proofs/{userId}/{fileName} {
       allow create: if isOwner(userId)
         && request.resource.size <= 5 * 1024 * 1024
-        && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
+        && (request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
       allow read: if isOwner(userId) || isManagerOrAdmin();
       allow update, delete: if isManagerOrAdmin();
     }

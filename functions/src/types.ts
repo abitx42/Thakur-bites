@@ -85,6 +85,7 @@ export interface OrderSecretDoc {
   orderId: string;
   studentId: string;
   pickupPinHash: string;
+  salt?: string;
   qrNonce: string;
   qrExpiresAt: number;
   failedPinAttempts: number;

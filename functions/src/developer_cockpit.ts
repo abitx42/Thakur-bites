@@ -297,10 +297,11 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
   }
 
   const sessionRef = db.collection('stepUpSessions').doc(challengeId);
-  const systemConfigRef = db.collection('systemConfig').doc('status');
+  const systemConfigRef = db.collection('systemConfig').doc('global');
   const publicStatusRef = db.collection('publicSystemStatus').doc('current');
+  const publicStatusGlobalRef = db.collection('publicSystemStatus').doc('global');
 
-  let newMode: string;
+  let newMode: 'NORMAL' | 'DEGRADED' | 'FINANCIAL_FROZEN' | 'EMERGENCY_HALT';
 
   await db.runTransaction(async (transaction) => {
     const sessionSnap = await transaction.get(sessionRef);
@@ -338,11 +339,11 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
       consumedBy: authUid,
     });
 
-    // Transactionally update operational state
+    // Transactionally update operational state using authoritative enum
     if (action === 'KILL_SWITCH') {
-      newMode = 'EMERGENCY_FREEZE';
+      newMode = 'EMERGENCY_HALT';
       transaction.set(systemConfigRef, {
-        mode: 'EMERGENCY_FREEZE',
+        mode: 'EMERGENCY_HALT',
         killSwitchActive: true,
         financialOperationsFrozen: true,
         reason,
@@ -351,14 +352,20 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
       }, { merge: true });
 
       transaction.set(publicStatusRef, {
-        mode: 'EMERGENCY_FREEZE',
-        operational: false,
+        mode: 'EMERGENCY_HALT',
+        orderingAvailable: false,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      transaction.set(publicStatusGlobalRef, {
+        mode: 'EMERGENCY_HALT',
+        orderingAvailable: false,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
     } else if (action === 'FREEZE_FINANCIALS') {
-      newMode = 'FINANCIAL_FREEZE';
+      newMode = 'FINANCIAL_FROZEN';
       transaction.set(systemConfigRef, {
-        mode: 'FINANCIAL_FREEZE',
+        mode: 'FINANCIAL_FROZEN',
         killSwitchActive: false,
         financialOperationsFrozen: true,
         reason,
@@ -367,8 +374,14 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
       }, { merge: true });
 
       transaction.set(publicStatusRef, {
-        mode: 'FINANCIAL_FREEZE',
-        operational: false,
+        mode: 'FINANCIAL_FROZEN',
+        orderingAvailable: false,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      transaction.set(publicStatusGlobalRef, {
+        mode: 'FINANCIAL_FROZEN',
+        orderingAvailable: false,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
     } else {
@@ -385,7 +398,13 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
 
       transaction.set(publicStatusRef, {
         mode: 'NORMAL',
-        operational: true,
+        orderingAvailable: true,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      transaction.set(publicStatusGlobalRef, {
+        mode: 'NORMAL',
+        orderingAvailable: true,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
     }

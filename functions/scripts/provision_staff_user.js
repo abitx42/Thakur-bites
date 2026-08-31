@@ -12,9 +12,14 @@ if (!admin.apps.length) {
 }
 
 async function provisionStaffUser() {
-  const email = 'moreaboutastram@gmail.com';
-  const password = 'mAc@080147';
-  const role = 'admin';
+  const email = process.env.STAFF_EMAIL || process.argv[2];
+  const password = process.env.STAFF_PASSWORD || process.argv[3];
+  const role = process.env.STAFF_ROLE || process.argv[4] || 'admin';
+
+  if (!email || !password) {
+    console.error('Usage: STAFF_EMAIL=... STAFF_PASSWORD=... node provision_staff_user.js OR node provision_staff_user.js <email> <password> <role>');
+    process.exit(1);
+  }
 
   console.log(`Creating/updating Firebase Auth user for ${email}...`);
 

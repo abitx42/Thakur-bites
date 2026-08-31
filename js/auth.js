@@ -5,8 +5,8 @@ import { signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/10.12.
 
 let currentStaffState = {
   user: null,
-  role: sessionStorage.getItem('tb_staff_role') || null,
-  isAuthenticated: sessionStorage.getItem('tb_staff_auth') === 'true',
+  role: null,
+  isAuthenticated: false,
   deviceId: getOrCreateDeviceId(),
 };
 
@@ -21,28 +21,26 @@ export function getOrCreateDeviceId() {
 
 // Listen to Firebase Auth state
 subscribeStaffAuth((state) => {
-  if (state.isAuthenticated) {
+  if (state.isAuthenticated && auth.currentUser) {
     currentStaffState = { ...state, deviceId: getOrCreateDeviceId() };
-    sessionStorage.setItem('tb_staff_auth', 'true');
-    sessionStorage.setItem('tb_staff_role', state.role || 'manager');
+  } else {
+    currentStaffState = { user: null, role: null, isAuthenticated: false, deviceId: getOrCreateDeviceId() };
   }
 });
 
 export const staffAuth = {
   isAuthenticated() {
-    return currentStaffState.isAuthenticated || sessionStorage.getItem('tb_staff_auth') === 'true';
+    return !!(auth.currentUser && currentStaffState.isAuthenticated);
   },
 
   getRole() {
-    return currentStaffState.role || sessionStorage.getItem('tb_staff_role') || 'manager';
+    return currentStaffState.role || 'staff';
   },
 
   async login(email, password) {
     try {
       const { user, role } = await staffLogin(email, password);
       currentStaffState = { user, role, isAuthenticated: true, deviceId: getOrCreateDeviceId() };
-      sessionStorage.setItem('tb_staff_auth', 'true');
-      sessionStorage.setItem('tb_staff_role', role);
       return { success: true, role };
     } catch (e) {
       console.error("Staff auth error:", e);
@@ -67,8 +65,6 @@ export const staffAuth = {
         const userCred = await signInWithCustomToken(auth, res.data.token);
         const assignedRole = res.data.role || role;
         currentStaffState = { user: userCred.user, role: assignedRole, isAuthenticated: true, deviceId };
-        sessionStorage.setItem('tb_staff_auth', 'true');
-        sessionStorage.setItem('tb_staff_role', assignedRole);
         return { success: true, role: assignedRole };
       }
       return { success: false, error: 'Failed to verify shift credentials.' };
@@ -78,26 +74,16 @@ export const staffAuth = {
     }
   },
 
-  async quickAuth(role = 'manager') {
-    try {
-      const { user } = await staffQuickAuth(role);
-      currentStaffState = { user, role, isAuthenticated: true, deviceId: getOrCreateDeviceId() };
-      sessionStorage.setItem('tb_staff_auth', 'true');
-      sessionStorage.setItem('tb_staff_role', role);
-      return { success: true, role };
-    } catch (e) {
-      console.error("Quick auth error:", e);
-      return { success: false, error: e.message };
-    }
+  async quickAuth() {
+    throw new Error('Quick authorization disabled in production.');
   },
 
   async refreshToken() {
     if (currentStaffState.user) {
       try {
         const tokenResult = await currentStaffState.user.getIdTokenResult(true);
-        const role = tokenResult.claims.role || currentStaffState.role || 'manager';
+        const role = tokenResult.claims.role || currentStaffState.role || 'staff';
         currentStaffState.role = role;
-        sessionStorage.setItem('tb_staff_role', role);
         return role;
       } catch (e) {
         console.warn("Token refresh warning:", e);
@@ -109,8 +95,6 @@ export const staffAuth = {
   async logout() {
     await staffLogout();
     currentStaffState = { user: null, role: null, isAuthenticated: false, deviceId: getOrCreateDeviceId() };
-    sessionStorage.removeItem('tb_staff_auth');
-    sessionStorage.removeItem('tb_staff_role');
   }
 };
 
@@ -118,7 +102,7 @@ export const staffAuth = {
  * Renders the Staff Identity & Credentials modal with Shift PIN Keypad.
  */
 export function renderPinPadModal(container, onUnlocked) {
-  let activeTab = 'pin'; // 'pin' | 'email' | 'quick'
+  let activeTab = 'pin'; // 'pin' | 'email'
   let selectedPinRole = 'kitchen';
   let enteredPin = '';
 
@@ -145,11 +129,8 @@ export function renderPinPadModal(container, onUnlocked) {
             <button id="tab-pin" style="flex: 1; padding: 8px; border-radius: 8px; border: none; font-family: var(--font-sans); font-size: 0.8rem; font-weight: 700; cursor: pointer; background: ${activeTab === 'pin' ? '#FFF' : 'transparent'}; color: ${activeTab === 'pin' ? 'var(--brand-red)' : 'var(--ink-secondary)'}; box-shadow: ${activeTab === 'pin' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'};">
               🔑 Shift PIN
             </button>
-            <button id="tab-quick" style="flex: 1; padding: 8px; border-radius: 8px; border: none; font-family: var(--font-sans); font-size: 0.8rem; font-weight: 700; cursor: pointer; background: ${activeTab === 'quick' ? '#FFF' : 'transparent'}; color: ${activeTab === 'quick' ? 'var(--brand-red)' : 'var(--ink-secondary)'}; box-shadow: ${activeTab === 'quick' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'};">
-              ⚡️ Quick Select
-            </button>
             <button id="tab-email" style="flex: 1; padding: 8px; border-radius: 8px; border: none; font-family: var(--font-sans); font-size: 0.8rem; font-weight: 700; cursor: pointer; background: ${activeTab === 'email' ? '#FFF' : 'transparent'}; color: ${activeTab === 'email' ? 'var(--brand-red)' : 'var(--ink-secondary)'}; box-shadow: ${activeTab === 'email' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'};">
-              ✉️ Email
+              ✉️ Email & Password
             </button>
           </div>
 
@@ -188,40 +169,30 @@ export function renderPinPadModal(container, onUnlocked) {
                 Unlock Workstation Session →
               </button>
             </div>
-          ` : (activeTab === 'quick' ? `
-            <!-- Quick Station Role Select -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-              <button class="role-quick-btn" data-role="kitchen" style="padding: 12px; border-radius: 8px; border: 1.5px solid var(--border-light); background: #FFF; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; cursor: pointer; text-align: left;">
-                🍳 Kitchen KDS
-              </button>
-              <button class="role-quick-btn" data-role="pickup" style="padding: 12px; border-radius: 8px; border: 1.5px solid var(--border-light); background: #FFF; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; cursor: pointer; text-align: left;">
-                📦 Pickup Counter
-              </button>
-              <button class="role-quick-btn" data-role="manager" style="padding: 12px; border-radius: 8px; border: 1.5px solid var(--border-light); background: #FFF; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; cursor: pointer; text-align: left;">
-                📋 Menu & Stock
-              </button>
-              <button class="role-quick-btn" data-role="admin" style="padding: 12px; border-radius: 8px; border: 1.5px solid var(--border-light); background: #FFF; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; cursor: pointer; text-align: left;">
-                🛡️ Canteen Admin
-              </button>
-            </div>
           ` : `
             <!-- Staff Email / Password Form -->
             <form id="staff-login-form">
               <div style="margin-bottom: 10px;">
+                <label style="display: block; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: var(--ink-secondary); margin-bottom: 4px;">
+                  STAFF EMAIL:
+                </label>
                 <input 
                   type="email" 
                   id="staff-email" 
-                  placeholder="moreaboutastram@gmail.com" 
-                  value="moreaboutastram@gmail.com"
+                  placeholder="staff@tcetmumbai.in" 
+                  required
                   style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.9rem; box-sizing: border-box;"
                 />
               </div>
               <div style="margin-bottom: 14px;">
+                <label style="display: block; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: var(--ink-secondary); margin-bottom: 4px;">
+                  PASSWORD:
+                </label>
                 <input 
                   type="password" 
                   id="staff-password" 
                   placeholder="••••••••" 
-                  value="mAc@080147"
+                  required
                   style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.9rem; box-sizing: border-box;"
                 />
               </div>
@@ -232,14 +203,13 @@ export function renderPinPadModal(container, onUnlocked) {
                 Authenticate Staff Session →
               </button>
             </form>
-          `)}
+          `}
         </div>
       </div>
     `;
 
     // Tab switching
     container.querySelector('#tab-pin')?.addEventListener('click', () => { activeTab = 'pin'; render(); });
-    container.querySelector('#tab-quick')?.addEventListener('click', () => { activeTab = 'quick'; render(); });
     container.querySelector('#tab-email')?.addEventListener('click', () => { activeTab = 'email'; render(); });
 
     // Shift PIN role select
