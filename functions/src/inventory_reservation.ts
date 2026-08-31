@@ -20,13 +20,12 @@ export interface InventoryReservationDoc {
 
 /**
  * ═══════════════════════════════════════════════════════════════════
- * TWO-PHASE INVENTORY RESERVATION ENGINE (Phase 2 Hardened)
+ * TWO-PHASE INVENTORY RESERVATION ENGINE (Fail-Closed Hardened)
  * ═══════════════════════════════════════════════════════════════════
- * Invariant Guarantees:
- * 1. Available Stock = stockOnHand - reservedStock.
- * 2. Checkout reserves stock without permanently consuming it.
- * 3. Payment confirmation COMMITS stock (stockOnHand decreases).
- * 4. Payment failure/expiry RELEASES stock (reservedStock decreases).
+ * Authoritative Single Source of Truth Invariant Guarantees:
+ * 1. Available Stock = stockOnHand - reservedStock. (stockCount purged)
+ * 2. Strict non-negative integer bounds; corruption throws immediately without clamping.
+ * 3. Two-phase lifecycle: Checkout RESERVES -> Payment COMMITS -> Failure RELEASES.
  */
 
 export async function reserveInventoryInTransaction(
@@ -43,20 +42,36 @@ export async function reserveInventoryInTransaction(
 
   // 1. Process each instant item reservation
   for (const item of items) {
+    if (!item.itemId || typeof item.itemId !== 'string' || item.itemId.length > 128) {
+      throw new Error('INVALID_ARGUMENT: Invalid itemId.');
+    }
+    if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0) {
+      throw new Error(`INVALID_ARGUMENT: Invalid quantity ${item.quantity}.`);
+    }
+
     const itemRef = db.collection('menuItems').doc(item.itemId);
     const snap = await transaction.get(itemRef);
     if (!snap.exists) {
-      throw new Error(`Item ${item.itemId} not found for reservation.`);
+      throw new Error(`NOT_FOUND: Item ${item.itemId} not found for reservation.`);
     }
 
     const data = snap.data()!;
     if (data.type === 'instant') {
-      const stockOnHand = Math.max(0, Number(data.stockOnHand !== undefined ? data.stockOnHand : (data.stockCount || 0)));
-      const reservedStock = Math.max(0, Number(data.reservedStock || 0));
-      const availableStock = Math.max(0, stockOnHand - reservedStock);
+      const stockOnHand = data.stockOnHand;
+      const reservedStock = data.reservedStock !== undefined ? data.reservedStock : 0;
+
+      // Fail-Closed Invariant Check (No Math.max silent clamping)
+      if (typeof stockOnHand !== 'number' || !Number.isSafeInteger(stockOnHand) || stockOnHand < 0) {
+        throw new Error(`INVENTORY_CORRUPTION: Item "${data.name}" (${item.itemId}) has invalid stockOnHand (${stockOnHand}).`);
+      }
+      if (typeof reservedStock !== 'number' || !Number.isSafeInteger(reservedStock) || reservedStock < 0 || reservedStock > stockOnHand) {
+        throw new Error(`INVENTORY_CORRUPTION: Item "${data.name}" (${item.itemId}) has invalid reservedStock (${reservedStock}) exceeding stockOnHand (${stockOnHand}).`);
+      }
+
+      const availableStock = stockOnHand - reservedStock;
 
       if (item.quantity > availableStock) {
-        throw new Error(`Insufficient available stock for ${data.name}. Available: ${availableStock}, requested: ${item.quantity}.`);
+        throw new Error(`INSUFFICIENT_AVAILABLE_STOCK: Insufficient stock for ${data.name}. Available: ${availableStock}, requested: ${item.quantity}.`);
       }
 
       const newReservedStock = reservedStock + item.quantity;
@@ -65,7 +80,7 @@ export async function reserveInventoryInTransaction(
       transaction.update(itemRef, {
         stockOnHand,
         reservedStock: newReservedStock,
-        stockCount: newAvailableStock, // Maintain compatibility
+        isOrderable: newAvailableStock > 0,
         available: newAvailableStock > 0,
         updatedAt: now,
       });
@@ -111,8 +126,7 @@ export async function commitInventoryInTransaction(
   const resSnap = await transaction.get(reservationRef);
 
   if (!resSnap.exists) {
-    // If no reservation exists (e.g. legacy/counter cash direct), return safely
-    return;
+    return; // Direct counter orders or already finalized
   }
 
   const resData = resSnap.data() as InventoryReservationDoc;
@@ -126,17 +140,24 @@ export async function commitInventoryInTransaction(
     if (snap.exists) {
       const data = snap.data()!;
       if (data.type === 'instant') {
-        const stockOnHand = Math.max(0, Number(data.stockOnHand !== undefined ? data.stockOnHand : (data.stockCount || 0)));
-        const reservedStock = Math.max(0, Number(data.reservedStock || 0));
+        const stockOnHand = data.stockOnHand;
+        const reservedStock = data.reservedStock !== undefined ? data.reservedStock : 0;
 
-        const newReservedStock = Math.max(0, reservedStock - item.quantity);
-        const newStockOnHand = Math.max(0, stockOnHand - item.quantity);
-        const newAvailableStock = Math.max(0, newStockOnHand - newReservedStock);
+        if (typeof stockOnHand !== 'number' || !Number.isSafeInteger(stockOnHand) || stockOnHand < item.quantity) {
+          throw new Error(`INVENTORY_CORRUPTION: stockOnHand (${stockOnHand}) insufficient to commit ${item.quantity} units for ${item.itemId}.`);
+        }
+        if (typeof reservedStock !== 'number' || !Number.isSafeInteger(reservedStock) || reservedStock < item.quantity) {
+          throw new Error(`INVENTORY_CORRUPTION: reservedStock (${reservedStock}) insufficient to commit ${item.quantity} units for ${item.itemId}.`);
+        }
+
+        const newReservedStock = reservedStock - item.quantity;
+        const newStockOnHand = stockOnHand - item.quantity;
+        const newAvailableStock = newStockOnHand - newReservedStock;
 
         transaction.update(itemRef, {
           stockOnHand: newStockOnHand,
           reservedStock: newReservedStock,
-          stockCount: newAvailableStock,
+          isOrderable: newAvailableStock > 0,
           available: newAvailableStock > 0,
           updatedAt: now,
         });
@@ -147,7 +168,7 @@ export async function commitInventoryInTransaction(
           itemId: item.itemId,
           orderId,
           changeType: 'STOCK_COMMITTED',
-          deltaUnits: 0, // Already reserved
+          deltaUnits: 0, // Decrement was reserved at checkout
           previousAvailable: newAvailableStock,
           newAvailable: newAvailableStock,
           stockOnHand: newStockOnHand,
@@ -191,16 +212,23 @@ export async function releaseInventoryInTransaction(
     if (snap.exists) {
       const data = snap.data()!;
       if (data.type === 'instant') {
-        const stockOnHand = Math.max(0, Number(data.stockOnHand !== undefined ? data.stockOnHand : (data.stockCount || 0)));
-        const reservedStock = Math.max(0, Number(data.reservedStock || 0));
+        const stockOnHand = data.stockOnHand;
+        const reservedStock = data.reservedStock !== undefined ? data.reservedStock : 0;
 
-        const newReservedStock = Math.max(0, reservedStock - item.quantity);
-        const newAvailableStock = Math.max(0, stockOnHand - newReservedStock);
+        if (typeof stockOnHand !== 'number' || !Number.isSafeInteger(stockOnHand) || stockOnHand < 0) {
+          throw new Error(`INVENTORY_CORRUPTION: Invalid stockOnHand (${stockOnHand}) on item ${item.itemId}.`);
+        }
+        if (typeof reservedStock !== 'number' || !Number.isSafeInteger(reservedStock) || reservedStock < item.quantity) {
+          throw new Error(`INVENTORY_CORRUPTION: reservedStock (${reservedStock}) less than releasing quantity ${item.quantity} for ${item.itemId}.`);
+        }
+
+        const newReservedStock = reservedStock - item.quantity;
+        const newAvailableStock = stockOnHand - newReservedStock;
 
         transaction.update(itemRef, {
           stockOnHand,
           reservedStock: newReservedStock,
-          stockCount: newAvailableStock,
+          isOrderable: newAvailableStock > 0,
           available: newAvailableStock > 0,
           updatedAt: now,
         });
@@ -217,7 +245,7 @@ export async function releaseInventoryInTransaction(
           stockOnHand,
           reservedStock: newReservedStock,
           actorId,
-          reason,
+          reason: String(reason).slice(0, 200),
           timestamp: now,
         });
       }
@@ -227,6 +255,6 @@ export async function releaseInventoryInTransaction(
   transaction.update(reservationRef, {
     status: 'RELEASED',
     releasedAt: now,
-    releaseReason: reason,
+    releaseReason: String(reason).slice(0, 200),
   });
 }

@@ -28,7 +28,7 @@ export interface InventoryAdjustmentResponse {
 }
 
 /**
- * Manager/Admin Authoritative Unified Inventory Adjustment (Stage 3 Hardened).
+ * Manager/Admin Authoritative Unified Inventory Adjustment (Fail-Closed Hardened).
  * Operates purely on stockOnHand and strictly maintains availableStock = stockOnHand - reservedStock.
  */
 export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (request) => {
@@ -50,12 +50,12 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
   await enforceRateLimit(request.auth.uid, 'inventory_adjustment');
 
   const { itemId, changeType, deltaUnits, reason } = request.data;
-  if (!itemId || !changeType || !Number.isSafeInteger(deltaUnits) || deltaUnits === 0) {
-    throw new HttpsError('invalid-argument', 'Valid itemId, changeType, and non-zero integer deltaUnits are required.');
+  if (!itemId || typeof itemId !== 'string' || itemId.length > 128 || !changeType || !Number.isSafeInteger(deltaUnits) || deltaUnits === 0) {
+    throw new HttpsError('invalid-argument', 'Valid itemId (max 128 chars), changeType, and non-zero integer deltaUnits are required.');
   }
 
-  if (!reason || reason.trim().length === 0) {
-    throw new HttpsError('invalid-argument', 'Mandatory audit reason is required for inventory modifications.');
+  if (!reason || typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 200) {
+    throw new HttpsError('invalid-argument', 'Mandatory audit reason (1-200 characters) is required for inventory modifications.');
   }
 
   const itemRef = db.collection('menuItems').doc(itemId);
@@ -68,13 +68,18 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
     }
 
     const itemData = itemSnap.data()!;
-    const previousStockOnHand = Math.max(
-      0,
-      Number(itemData.stockOnHand !== undefined ? itemData.stockOnHand : (itemData.stockCount || 0))
-    );
-    const reservedStock = Math.max(0, Number(itemData.reservedStock || 0));
-    const previousAvailable = Math.max(0, previousStockOnHand - reservedStock);
+    const previousStockOnHand = itemData.stockOnHand;
+    const reservedStock = itemData.reservedStock !== undefined ? itemData.reservedStock : 0;
 
+    // Fail-closed invariant validation
+    if (typeof previousStockOnHand !== 'number' || !Number.isSafeInteger(previousStockOnHand) || previousStockOnHand < 0) {
+      throw new HttpsError('internal', `INVENTORY_CORRUPTION: Item ${itemId} has invalid physical stock on hand.`);
+    }
+    if (typeof reservedStock !== 'number' || !Number.isSafeInteger(reservedStock) || reservedStock < 0 || reservedStock > previousStockOnHand) {
+      throw new HttpsError('internal', `INVENTORY_CORRUPTION: Item ${itemId} has invalid reserved stock.`);
+    }
+
+    const previousAvailable = previousStockOnHand - reservedStock;
     const newStockOnHand = previousStockOnHand + deltaUnits;
 
     // Invariant 1: Physical Stock on Hand cannot drop below 0
@@ -85,14 +90,21 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
       );
     }
 
-    const newAvailable = Math.max(0, newStockOnHand - reservedStock);
+    // Invariant 2: Stock on hand cannot drop below actively reserved stock
+    if (newStockOnHand < reservedStock) {
+      throw new HttpsError(
+        'failed-precondition',
+        `Cannot reduce stock to ${newStockOnHand} because ${reservedStock} units are currently reserved by active student checkouts.`
+      );
+    }
 
-    // 1. Update MenuItem stock maintaining single source of truth
+    const newAvailable = newStockOnHand - reservedStock;
+
+    // 1. Update MenuItem stock maintaining single source of truth (stockCount purged)
     transaction.update(itemRef, {
       stockOnHand: newStockOnHand,
       reservedStock,
-      availableStock: newAvailable,
-      stockCount: newAvailable, // Derived UI view field strictly synchronized
+      isOrderable: newAvailable > 0,
       available: newAvailable > 0,
       lastRestockedAt: deltaUnits > 0 ? now : itemData.lastRestockedAt || now,
       updatedAt: now,
@@ -112,7 +124,7 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
       newAvailable,
       actorId: request.auth!.uid,
       actorRole,
-      reason,
+      reason: String(reason).trim(),
       timestamp: now,
     });
 

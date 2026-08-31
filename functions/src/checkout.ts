@@ -40,27 +40,27 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   await enforceRateLimit(studentId, 'checkout');
   const { idempotencyKey, items, paymentMethod = 'online' } = request.data;
 
-  if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0) {
-    throw new HttpsError('invalid-argument', 'Valid non-empty idempotencyKey is required.');
+  if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0 || idempotencyKey.length > 128) {
+    throw new HttpsError('invalid-argument', 'Valid non-empty idempotencyKey (max 128 characters) is required.');
   }
 
-  if (!items || !Array.isArray(items) || items.length === 0) {
-    throw new HttpsError('invalid-argument', 'Cart items cannot be empty.');
+  if (!items || !Array.isArray(items) || items.length === 0 || items.length > 50) {
+    throw new HttpsError('invalid-argument', 'Cart items cannot be empty and must not exceed 50 distinct items.');
   }
 
   // 1b. Strict Quantity & Format Validation (P1: Reject invalid input rather than silent clamping)
   const aggregatedItemsMap = new Map<string, number>();
   for (const item of items) {
-    if (!item.itemId || typeof item.itemId !== 'string') {
-      throw new HttpsError('invalid-argument', 'Item ID must be a non-empty string.');
+    if (!item.itemId || typeof item.itemId !== 'string' || item.itemId.length > 128) {
+      throw new HttpsError('invalid-argument', 'Item ID must be a non-empty string <= 128 characters.');
     }
-    if (!Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 99) {
-      throw new HttpsError('invalid-argument', `Invalid quantity for item ${item.itemId}. Must be an integer between 1 and 99.`);
+    if (!Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 50) {
+      throw new HttpsError('invalid-argument', `Invalid quantity for item ${item.itemId}. Must be an integer between 1 and 50.`);
     }
     const current = aggregatedItemsMap.get(item.itemId) || 0;
     const nextTotal = current + item.quantity;
-    if (nextTotal > 99) {
-      throw new HttpsError('invalid-argument', `Total quantity for ${item.itemId} exceeds maximum 99 items.`);
+    if (nextTotal > 50) {
+      throw new HttpsError('invalid-argument', `Total quantity for ${item.itemId} exceeds maximum 50 items.`);
     }
     aggregatedItemsMap.set(item.itemId, nextTotal);
   }
@@ -113,7 +113,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       const counterSnap = await transaction.get(counterRef);
 
       // ═════════════════════════════════════════════════════════════
-      // 2. VALIDATE PRICING & INVENTORY LIMITS (IN INTEGER PAISE)
+      // 2. VALIDATE PRICING & INVENTORY LIMITS (FAIL-CLOSED INVARIANTS)
       // ═════════════════════════════════════════════════════════════
       let calculatedTotalPaise = 0;
       let maxPrepMinutes = 0;
@@ -130,11 +130,13 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         const menuData = snap.data()!;
         const isAvail = menuData.available !== false;
         const type = menuData.type || 'instant';
-        const stockCount = Math.max(0, Number(menuData.stockCount !== undefined ? menuData.stockCount : (isAvail ? 50 : 0)));
         
-        // Strict Integer Paise Calculation (P0: 4)
-        const unitPricePaise = Math.round(Number(menuData.price || 0) * 100);
-        if (!Number.isSafeInteger(unitPricePaise) || unitPricePaise < 0 || unitPricePaise > 1000000) {
+        // Strict Fail-Closed Price Calculation (No ₹0 fallback)
+        if (typeof menuData.price !== 'number' || !Number.isFinite(menuData.price) || menuData.price <= 0) {
+          throw new HttpsError('internal', `MENU_CONFIGURATION_ERROR: Item "${menuData.name}" has an invalid or missing price.`);
+        }
+        const unitPricePaise = Math.round(menuData.price * 100);
+        if (!Number.isSafeInteger(unitPricePaise) || unitPricePaise <= 0 || unitPricePaise > 1000000) {
           throw new HttpsError('internal', `Corrupt price definition for item ${menuData.name}.`);
         }
 
@@ -144,12 +146,27 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
           throw new HttpsError('failed-precondition', `${menuData.name} is currently out of stock.`);
         }
 
-        if (type === 'instant' && req.quantity > stockCount) {
-          throw new HttpsError(
-            'resource-exhausted',
-            `Insufficient stock for ${menuData.name}. Only ${stockCount} available.`,
-            { itemId: req.itemId, availableStock: stockCount }
-          );
+        // Strict Fail-Closed Inventory Calculation (No 50-stock fallback)
+        if (type === 'instant') {
+          const stockOnHand = menuData.stockOnHand;
+          const reservedStock = menuData.reservedStock !== undefined ? menuData.reservedStock : 0;
+
+          if (typeof stockOnHand !== 'number' || !Number.isSafeInteger(stockOnHand) || stockOnHand < 0) {
+            throw new HttpsError('internal', `INVENTORY_CONFIGURATION_ERROR: Item "${menuData.name}" is missing valid stockOnHand.`);
+          }
+          if (typeof reservedStock !== 'number' || !Number.isSafeInteger(reservedStock) || reservedStock < 0 || reservedStock > stockOnHand) {
+            throw new HttpsError('internal', `INVENTORY_CORRUPTION: Item "${menuData.name}" has corrupt reservedStock.`);
+          }
+
+          const availableStock = stockOnHand - reservedStock;
+
+          if (req.quantity > availableStock) {
+            throw new HttpsError(
+              'resource-exhausted',
+              `Insufficient stock for ${menuData.name}. Only ${availableStock} available.`,
+              { itemId: req.itemId, availableStock }
+            );
+          }
         }
 
         const subtotalPaise = unitPricePaise * req.quantity;

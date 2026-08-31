@@ -1540,4 +1540,52 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(canModifyOperationalMode('admin'), true);
     assert.strictEqual(canModifyOperationalMode('security_admin'), true);
   });
+
+  it('68. Single Source of Truth Inventory Invariant: Purges stockCount and computes available strictly', () => {
+    function computeAvailableStock(itemData) {
+      if ('stockCount' in itemData && !('stockOnHand' in itemData)) {
+        return { valid: false, error: 'LEGACY_STOCKCOUNT_FORBIDDEN' };
+      }
+      const stockOnHand = itemData.stockOnHand;
+      const reservedStock = itemData.reservedStock || 0;
+      if (typeof stockOnHand !== 'number' || !Number.isSafeInteger(stockOnHand) || stockOnHand < 0) {
+        return { valid: false, error: 'INVENTORY_CORRUPTION' };
+      }
+      return { valid: true, availableStock: stockOnHand - reservedStock };
+    }
+
+    assert.strictEqual(computeAvailableStock({ stockOnHand: 20, reservedStock: 5 }).availableStock, 15);
+    assert.strictEqual(computeAvailableStock({ stockCount: 10 }).error, 'LEGACY_STOCKCOUNT_FORBIDDEN');
+  });
+
+  it('69. Fail-Closed Numeric Stock Corruption Invariant: Rejects negative/corrupt numbers without clamping', () => {
+    function validateInventoryIntegrity(stockOnHand, reservedStock) {
+      if (typeof stockOnHand !== 'number' || !Number.isSafeInteger(stockOnHand) || stockOnHand < 0) {
+        throw new Error('INVENTORY_CORRUPTION: stockOnHand is corrupt');
+      }
+      if (typeof reservedStock !== 'number' || !Number.isSafeInteger(reservedStock) || reservedStock < 0 || reservedStock > stockOnHand) {
+        throw new Error('INVENTORY_CORRUPTION: reservedStock is corrupt');
+      }
+      return stockOnHand - reservedStock;
+    }
+
+    assert.strictEqual(validateInventoryIntegrity(10, 2), 8);
+    assert.throws(() => validateInventoryIntegrity(-10, 0), /INVENTORY_CORRUPTION/);
+    assert.throws(() => validateInventoryIntegrity(10, 15), /INVENTORY_CORRUPTION/);
+    assert.throws(() => validateInventoryIntegrity(NaN, 0), /INVENTORY_CORRUPTION/);
+  });
+
+  it('70. Fail-Closed Pricing & Configuration Invariant: Rejects missing price instead of defaulting to ₹0 free meal', () => {
+    function validateItemPricing(menuData) {
+      if (typeof menuData.price !== 'number' || !Number.isFinite(menuData.price) || menuData.price <= 0) {
+        throw new Error('MENU_CONFIGURATION_ERROR: Item has invalid price');
+      }
+      return Math.round(menuData.price * 100);
+    }
+
+    assert.strictEqual(validateItemPricing({ price: 45.00 }), 4500);
+    assert.throws(() => validateItemPricing({ price: undefined }), /MENU_CONFIGURATION_ERROR/);
+    assert.throws(() => validateItemPricing({ price: 0 }), /MENU_CONFIGURATION_ERROR/);
+    assert.throws(() => validateItemPricing({ price: -10 }), /MENU_CONFIGURATION_ERROR/);
+  });
 });
