@@ -24,10 +24,10 @@ service cloud.firestore {
     }
 
     // ─── Menu Items ─────────────────────────────────────────────
-    // Public read for live canteen catalog. Direct writes restricted to admin staff.
+    // Public read for live canteen catalog. Direct writes restricted to staff.
     match /menuItems/{itemId} {
       allow read: if true;
-      allow write: if isAdmin() || isStaff();
+      allow write: if isStaff();
     }
 
     // ─── Orders ─────────────────────────────────────────────────
@@ -54,6 +54,20 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ─── Payments & Financial Records ───────────────────────────
+    // Students can read their own receipts. Writes are backend-only.
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated() && (
+        resource.data.studentId == request.auth.uid || isStaff()
+      );
+      allow write: if false;
+    }
+
+    match /dailyReconciliations/{date} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
     // ─── Immutable Audit Ledgers ────────────────────────────────
     // Client direct writes strictly denied. Append-only via backend.
     match /inventoryLedger/{ledgerId} {
@@ -69,12 +83,16 @@ service cloud.firestore {
     }
 
     match /securityEvents/{eventId} {
-      allow read: if hasRole('security_admin') || hasRole('admin');
+      allow read: if isStaff();
       allow write: if false;
     }
 
-    // ─── Daily Counters (Sequential Tokens) ─────────────────────
+    // ─── Rate Limits & Daily Counters (Sequential Tokens) ───────
     match /counters/{counterId} {
+      allow read, write: if false;
+    }
+
+    match /rateLimits/{limitId} {
       allow read, write: if false;
     }
   }
