@@ -56,7 +56,7 @@ export function renderPinPadModal(container, onUnlocked) {
         <div class="pin-badge">STAFF ACCESS</div>
         <h2 style="font-family: var(--font-display); font-size: 2.2rem; margin: 0.5rem 0 0.2rem 0; letter-spacing: 0.05em;">ENTER 4-DIGIT PIN</h2>
         <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-bottom: 1.5rem;">
-          Canteen operations portal (Default PIN: 1234)
+          Authorized canteen staff credentials required
         </p>
 
         <!-- PIN Dots Indicator -->

@@ -424,6 +424,12 @@ class _CartSummaryState extends State<_CartSummary> {
           ),
         );
       }
+    } on InsufficientStockException catch (e) {
+      setState(() => _isProcessing = false);
+      cart.capItemQuantity(e.itemId, e.availableStock);
+      if (mounted) {
+        _showStockLimitedAlert({e.itemId: e.availableStock});
+      }
     } catch (e) {
       setState(() => _isProcessing = false);
       if (mounted) {
