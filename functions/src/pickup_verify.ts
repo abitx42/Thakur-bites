@@ -7,10 +7,10 @@ import { enforceRateLimit } from './rate_limiter';
 const db = admin.firestore();
 
 /**
- * Validates 4-digit PIN / QR hash and marks the order collected idempotently.
- * Fix 6: Protects against PIN brute-forcing with per-order lockout.
+ * Validates 4-digit PIN (Zero-Knowledge SHA-256 Hash) or Cryptographically Signed QR Token,
+ * and marks the order collected idempotently.
  */
-export const verifyPickup = onCall<{ orderId: string; pinCode: string }>(async (request) => {
+export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?: string }>(async (request) => {
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
@@ -22,9 +22,9 @@ export const verifyPickup = onCall<{ orderId: string; pinCode: string }>(async (
     throw new HttpsError('permission-denied', 'Only pickup counter staff can verify and collect orders.');
   }
 
-  const { orderId, pinCode } = request.data;
-  if (!orderId || !pinCode) {
-    throw new HttpsError('invalid-argument', 'orderId and pinCode are required.');
+  const { orderId, pinCode, qrToken } = request.data;
+  if (!orderId || (!pinCode && !qrToken)) {
+    throw new HttpsError('invalid-argument', 'orderId and either pinCode or qrToken are required.');
   }
 
   const orderRef = db.collection('orders').doc(orderId);
@@ -43,33 +43,70 @@ export const verifyPickup = onCall<{ orderId: string; pinCode: string }>(async (
 
     // Check if order is locked due to excessive PIN failures
     if (orderData.isLockedForInvestigation || (orderData.failedPinAttempts || 0) >= 3) {
-      throw new HttpsError('permission-denied', 'Order is locked due to repeated PIN failures. Manager verification required.');
+      throw new HttpsError('permission-denied', 'Order is locked due to repeated verification failures. Physical student ID verification required.');
     }
 
     if (orderData.status !== 'ready' && orderData.status !== 'confirmed' && orderData.status !== 'preparing') {
       throw new HttpsError('failed-precondition', `Order is currently in status: ${orderData.status}.`);
     }
 
-    // Verify PIN or hash match
-    const cleanPin = pinCode.trim();
-    const inputHash = crypto.createHash('sha256').update(cleanPin).digest('hex');
-    const isPinMatch = orderData.pickupPin === cleanPin || orderData.pickupPinHash === inputHash;
+    let isVerified = false;
+    let verificationMethod: 'PIN' | 'QR' = 'PIN';
 
-    if (!isPinMatch) {
+    // 1. Check Signed QR Token Verification
+    if (qrToken && typeof qrToken === 'string') {
+      verificationMethod = 'QR';
+      const parts = qrToken.trim().split('.');
+      if (parts.length === 5) {
+        const [tOrderId, tStudentId, tNonce, tExpiresAtStr, tSignature] = parts;
+        const expiresAt = parseInt(tExpiresAtStr, 10);
+        const currentUnix = Math.floor(Date.now() / 1000);
+
+        if (tOrderId === orderId && expiresAt > currentUnix) {
+          const qrSigningSecret = process.env.QR_SIGNING_SECRET || 'tcet_campus_qr_hmac_2026';
+          const expectedSig = crypto.createHmac('sha256', qrSigningSecret)
+            .update(`${tOrderId}:${tStudentId}:${tNonce}:${tExpiresAtStr}`)
+            .digest('hex');
+
+          try {
+            const expBuf = Buffer.from(expectedSig, 'utf8');
+            const actBuf = Buffer.from(tSignature, 'utf8');
+            if (expBuf.length === actBuf.length && crypto.timingSafeEqual(expBuf, actBuf)) {
+              isVerified = true;
+            }
+          } catch (_) {
+            isVerified = false;
+          }
+        }
+      }
+    }
+
+    // 2. Check Zero-Knowledge PIN Hash Verification
+    if (!isVerified && pinCode && typeof pinCode === 'string') {
+      verificationMethod = 'PIN';
+      const cleanPin = pinCode.trim();
+      const inputHash = crypto.createHash('sha256').update(cleanPin).digest('hex');
+      if (orderData.pickupPinHash === inputHash || orderData.pickupPin === cleanPin) {
+        isVerified = true;
+      }
+    }
+
+    if (!isVerified) {
       const attempts = (orderData.failedPinAttempts || 0) + 1;
       const isLocked = attempts >= 3;
 
       transaction.update(orderRef, {
         failedPinAttempts: attempts,
         isLockedForInvestigation: isLocked,
-        lastFailedPinAt: now,
+        lastFailedVerificationAt: now,
       });
 
       // Record security event
       const secRef = db.collection('securityEvents').doc();
       transaction.set(secRef, {
-        eventType: isLocked ? 'ORDER_PIN_BRUTEFORCE_LOCKOUT' : 'FAILED_PICKUP_VERIFICATION',
+        eventType: isLocked ? 'ORDER_PICKUP_BRUTEFORCE_LOCKOUT' : 'FAILED_PICKUP_VERIFICATION',
         orderId,
+        verificationMethod,
         actorUid: request.auth!.uid,
         attemptNumber: attempts,
         severity: isLocked ? 'critical' : 'warn',
@@ -79,8 +116,8 @@ export const verifyPickup = onCall<{ orderId: string; pinCode: string }>(async (
       throw new HttpsError(
         'permission-denied',
         isLocked
-          ? 'Incorrect PIN. Order locked for security. Please present physical ID.'
-          : `Incorrect pickup PIN (${3 - attempts} attempt(s) remaining).`
+          ? 'Verification failed. Order locked for security. Please present physical ID.'
+          : `Incorrect pickup ${verificationMethod} (${3 - attempts} attempt(s) remaining).`
       );
     }
 
@@ -88,7 +125,7 @@ export const verifyPickup = onCall<{ orderId: string; pinCode: string }>(async (
       status: 'collected',
       collectedAt: now,
       collectedByStaffId: request.auth!.uid,
-      verificationMethod: 'PIN',
+      verificationMethod,
       failedPinAttempts: 0,
       updatedAt: now,
     });
@@ -102,9 +139,15 @@ export const verifyPickup = onCall<{ orderId: string; pinCode: string }>(async (
       actorId: request.auth!.uid,
       actorRole,
       timestamp: now,
-      metadata: { verificationMethod: 'PIN' },
+      metadata: { verificationMethod },
     });
 
-    return { success: true, alreadyCollected: false, orderId, tokenNumber: orderData.tokenNumber };
+    return {
+      success: true,
+      alreadyCollected: false,
+      orderId,
+      tokenNumber: orderData.tokenNumber,
+      verificationMethod,
+    };
   });
 });

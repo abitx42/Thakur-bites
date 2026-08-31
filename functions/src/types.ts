@@ -22,6 +22,7 @@ export interface CheckoutRequestItem {
 export interface CheckoutRequest {
   idempotencyKey: string;
   items: CheckoutRequestItem[];
+  paymentMethod?: 'online' | 'counter_cash';
 }
 
 export interface OrderItemSnapshot {
@@ -38,8 +39,10 @@ export interface OrderDocument {
   id: string;
   idempotencyKey: string;
   tokenNumber: string;
-  pickupPin: string;
-  pickupPinHash: string;
+  pickupPinHash: string; // Zero-knowledge: Stored as SHA-256 hash only
+  qrNonce?: string;
+  qrExpiresAt?: number;
+  pickupPin?: string; // Only populated transiently during student dispatch
   studentId: string;
   studentName: string;
   studentRoll: string;
@@ -49,15 +52,20 @@ export interface OrderDocument {
   currency: 'INR';
   items: OrderItemSnapshot[];
   estimatedMinutes: number;
+  gatewayOrderId?: string;
+  gatewayPaymentId?: string;
   createdAt: Timestamp;
   readyAt: Timestamp;
   collectedAt?: Timestamp;
   collectedByStaffId?: string;
+  verificationMethod?: 'PIN' | 'QR';
+  failedPinAttempts?: number;
+  isLockedForInvestigation?: boolean;
 }
 
 export interface PaymentSessionRequest {
   orderId: string;
-  gateway?: 'razorpay' | 'campus_upi' | 'mock';
+  gateway?: 'razorpay' | 'mock';
 }
 
 export interface PaymentSessionResponse {
@@ -66,6 +74,8 @@ export interface PaymentSessionResponse {
   amount: number;
   currency: string;
   keyId: string;
+  adapterMode: 'PRODUCTION_GATEWAY' | 'SIMULATION_ADAPTER';
+  notes: Record<string, string>;
 }
 
 export interface PaymentVerificationRequest {
@@ -79,24 +89,37 @@ export interface PaymentRecord {
   paymentId: string;
   orderId: string;
   studentId: string;
-  amount: number;
-  currency: string;
   gateway: string;
   gatewayOrderId: string;
   gatewayPaymentId: string;
-  signatureVerified: boolean;
-  status: 'captured' | 'refunded' | 'failed';
-  createdAt: Timestamp;
+  amount: number;
+  currency: string;
+  status: 'captured' | 'failed' | 'refunded';
+  verifiedAt: Timestamp;
+  auditSignature: string;
+}
+
+export interface FinancialTransactionRecord {
+  transactionId: string;
+  orderId: string;
+  type: 'PAYMENT_CAPTURE' | 'REFUND_DISBURSEMENT' | 'SETTLEMENT_CREDIT';
+  amount: number;
+  currency: 'INR';
+  gatewayTransactionId: string;
+  gatewayOrderId: string;
+  actorId: string;
+  timestamp: Timestamp;
+  status: 'settled' | 'pending' | 'disputed';
 }
 
 export interface DailyReconciliationRecord {
   date: string;
-  totalOrders: number;
-  totalRevenue: number;
-  onlineCollected: number;
-  cashCollected: number;
-  totalItemsSold: number;
+  totalOrdersCount: number;
+  totalRevenueCalculated: number;
+  onlinePaymentsCaptured: number;
+  counterCashEstimated: number;
   discrepanciesCount: number;
   reconciledAt: Timestamp;
-  status: 'balanced' | 'investigation_required';
+  status: 'BALANCED' | 'DISCREPANCY_FLAGGED';
+  auditNotes: string[];
 }

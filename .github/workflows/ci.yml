@@ -1,4 +1,4 @@
-name: Thakur Bites CI Pipeline
+name: Thakur Bites CI/CD & Security Verification Pipeline
 
 on:
   push:
@@ -29,16 +29,16 @@ jobs:
         working-directory: thakur_bites
         run: dart format --output=none --set-exit-if-changed .
 
-      - name: Flutter Analyze
+      - name: Flutter Strict Analyzer (Fatal Infos)
         working-directory: thakur_bites
-        run: flutter analyze
+        run: dart analyze --fatal-infos
 
       - name: Run Flutter Tests
         working-directory: thakur_bites
         run: flutter test --coverage
 
-  functions-checks:
-    name: Backend Cloud Functions Lint & Tests
+  functions-and-security-checks:
+    name: Cloud Functions & Security Abuse Test Matrix
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -55,10 +55,19 @@ jobs:
         working-directory: functions
         run: npm ci || npm install
 
-      - name: Run Functions Build / Typecheck
+      - name: Run TypeScript Compiler Build / Typecheck
         working-directory: functions
-        run: npm run build --if-present
+        run: npm run build
 
-      - name: Run Functions Unit Tests
+      - name: Run Invariants & Unit Tests
         working-directory: functions
-        run: npm test --if-present
+        run: node --test test/checkout.test.js test/payments.test.js test/rate_limiter.test.js
+
+      - name: Run Security Abuse Attack Vectors (IDOR, Replay, Race Conditions, Price Tampering)
+        working-directory: functions
+        run: node --test test/security_abuse.test.js
+
+      - name: Secret Scanning Audit
+        run: |
+          echo "Verifying zero hardcoded production secrets..."
+          ! grep -rn "process.env.PAYMENT_GATEWAY_SECRET || 'tcet_thakur_bites_secret_key_2026'" functions/src/

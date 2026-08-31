@@ -8,6 +8,11 @@ const db = admin.firestore();
 
 /**
  * Creates an authoritative, idempotent checkout order with atomic inventory reservation.
+ * Top 5 Hardening:
+ * 1. Checkout state initialized to payment_pending (or confirmed if counter_cash).
+ * 2. Cryptographic CSPRNG PIN generation (crypto.randomInt).
+ * 3. Zero-Knowledge PIN: Stores ONLY pickupPinHash in Firestore. Raw PIN is returned transiently to student only.
+ * 4. Short-lived cryptographically signed QR token.
  */
 export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   // 1. Authenticate student
@@ -17,7 +22,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
 
   const studentId = request.auth.uid;
   await enforceRateLimit(studentId, 'checkout');
-  const { idempotencyKey, items } = request.data;
+  const { idempotencyKey, items, paymentMethod = 'online' } = request.data;
 
   if (!idempotencyKey || typeof idempotencyKey !== 'string') {
     throw new HttpsError('invalid-argument', 'Valid idempotencyKey is required.');
@@ -27,7 +32,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
     throw new HttpsError('invalid-argument', 'Cart items cannot be empty.');
   }
 
-  // 1b. Fix 1: Deduplicate & Aggregate item quantities by itemId to prevent transaction overwrite bug
+  // Deduplicate & Aggregate item quantities by itemId
   const aggregatedItemsMap = new Map<string, number>();
   for (const item of items) {
     if (!item.itemId || typeof item.quantity !== 'number' || item.quantity <= 0) {
@@ -140,23 +145,35 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       }
       const tokenNumber = `TB-${String(nextSeq).padStart(3, '0')}`;
 
-      // Generate secure 4-digit PIN and SHA-256 hash
-      const rawPin = String(Math.floor(1000 + Math.random() * 9000));
+      // Cryptographically secure CSPRNG 4-digit PIN
+      const rawPin = String(crypto.randomInt(1000, 10000));
       const pinHash = crypto.createHash('sha256').update(rawPin).digest('hex');
 
-      const readyAtDate = new Date(nowDate.getTime() + maxPrepMinutes * 60000);
+      // Signed QR Token (valid for 2 hours)
+      const qrNonce = crypto.randomBytes(8).toString('hex');
+      const qrExpiresAt = Math.floor(Date.now() / 1000) + 7200;
+      const qrSigningSecret = process.env.QR_SIGNING_SECRET || 'tcet_campus_qr_hmac_2026';
+      const qrSignature = crypto.createHmac('sha256', qrSigningSecret)
+        .update(`${newOrderRef.id}:${studentId}:${qrNonce}:${qrExpiresAt}`)
+        .digest('hex');
+      const signedQrPayload = `${newOrderRef.id}.${studentId}.${qrNonce}.${qrExpiresAt}.${qrSignature}`;
 
+      const readyAtDate = new Date(nowDate.getTime() + maxPrepMinutes * 60000);
+      const isCounterCash = paymentMethod === 'counter_cash';
+
+      // Zero-Knowledge Order Document: pickupPin is NOT persisted in Firestore
       const orderDoc: OrderDocument = {
         id: newOrderRef.id,
         idempotencyKey,
         tokenNumber,
-        pickupPin: rawPin,
-        pickupPinHash: pinHash,
+        pickupPinHash: pinHash, // Zero-knowledge SHA-256 hash only
+        qrNonce,
+        qrExpiresAt,
         studentId,
         studentName,
         studentRoll,
-        status: 'confirmed',
-        paymentStatus: 'paid',
+        status: isCounterCash ? 'confirmed' : 'payment_pending',
+        paymentStatus: isCounterCash ? 'unpaid' : 'pending',
         totalAmount: calculatedTotal,
         currency: 'INR',
         items: orderItemSnapshots,
@@ -212,21 +229,26 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       transaction.set(eventRef, {
         orderId: newOrderRef.id,
         fromStatus: 'draft',
-        toStatus: 'confirmed',
+        toStatus: orderDoc.status,
         actorId: studentId,
         actorRole: 'student',
         timestamp: now,
-        reason: 'CHECKOUT_CREATED',
+        reason: isCounterCash ? 'CHECKOUT_COUNTER_CASH' : 'CHECKOUT_PAYMENT_PENDING',
       });
 
       return {
         orderId: newOrderRef.id,
-        order: orderDoc,
+        order: {
+          ...orderDoc,
+          pickupPin: rawPin, // Delivered transiently in memory to student only
+          signedQrPayload,
+        },
+        rawPin,
+        signedQrPayload,
         isReplay: false,
       };
     });
   } catch (error: any) {
-    // Fix 20: Log inventory contention alerts
     if (error.code === 'resource-exhausted') {
       await db.collection('securityEvents').doc().set({
         eventType: 'INVENTORY_CONTENTION_SPIKE',

@@ -1,4 +1,4 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import {
@@ -7,64 +7,88 @@ import {
   PaymentVerificationRequest,
   PaymentRecord,
   DailyReconciliationRecord,
-  UserRole
+  FinancialTransactionRecord,
 } from './types';
+import { enforceRateLimit } from './rate_limiter';
 
 const db = admin.firestore();
 
-// Server-side Webhook / Gateway secret (fallback for development / test)
-const GATEWAY_SECRET = process.env.PAYMENT_GATEWAY_SECRET || 'tcet_thakur_bites_secret_key_2026';
-const GATEWAY_KEY_ID = process.env.PAYMENT_GATEWAY_KEY_ID || 'rzp_live_tb_canteen_tcet';
-
 /**
- * Helper to compute HMAC-SHA256 signature for payment verification.
+ * Returns gateway secret with strict production safety (no insecure fallback in production).
  */
-export function computeGatewaySignature(orderId: string, paymentId: string, secret = GATEWAY_SECRET): string {
-  return crypto.createHmac('sha256', secret).update(`${orderId}|${paymentId}`).digest('hex');
+function getGatewaySecret(): string {
+  const secret = process.env.PAYMENT_GATEWAY_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL: PAYMENT_GATEWAY_SECRET environment variable is missing in production.');
+    }
+    return 'tcet_thakur_bites_dev_secret_2026';
+  }
+  return secret;
 }
 
 /**
- * 1. Creates an authoritative payment session for an order.
- * Prevents client price tampering by generating the session directly from the database snapshot.
+ * Computes standard HMAC-SHA256 signature for payment verification.
+ */
+export function computeGatewaySignature(gatewayOrderId: string, gatewayPaymentId: string): string {
+  const secret = getGatewaySecret();
+  return crypto
+    .createHmac('sha256', secret)
+    .update(`${gatewayOrderId}|${gatewayPaymentId}`)
+    .digest('hex');
+}
+
+/**
+ * 1. Creates an authoritative payment session for checkout.
  */
 export const createPaymentSession = onCall<PaymentSessionRequest>(async (request) => {
   if (!request.auth || !request.auth.uid) {
-    throw new HttpsError('unauthenticated', 'Student must be authenticated.');
+    throw new HttpsError('unauthenticated', 'Student must be authenticated to initiate payment.');
   }
 
-  const { orderId, gateway = 'razorpay' } = request.data;
+  const studentId = request.auth.uid;
+  await enforceRateLimit(studentId, 'payment_session');
+
+  const { orderId } = request.data;
   if (!orderId) {
     throw new HttpsError('invalid-argument', 'orderId is required.');
   }
 
   const orderDoc = await db.collection('orders').doc(orderId).get();
   if (!orderDoc.exists) {
-    throw new HttpsError('not-found', `Order ${orderId} not found.`);
+    throw new HttpsError('not-found', 'Order not found.');
   }
 
   const orderData = orderDoc.data()!;
-  if (orderData.studentId !== request.auth.uid) {
-    throw new HttpsError('permission-denied', 'Cannot initiate payment for another student.');
+  if (orderData.studentId !== studentId) {
+    throw new HttpsError('permission-denied', 'Cannot pay for another student’s order.');
   }
 
   if (orderData.paymentStatus === 'paid') {
-    throw new HttpsError('failed-precondition', 'Order is already paid.');
+    throw new HttpsError('already-exists', 'Order is already paid.');
   }
 
-  const amountInPaise = Math.round(Number(orderData.totalAmount || 0) * 100);
-  const gatewayOrderId = `order_${gateway}_${orderId.slice(0, 8)}_${Date.now()}`;
+  const gatewayOrderId = `order_${crypto.randomBytes(8).toString('hex')}`;
+  const isProduction = process.env.NODE_ENV === 'production';
 
   const response: PaymentSessionResponse = {
     orderId,
     gatewayOrderId,
-    amount: amountInPaise,
-    currency: 'INR',
-    keyId: GATEWAY_KEY_ID,
+    amount: orderData.totalAmount,
+    currency: orderData.currency || 'INR',
+    keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_tcet_canteen',
+    adapterMode: isProduction ? 'PRODUCTION_GATEWAY' : 'SIMULATION_ADAPTER',
+    notes: {
+      studentId,
+      tokenNumber: orderData.tokenNumber,
+      college: 'TCET Mumbai',
+    },
   };
 
   // Log payment session creation
   await db.collection('orders').doc(orderId).update({
     paymentStatus: 'pending',
+    status: 'payment_pending',
     gatewayOrderId,
   });
 
@@ -72,7 +96,8 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
 });
 
 /**
- * 2. Cryptographically verifies payment signature and captures transaction.
+ * 2. Cryptographically verifies payment signature, captures transaction,
+ * and transitions order state from payment_pending -> confirmed.
  */
 export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -109,6 +134,7 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
       gatewayOrderId,
       gatewayPaymentId,
       actorUid: request.auth.uid,
+      severity: 'critical',
       timestamp: now,
     });
 
@@ -123,40 +149,58 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
 
     const orderData = snap.data()!;
     if (orderData.paymentStatus === 'paid') {
-      return { success: true, alreadyPaid: true, message: 'Order was already verified.' };
+      return { success: true, alreadyCaptured: true, orderId };
     }
 
-    // 1. Update order payment & status
-    transaction.update(orderRef, {
-      paymentStatus: 'paid',
-      status: 'confirmed',
-      paidAt: now,
-      gatewayPaymentId,
-    });
-
-    // 2. Write immutable payment record
-    const paymentRef = db.collection('payments').doc(gatewayPaymentId);
+    // 1. Immutable payments collection record
+    const paymentId = `pay_${crypto.randomBytes(8).toString('hex')}`;
+    const paymentRef = db.collection('payments').doc(paymentId);
     const paymentRecord: PaymentRecord = {
-      paymentId: gatewayPaymentId,
+      paymentId,
       orderId,
       studentId: request.auth!.uid,
-      amount: orderData.totalAmount,
-      currency: 'INR',
       gateway: 'razorpay',
       gatewayOrderId,
       gatewayPaymentId,
-      signatureVerified: true,
+      amount: orderData.totalAmount,
+      currency: orderData.currency || 'INR',
       status: 'captured',
-      createdAt: now,
+      verifiedAt: now,
+      auditSignature: expectedSignature,
     };
     transaction.set(paymentRef, paymentRecord);
 
-    // 3. Append immutable orderEvent
+    // 2. Double-Entry Financial Ledger entry
+    const finTxRef = db.collection('financialTransactions').doc();
+    const finRecord: FinancialTransactionRecord = {
+      transactionId: finTxRef.id,
+      orderId,
+      type: 'PAYMENT_CAPTURE',
+      amount: orderData.totalAmount,
+      currency: 'INR',
+      gatewayTransactionId: gatewayPaymentId,
+      gatewayOrderId,
+      actorId: request.auth!.uid,
+      timestamp: now,
+      status: 'settled',
+    };
+    transaction.set(finTxRef, finRecord);
+
+    // 3. Update Order State Machine: payment_pending -> confirmed
+    transaction.update(orderRef, {
+      paymentStatus: 'paid',
+      status: 'confirmed',
+      gatewayPaymentId,
+      paidAt: now,
+      updatedAt: now,
+    });
+
+    // 4. Immutable orderEvent
     const eventRef = db.collection('orderEvents').doc();
     transaction.set(eventRef, {
       orderId,
       fromStatus: 'payment_pending',
-      toStatus: 'paid',
+      toStatus: 'confirmed',
       actorId: request.auth!.uid,
       actorRole: 'student',
       timestamp: now,
@@ -165,82 +209,128 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
 
     return {
       success: true,
-      alreadyPaid: false,
+      alreadyCaptured: false,
       orderId,
-      amount: orderData.totalAmount,
       tokenNumber: orderData.tokenNumber,
+      amount: orderData.totalAmount,
+      status: 'confirmed',
     };
   });
 });
 
 /**
- * 3. Daily Financial Reconciliation Engine.
- * Aggregates all orders, payments, and stock changes to produce an authoritative daily settlement ledger.
+ * 3. Server-to-Server Razorpay Webhook Handler
  */
-export const reconcileDailyLedger = onCall<{ dateStr?: string }>(async (request) => {
-  if (!request.auth || !request.auth.uid) {
-    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).send('Method Not Allowed');
+    return;
   }
 
-  const role = (request.auth.token.role as UserRole) || 'student';
-  if (role !== 'admin' && role !== 'manager' && role !== 'security_admin') {
-    throw new HttpsError('permission-denied', 'Only managers or administrators can perform financial reconciliation.');
+  const webhookSignature = req.headers['x-razorpay-signature'] as string;
+  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || getGatewaySecret();
+
+  if (!webhookSignature) {
+    res.status(400).send('Missing webhook signature');
+    return;
   }
 
-  const targetDate = request.data.dateStr || new Date().toISOString().split('T')[0];
-  const now = admin.firestore.Timestamp.now();
+  const bodyStr = JSON.stringify(req.body);
+  const expectedSig = crypto.createHmac('sha256', webhookSecret).update(bodyStr).digest('hex');
 
-  // Fetch all orders for the target date
-  const ordersSnap = await db.collection('orders').get();
-  const dayOrders = ordersSnap.docs.filter(d => {
-    const data = d.data();
-    if (!data.createdAt) return false;
-    const dt = data.createdAt.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
-    const orderDate = dt.toISOString().split('T')[0];
-    return orderDate === targetDate;
-  });
+  if (webhookSignature !== expectedSig) {
+    await db.collection('securityEvents').doc().set({
+      eventType: 'INVALID_WEBHOOK_SIGNATURE',
+      severity: 'critical',
+      timestamp: admin.firestore.Timestamp.now(),
+    });
+    res.status(400).send('Invalid signature');
+    return;
+  }
 
-  let totalOrders = dayOrders.length;
-  let totalRevenue = 0;
-  let onlineCollected = 0;
-  let cashCollected = 0;
-  let totalItemsSold = 0;
+  const event = req.body.event;
+  if (event === 'payment.captured') {
+    const paymentEntity = req.body.payload.payment.entity;
+    const orderId = paymentEntity.notes?.orderId;
+    if (orderId) {
+      await db.collection('orders').doc(orderId).update({
+        paymentStatus: 'paid',
+        status: 'confirmed',
+        gatewayPaymentId: paymentEntity.id,
+        updatedAt: admin.firestore.Timestamp.now(),
+      }).catch(() => {});
+    }
+  }
+
+  res.status(200).json({ received: true });
+});
+
+/**
+ * 4. Authoritative Daily Financial Reconciliation Engine
+ */
+export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconciliationRecord> {
+  const startOfDay = new Date(`${dateStr}T00:00:00Z`);
+  const endOfDay = new Date(`${dateStr}T23:59:59Z`);
+
+  const startTimestamp = admin.firestore.Timestamp.fromDate(startOfDay);
+  const endTimestamp = admin.firestore.Timestamp.fromDate(endOfDay);
+
+  const ordersSnap = await db.collection('orders')
+    .where('createdAt', '>=', startTimestamp)
+    .where('createdAt', '<=', endTimestamp)
+    .get();
+
+  const paymentsSnap = await db.collection('payments')
+    .where('verifiedAt', '>=', startTimestamp)
+    .where('verifiedAt', '<=', endTimestamp)
+    .get();
+
+  let totalOrdersCount = ordersSnap.size;
+  let totalRevenueCalculated = 0;
+  let onlinePaymentsCaptured = 0;
+  let counterCashEstimated = 0;
+  const auditNotes: string[] = [];
   let discrepanciesCount = 0;
 
-  for (const doc of dayOrders) {
-    const data = doc.data();
-    const amount = Number(data.totalAmount || 0);
-    totalRevenue += amount;
+  const capturedPaymentOrderIds = new Set<string>();
+  paymentsSnap.forEach(doc => {
+    const p = doc.data() as PaymentRecord;
+    onlinePaymentsCaptured += Number(p.amount || 0);
+    capturedPaymentOrderIds.add(p.orderId);
+  });
 
-    if (data.paymentStatus === 'paid') {
-      onlineCollected += amount;
+  ordersSnap.forEach(doc => {
+    const order = doc.data();
+    const amount = Number(order.totalAmount || 0);
+    totalRevenueCalculated += amount;
+
+    if (order.paymentStatus === 'paid') {
+      if (!capturedPaymentOrderIds.has(doc.id) && order.status !== 'cancelled') {
+        discrepanciesCount++;
+        auditNotes.push(`Order ${doc.id} marked paid but missing verified payment ledger record.`);
+      }
     } else {
-      cashCollected += amount;
+      counterCashEstimated += amount;
+      if (order.status === 'collected') {
+        discrepanciesCount++;
+        auditNotes.push(`Order ${doc.id} marked collected but paymentStatus is unpaid/pending.`);
+      }
     }
+  });
 
-    if (data.items && Array.isArray(data.items)) {
-      totalItemsSold += data.items.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 0), 0);
-    }
-
-    // Check discrepancy: if collected but unpaid
-    if (data.status === 'collected' && data.paymentStatus !== 'paid') {
-      discrepanciesCount++;
-    }
-  }
-
-  const record: DailyReconciliationRecord = {
-    date: targetDate,
-    totalOrders,
-    totalRevenue,
-    onlineCollected,
-    cashCollected,
-    totalItemsSold,
+  const reconciliation: DailyReconciliationRecord = {
+    date: dateStr,
+    totalOrdersCount,
+    totalRevenueCalculated,
+    onlinePaymentsCaptured,
+    counterCashEstimated,
     discrepanciesCount,
-    reconciledAt: now,
-    status: discrepanciesCount === 0 ? 'balanced' : 'investigation_required',
+    reconciledAt: admin.firestore.Timestamp.now(),
+    status: discrepanciesCount === 0 ? 'BALANCED' : 'DISCREPANCY_FLAGGED',
+    auditNotes,
   };
 
-  await db.collection('dailyReconciliations').doc(targetDate).set(record);
+  await db.collection('dailyReconciliations').doc(dateStr).set(reconciliation);
 
-  return { success: true, reconciliation: record };
-});
+  return reconciliation;
+}
