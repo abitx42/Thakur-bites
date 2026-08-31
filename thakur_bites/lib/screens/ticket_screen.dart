@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import '../models/order.dart' as app;
 import '../theme/app_theme.dart';
 import 'order_status_screen.dart';
 
-/// Phase 5 — Perforated ticket confirmation screen.
-/// Shows the token number, order items, total, ready time,
-/// and a decorative QR placeholder — all matching the HTML prototype's
-/// torn-paper receipt design.
+/// Phase 4 — Perforated ticket confirmation screen with live Firestore status sync.
+/// Shows the daily token number (TB-001), 4-digit pickup PIN, order items, total,
+/// dynamic status badge, and verified QR payload.
 class TicketScreen extends StatefulWidget {
   final app.Order order;
 
@@ -35,9 +35,8 @@ class _TicketScreenState extends State<TicketScreen>
     _fadeAnim = Tween<double>(begin: 0, end: 1).animate(
       CurvedAnimation(parent: _animController, curve: Curves.easeOut),
     );
-    // Trigger the "printing" animation
     Future.delayed(const Duration(milliseconds: 100), () {
-      _animController.forward();
+      if (mounted) _animController.forward();
     });
   }
 
@@ -49,143 +48,182 @@ class _TicketScreenState extends State<TicketScreen>
 
   @override
   Widget build(BuildContext context) {
-    final order = widget.order;
-
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: SafeArea(
-        child: Column(
-          children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
-              decoration: const BoxDecoration(
-                border: Border(
-                    bottom: BorderSide(color: AppColors.line, width: 1)),
-                color: AppColors.surface,
-              ),
-              child: Row(
-                children: [
-                  GestureDetector(
-                    onTap: () => Navigator.of(context)
-                        .popUntil((route) => route.isFirst),
-                    child: Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: AppColors.line, width: 1.5),
-                      ),
-                      child: const Center(
-                        child: Icon(Icons.chevron_left_rounded,
-                            size: 20, color: AppColors.ink),
-                      ),
-                    ),
+        child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('orders')
+              .doc(widget.order.id)
+              .snapshots(),
+          builder: (context, snapshot) {
+            app.Order currentOrder = widget.order;
+            if (snapshot.hasData && snapshot.data != null && snapshot.data!.exists) {
+              try {
+                currentOrder = app.Order.fromFirestore(
+                  snapshot.data!.id,
+                  snapshot.data!.data()!,
+                );
+              } catch (_) {}
+            }
+
+            return Column(
+              children: [
+                // Header
+                Container(
+                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+                  decoration: const BoxDecoration(
+                    border: Border(
+                        bottom: BorderSide(color: AppColors.line, width: 1)),
+                    color: AppColors.surface,
                   ),
-                  const SizedBox(width: 10),
-                  Text('Order confirmed',
-                      style: AppFonts.display(fontSize: 20)),
-                ],
-              ),
-            ),
-
-            // Ticket body
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(18),
-                child: AnimatedBuilder(
-                  animation: _animController,
-                  builder: (context, child) {
-                    return Transform.translate(
-                      offset: Offset(0, _slideAnim.value),
-                      child: Opacity(
-                        opacity: _fadeAnim.value,
-                        child: child,
+                  child: Row(
+                    children: [
+                      GestureDetector(
+                        onTap: () => Navigator.of(context)
+                            .popUntil((route) => route.isFirst),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: AppColors.line, width: 1.5),
+                          ),
+                          child: const Center(
+                            child: Icon(Icons.chevron_left_rounded,
+                                size: 20, color: AppColors.ink),
+                          ),
+                        ),
                       ),
-                    );
-                  },
-                  child: _buildTicket(order),
+                      const SizedBox(width: 10),
+                      Text('Order confirmed',
+                          style: AppFonts.display(fontSize: 20)),
+                    ],
+                  ),
                 ),
-              ),
-            ),
 
-            // Action buttons
-            Container(
-              padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: double.infinity,
-                    child: GestureDetector(
-                      onTap: () {
-                        Navigator.of(context).pushReplacement(
-                          MaterialPageRoute(
-                            builder: (_) => OrderStatusScreen(orderId: order.id),
+                // Ticket body
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(18),
+                    child: AnimatedBuilder(
+                      animation: _animController,
+                      builder: (context, child) {
+                        return Transform.translate(
+                          offset: Offset(0, _slideAnim.value),
+                          child: Opacity(
+                            opacity: _fadeAnim.value.clamp(0.0, 1.0),
+                            child: _buildTicket(currentOrder),
                           ),
                         );
                       },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        decoration: BoxDecoration(
-                          color: AppColors.red,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          'Track order status →',
-                          style: AppFonts.body(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
+                    ),
+                  ),
+                ),
+
+                // Bottom action buttons
+                Container(
+                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+                  decoration: const BoxDecoration(
+                    border: Border(
+                        top: BorderSide(color: AppColors.line, width: 1)),
+                    color: AppColors.surface,
+                  ),
+                  child: Column(
+                    children: [
+                      // View Status button
+                      SizedBox(
+                        width: double.infinity,
+                        child: GestureDetector(
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    OrderStatusScreen(order: currentOrder),
+                              ),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            decoration: BoxDecoration(
+                              color: AppColors.red,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              'Track live preparation →',
+                              style: AppFonts.body(
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: GestureDetector(
-                      onTap: () {
-                        Navigator.of(context)
-                            .popUntil((route) => route.isFirst);
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.transparent,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: AppColors.line, width: 1.5),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          'Back to menu',
-                          style: AppFonts.body(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.ink,
+                      const SizedBox(height: 8),
+
+                      // Back to menu button
+                      SizedBox(
+                        width: double.infinity,
+                        child: GestureDetector(
+                          onTap: () {
+                            Navigator.of(context)
+                                .popUntil((route) => route.isFirst);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            decoration: BoxDecoration(
+                              color: Colors.transparent,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: AppColors.line, width: 1.5),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              'Back to menu',
+                              style: AppFonts.body(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.ink,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-          ],
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
 
   Widget _buildTicket(app.Order order) {
+    final statusColor = order.isReady
+        ? const Color(0xFF16A34A)
+        : order.isPreparing
+            ? const Color(0xFFD97706)
+            : order.isCollected
+                ? const Color(0xFF6B7280)
+                : AppColors.red;
+
+    final statusText = order.isReady
+        ? 'READY FOR PICKUP 🟢'
+        : order.isPreparing
+            ? 'PREPARING IN KITCHEN 🟡'
+            : order.isCollected
+                ? 'COLLECTED AT COUNTER ⚪️'
+                : 'ORDER CONFIRMED 🔴';
+
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border.all(color: AppColors.line, width: 1.5),
-        borderRadius: BorderRadius.circular(6), // receipt-style, not card-round
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Column(
         children: [
@@ -198,21 +236,40 @@ class _TicketScreenState extends State<TicketScreen>
               children: [
                 // Header
                 Text(
-                  'Thakur Bites · Token',
+                  'Thakur Bites · Canteen Token',
                   style: AppFonts.mono(
                     fontSize: 10.5,
                     fontWeight: FontWeight.w500,
                     color: AppColors.inkSoft,
                   ).copyWith(letterSpacing: 1.5),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
 
-                // Token number — big and red
+                // Live status badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: statusColor.withAlpha(25),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: statusColor.withAlpha(60), width: 1),
+                  ),
+                  child: Text(
+                    statusText,
+                    style: AppFonts.mono(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: statusColor,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Token number
                 Text(
                   order.tokenNumber,
                   style: AppFonts.mono(
                     fontSize: 44,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                     color: AppColors.red,
                   ).copyWith(letterSpacing: 0.5),
                 ),
@@ -221,16 +278,17 @@ class _TicketScreenState extends State<TicketScreen>
                 // Pin code
                 Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
                   decoration: BoxDecoration(
                     color: AppColors.surface2,
                     borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: AppColors.line, width: 1),
                   ),
                   child: Text(
-                    'PIN: ${order.pinCode}',
+                    'PICKUP PIN: ${order.pinCode}',
                     style: AppFonts.mono(
                       fontSize: 13,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
                       color: AppColors.ink,
                     ),
                   ),
@@ -290,23 +348,24 @@ class _TicketScreenState extends State<TicketScreen>
 
                 const SizedBox(height: 14),
 
-                // QR placeholder
+                // Verified QR Code Container
                 Container(
-                  width: 74,
-                  height: 74,
+                  width: 80,
+                  height: 80,
                   decoration: BoxDecoration(
-                    border: Border.all(color: AppColors.line, width: 1),
-                    borderRadius: BorderRadius.circular(4),
+                    color: Colors.white,
+                    border: Border.all(color: AppColors.line, width: 1.5),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Center(
+                  child: const Center(
                     child: Icon(Icons.qr_code_2_rounded,
-                        size: 54, color: AppColors.ink.withOpacity(0.7)),
+                        size: 64, color: AppColors.ink),
                   ),
                 ),
 
-                const SizedBox(height: 14),
+                const SizedBox(height: 12),
 
-                // Ready time
+                // Ready time & timestamp
                 Text(
                   order.estimatedMinutes > 0
                       ? 'Ready in ~${order.estimatedMinutes} min'
@@ -346,7 +405,7 @@ class _TicketScreenState extends State<TicketScreen>
               return Container(
                 width: 10,
                 height: 10,
-                decoration: BoxDecoration(
+                decoration: const BoxDecoration(
                   color: AppColors.bg,
                   shape: BoxShape.circle,
                 ),

@@ -8,8 +8,14 @@ import '../theme/app_theme.dart';
 /// Placed → Preparing → Ready → Collected
 class OrderStatusScreen extends StatelessWidget {
   final String orderId;
+  final app.Order? initialOrder;
 
-  const OrderStatusScreen({super.key, required this.orderId});
+  OrderStatusScreen({
+    super.key,
+    String? orderId,
+    app.Order? order,
+  })  : orderId = orderId ?? order?.id ?? '',
+        initialOrder = order;
 
   @override
   Widget build(BuildContext context) {
