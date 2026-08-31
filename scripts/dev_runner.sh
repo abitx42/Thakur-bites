@@ -17,14 +17,15 @@ echo "  3. Flutter Customer Web App        -> http://localhost:8080"
 echo "  4. Master Security CI Test Suite   -> bash scripts/run_all_security_checks.sh"
 echo ""
 echo "Select an option to launch:"
-echo "  [A] Run Master Security CI Verification Suite (187 Tests)"
+echo "  [A] Run Master Security CI Verification Suite (197 Tests)"
 echo "  [B] Start Staff Hub & TV Display HTTP Server (Port 3000)"
 echo "  [C] Launch Flutter Web Client (Port 8080)"
 echo "  [D] Seed Realistic Demo Data into Firestore (Menu, Orders, Shift PIN 123456)"
-echo "  [E] Exit"
+echo "  [E] Automated Production Deploy to Firebase (with 8-Gate Security Check)"
+echo "  [F] Exit"
 echo ""
 
-read -p "Enter choice [A/B/C/D/E]: " choice
+read -p "Enter choice [A/B/C/D/E/F]: " choice
 
 case "$choice" in
   [aA])
@@ -42,6 +43,9 @@ case "$choice" in
   [dD])
     echo "Seeding demo campus data into Firestore..."
     node "$DIR/scripts/seed_demo_data.js"
+    ;;
+  [eE])
+    bash "$DIR/scripts/deploy_platform.sh"
     ;;
   *)
     echo "Exiting launcher."
