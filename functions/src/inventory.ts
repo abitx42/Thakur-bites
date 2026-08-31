@@ -2,6 +2,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { UserRole } from './types';
 import { logSecurityEvent } from './security_logger';
+import { enforceRateLimit } from './rate_limiter';
 
 const db = admin.firestore();
 
@@ -45,6 +46,8 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
     });
     throw new HttpsError('permission-denied', 'Only managers and administrators can perform manual inventory adjustments.');
   }
+
+  await enforceRateLimit(request.auth.uid, 'inventory_adjustment');
 
   const { itemId, changeType, deltaUnits, reason } = request.data;
   if (!itemId || !changeType || !Number.isSafeInteger(deltaUnits) || deltaUnits === 0) {

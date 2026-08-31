@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { enforceRateLimit } from './rate_limiter';
 
 const db = admin.firestore();
 
@@ -20,13 +21,14 @@ export interface MealRatingResponse {
 
 /**
  * ═══════════════════════════════════════════════════════════════════
- * VERIFIED PURCHASE MEAL RATING ENGINE (Phase 4 Hardened)
+ * VERIFIED PURCHASE MEAL RATING ENGINE (Stage 5 Hardened)
  * ═══════════════════════════════════════════════════════════════════
  * Invariant Guarantees:
  * 1. Only students who purchased and collected the dish can rate it.
  * 2. Order must be in 'collected' status.
  * 3. Exactly one rating per order-item pair.
  * 4. Ratings bounded between 1 and 5 stars.
+ * 5. Public rating view is redacted (ratingsPublic does not expose studentId/orderId).
  */
 export const createMealRating = onCall<MealRatingRequest>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -34,6 +36,8 @@ export const createMealRating = onCall<MealRatingRequest>(async (request) => {
   }
 
   const studentId = request.auth.uid;
+  await enforceRateLimit(studentId, 'rating');
+
   const { orderId, itemId, rating, comment = '' } = request.data;
 
   if (!orderId || !itemId || !Number.isSafeInteger(rating) || rating < 1 || rating > 5) {
@@ -42,6 +46,8 @@ export const createMealRating = onCall<MealRatingRequest>(async (request) => {
 
   const ratingId = `${orderId}_${itemId}`;
   const ratingRef = db.collection('ratings').doc(ratingId);
+  const privateRatingRef = db.collection('ratingsPrivate').doc(ratingId);
+  const publicRatingRef = db.collection('ratingsPublic').doc(ratingId);
   const orderRef = db.collection('orders').doc(orderId);
   const itemRef = db.collection('menuItems').doc(itemId);
   const now = admin.firestore.Timestamp.now();
@@ -100,14 +106,38 @@ export const createMealRating = onCall<MealRatingRequest>(async (request) => {
       });
     }
 
-    // 4. Save verified rating record
+    const trimmedComment = comment.trim().slice(0, 500);
+
+    // 4a. Save private audit rating record (contains student & order binding)
+    transaction.set(privateRatingRef, {
+      ratingId,
+      orderId,
+      itemId,
+      studentId,
+      rating,
+      comment: trimmedComment,
+      createdAt: now,
+      verifiedPurchase: true,
+    });
+
+    // 4b. Save public redacted rating record (contains only item, rating, comment, and verified flag)
+    transaction.set(publicRatingRef, {
+      ratingId,
+      itemId,
+      rating,
+      comment: trimmedComment,
+      createdAt: now,
+      verifiedPurchase: true,
+    });
+
+    // 4c. Compatibility collection
     transaction.set(ratingRef, {
       ratingId,
       orderId,
       itemId,
       studentId,
       rating,
-      comment: comment.trim().slice(0, 500),
+      comment: trimmedComment,
       createdAt: now,
       verifiedPurchase: true,
     });

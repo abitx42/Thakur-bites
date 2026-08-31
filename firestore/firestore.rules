@@ -61,7 +61,18 @@ service cloud.firestore {
     }
 
     // ─── Student Feedback & Verified Ratings ─────────────────────
-    // Direct client creation blocked. Must be submitted via createMealRating Cloud Function.
+    // Public redacted ratings (no student or order identifiers)
+    match /ratingsPublic/{ratingId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Private audit ratings (backend verified)
+    match /ratingsPrivate/{ratingId} {
+      allow read: if isStaff() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
+      allow write: if false;
+    }
+
     match /ratings/{ratingId} {
       allow read: if true;
       allow write: if false;

@@ -226,6 +226,8 @@ export const unlockOrderPickupVerification = onCall<{ orderId: string; reason: s
     throw new HttpsError('permission-denied', 'Only managers or administrators can unlock a security-locked order.');
   }
 
+  await enforceRateLimit(request.auth.uid, 'unlock_order');
+
   const { orderId, reason } = request.data;
   if (!orderId || !reason || reason.trim().length === 0) {
     throw new HttpsError('invalid-argument', 'orderId and a non-empty override reason are required.');

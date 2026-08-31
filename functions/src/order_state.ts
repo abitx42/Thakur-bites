@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { OrderStatus, UserRole } from './types';
+import { enforceRateLimit } from './rate_limiter';
 
 const db = admin.firestore();
 
@@ -28,6 +29,7 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
   }
 
   const actorId = request.auth.uid;
+  await enforceRateLimit(actorId, 'order_status');
   const actorRole = (request.auth.token.role as UserRole) || 'student';
   const { orderId, nextStatus } = request.data;
 

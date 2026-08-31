@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { UserRole, FinancialTransactionRecord } from './types';
 import { logSecurityEvent } from './security_logger';
+import { enforceRateLimit } from './rate_limiter';
 
 const db = admin.firestore();
 
@@ -41,6 +42,8 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     });
     throw new HttpsError('permission-denied', 'Only managers and administrators are authorized to process refunds.');
   }
+
+  await enforceRateLimit(request.auth.uid, 'refund');
 
   const { orderId, reason, amountPaise } = request.data;
   if (!orderId || !reason || reason.trim().length === 0) {

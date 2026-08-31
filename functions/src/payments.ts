@@ -330,6 +330,8 @@ export const recordCashPayment = onCall<{ orderId: string }>(async (request) => 
     throw new HttpsError('permission-denied', 'Only authorized cashiers and managers can record cash payments.');
   }
 
+  await enforceRateLimit(request.auth.uid, 'cash_payment');
+
   const { orderId } = request.data;
   if (!orderId) {
     throw new HttpsError('invalid-argument', 'orderId is required.');

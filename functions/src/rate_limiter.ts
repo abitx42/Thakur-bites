@@ -13,6 +13,12 @@ export const ENDPOINT_LIMITS: Record<string, RateLimitConfig> = {
   pickup_verify: { maxRequests: 20, windowSeconds: 60 },
   payment_session: { maxRequests: 15, windowSeconds: 60 },
   role_assignment: { maxRequests: 5, windowSeconds: 300 },
+  refund: { maxRequests: 10, windowSeconds: 60 },
+  inventory_adjustment: { maxRequests: 20, windowSeconds: 60 },
+  unlock_order: { maxRequests: 10, windowSeconds: 60 },
+  rating: { maxRequests: 10, windowSeconds: 60 },
+  order_status: { maxRequests: 30, windowSeconds: 60 },
+  cash_payment: { maxRequests: 20, windowSeconds: 60 },
 };
 
 /**

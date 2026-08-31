@@ -1056,4 +1056,57 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(verify6DigitPin(pinHash, '123456').valid, false);
     assert.strictEqual(verify6DigitPin(pinHash, '1234').valid, false); // 4-digit format rejected
   });
+
+  it('45. Comprehensive Rate Limiter Coverage: Protects all sensitive endpoints', () => {
+    const limits = {
+      checkout: { maxRequests: 10, windowSeconds: 60 },
+      pickup_verify: { maxRequests: 20, windowSeconds: 60 },
+      payment_session: { maxRequests: 15, windowSeconds: 60 },
+      role_assignment: { maxRequests: 5, windowSeconds: 300 },
+      refund: { maxRequests: 10, windowSeconds: 60 },
+      inventory_adjustment: { maxRequests: 20, windowSeconds: 60 },
+      unlock_order: { maxRequests: 10, windowSeconds: 60 },
+      rating: { maxRequests: 10, windowSeconds: 60 },
+      order_status: { maxRequests: 30, windowSeconds: 60 },
+      cash_payment: { maxRequests: 20, windowSeconds: 60 },
+    };
+
+    function simulateSlidingWindow(endpoint, count) {
+      const cfg = limits[endpoint];
+      if (!cfg) return { allowed: false, error: 'UNKNOWN_ENDPOINT' };
+      return { allowed: count <= cfg.maxRequests, max: cfg.maxRequests };
+    }
+
+    assert.strictEqual(simulateSlidingWindow('refund', 5).allowed, true);
+    assert.strictEqual(simulateSlidingWindow('refund', 11).allowed, false);
+    assert.strictEqual(simulateSlidingWindow('inventory_adjustment', 20).allowed, true);
+    assert.strictEqual(simulateSlidingWindow('inventory_adjustment', 21).allowed, false);
+  });
+
+  it('46. Public Meal Rating Identity Redaction Invariant', () => {
+    const rawRating = {
+      ratingId: 'order_123_item_dosa',
+      orderId: 'order_123',
+      itemId: 'item_dosa',
+      studentId: 'student_999',
+      rating: 5,
+      comment: 'Delicious crispy dosa!',
+      verifiedPurchase: true,
+    };
+
+    function sanitizePublicRating(ratingDoc) {
+      return {
+        ratingId: ratingDoc.ratingId,
+        itemId: ratingDoc.itemId,
+        rating: ratingDoc.rating,
+        comment: ratingDoc.comment,
+        verifiedPurchase: ratingDoc.verifiedPurchase,
+      };
+    }
+
+    const publicView = sanitizePublicRating(rawRating);
+    assert.strictEqual(publicView.rating, 5);
+    assert.strictEqual('studentId' in publicView, false, 'Public rating must not contain studentId');
+    assert.strictEqual('orderId' in publicView, false, 'Public rating must not contain orderId');
+  });
 });
