@@ -255,7 +255,9 @@ class StateStore {
     if (this.cart.length === 0) return null;
 
     const nextTokenNum = `TK-${this.orders.length + 42}`;
-    const pin = Math.floor(1000 + Math.random() * 9000).toString();
+    const cryptoArr = new Uint32Array(1);
+    (window.crypto || window.msCrypto).getRandomValues(cryptoArr);
+    const pin = (1000 + (cryptoArr[0] % 9000)).toString();
 
     // Determine highest tier and primary station
     let highestTier = 'tier1_instant';

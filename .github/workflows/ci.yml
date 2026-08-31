@@ -31,11 +31,21 @@ jobs:
         working-directory: functions
         run: npm ci
 
+      - name: Dependency Vulnerability Security Audit
+        working-directory: functions
+        run: npm audit --audit-level=high
+
+      - name: Scan Codebase for Leaked Secrets & Credentials
+        run: node scripts/scan_secrets.js
+
+      - name: Run SAST Static Application Security Testing
+        run: node scripts/sast_analyzer.js
+
       - name: Compile Backend TypeScript
         working-directory: functions
         run: npm run build
 
-      - name: Run Backend Invariant Security Abuse Suite (156 Tests)
+      - name: Run Backend Invariant Security Abuse Suite (159 Tests)
         working-directory: functions
         run: npm test
 
