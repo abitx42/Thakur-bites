@@ -5,8 +5,8 @@ import '../models/menu_item.dart';
 import '../providers/cart_provider.dart';
 import '../theme/app_theme.dart';
 
-/// Menu item card with Swiggy/Zomato-style morphing add-to-cart stepper.
-/// Supports out-of-stock disabling and max stock limits.
+/// Menu item card with availability indicators (🟢/🟡/🔴) instead of exact stock numbers.
+/// Students can freely add any quantity to cart — stock is checked only at checkout.
 class MenuItemCard extends StatelessWidget {
   final MenuItem item;
 
@@ -16,23 +16,35 @@ class MenuItemCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isCooked = item.isCooked;
     final inStock = item.isInStock;
+    final level = item.availabilityLevel;
 
-    final cardBg = inStock
-        ? (isCooked ? AppColors.mustardSoft : AppColors.greenSoft)
-        : const Color(0xFFF3EFE8);
-    final accentInk = inStock
-        ? (isCooked ? AppColors.mustardInk : AppColors.greenInk)
-        : AppColors.inkSoft;
-    final iconBg = inStock
-        ? (isCooked
+    final cardBg = !inStock
+        ? const Color(0xFFF3EFE8)
+        : (isCooked ? AppColors.mustardSoft : AppColors.greenSoft);
+    final accentInk = !inStock
+        ? AppColors.inkSoft
+        : (isCooked ? AppColors.mustardInk : AppColors.greenInk);
+    final iconBg = !inStock
+        ? AppColors.line
+        : (isCooked
             ? AppColors.mustardInk.withOpacity(0.14)
-            : AppColors.greenInk.withOpacity(0.14))
-        : AppColors.line;
-    final badgeBg = inStock
-        ? (isCooked
-            ? AppColors.mustardInk.withOpacity(0.12)
-            : AppColors.greenInk.withOpacity(0.12))
-        : AppColors.line;
+            : AppColors.greenInk.withOpacity(0.14));
+
+    // Badge colors based on availability level
+    Color badgeBg;
+    Color badgeTextColor;
+    if (!inStock) {
+      badgeBg = const Color(0xFFFEE2E2);
+      badgeTextColor = AppColors.red;
+    } else if (level == AvailabilityLevel.limited) {
+      badgeBg = const Color(0xFFFEF3C7);
+      badgeTextColor = const Color(0xFFB45309);
+    } else {
+      badgeBg = isCooked
+          ? AppColors.mustardInk.withOpacity(0.12)
+          : AppColors.greenInk.withOpacity(0.12);
+      badgeTextColor = accentInk;
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -48,23 +60,44 @@ class MenuItemCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Badge
+                // Availability badge
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                     decoration: BoxDecoration(
-                      color: inStock ? badgeBg : const Color(0xFFFEE2E2),
+                      color: badgeBg,
                       borderRadius: BorderRadius.circular(999),
                     ),
-                    child: Text(
-                      item.badgeText,
-                      style: AppFonts.mono(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                        color: inStock ? accentInk : AppColors.red,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Availability dot
+                        if (!isCooked || !inStock) ...[
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: !inStock
+                                  ? AppColors.red
+                                  : level == AvailabilityLevel.limited
+                                      ? const Color(0xFFD97706)
+                                      : const Color(0xFF16A34A),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                        ],
+                        Text(
+                          item.badgeText,
+                          style: AppFonts.mono(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                            color: badgeTextColor,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -114,7 +147,7 @@ class MenuItemCard extends StatelessWidget {
             ),
           ),
 
-          // Add control — reads qty from CartProvider
+          // Add control — cart is a wishlist, no stock limits here
           Positioned(
             bottom: 11,
             left: 12,
@@ -160,20 +193,7 @@ class MenuItemCard extends StatelessWidget {
       child: GestureDetector(
         onTap: () {
           HapticFeedback.selectionClick();
-          final added = context.read<CartProvider>().addItem(item);
-          if (!added) {
-            HapticFeedback.vibrate();
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Only ${item.stockCount} ${item.name} available in stock!'),
-                backgroundColor: AppColors.red,
-                duration: const Duration(seconds: 2),
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-            );
-          }
+          context.read<CartProvider>().addItem(item);
         },
         child: Container(
           width: 44,
@@ -231,24 +251,11 @@ class MenuItemCard extends StatelessWidget {
             // Qty
             Text('$qty',
                 style: AppFonts.mono(fontSize: 12.5, color: Colors.white)),
-            // Plus
+            // Plus — no stock limit on cart, student can add freely
             GestureDetector(
               onTap: () {
                 HapticFeedback.selectionClick();
-                final added = context.read<CartProvider>().addItem(item);
-                if (!added) {
-                  HapticFeedback.vibrate();
-                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Only ${item.stockCount} ${item.name} available in stock!'),
-                      backgroundColor: AppColors.red,
-                      duration: const Duration(seconds: 2),
-                      behavior: SnackBarBehavior.floating,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                  );
-                }
+                context.read<CartProvider>().addItem(item);
               },
               child: const SizedBox(
                 width: 44,

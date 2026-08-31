@@ -11,11 +11,16 @@ class CartEntry {
   CartEntry({required this.item, this.qty = 1});
 
   double get subtotal => item.price * qty;
+
+  /// Only false if item was completely pulled from the menu (staff toggled off / sold out)
   bool get isAvailable => item.isInStock;
 }
 
 /// Central cart state using ChangeNotifier (Provider pattern).
-/// Automatically connects to live Firestore menu items stream to maintain real-time stock sync.
+///
+/// ARCHITECTURE: Cart is a WISHLIST. Adding items never checks or reserves stock.
+/// Stock is checked ONLY at checkout time by the backend (Firestore).
+/// First student to successfully place the order gets the stock.
 class CartProvider extends ChangeNotifier {
   final FirestoreService _firestore = FirestoreService();
   StreamSubscription? _menuSub;
@@ -27,6 +32,7 @@ class CartProvider extends ChangeNotifier {
     _initLiveStockListener();
   }
 
+  /// Listen to live catalog changes so we know when items go completely unavailable
   void _initLiveStockListener() {
     _menuSub = _firestore.allMenuItemsStream().listen((catalogItems) {
       syncAvailability(catalogItems);
@@ -43,45 +49,34 @@ class CartProvider extends ChangeNotifier {
 
   // ─── Read-only accessors ──────────────────────────────────────
 
-  /// All cart entries as a list
   List<CartEntry> get entries => _entries.values.toList();
 
-  /// Total number of individual items (sum of all quantities)
   int get totalItemCount =>
       _entries.values.fold(0, (sum, e) => sum + e.qty);
 
-  /// Total price across all items
   double get totalPrice =>
       _entries.values.fold(0.0, (sum, e) => sum + e.subtotal);
 
-  /// Available-only total price
   double get availableTotalPrice => _entries.values
       .where((e) => e.isAvailable)
       .fold(0.0, (sum, e) => sum + e.subtotal);
 
-  /// Is the cart empty?
   bool get isEmpty => _entries.isEmpty;
-
-  /// Is the cart not empty?
   bool get isNotEmpty => _entries.isNotEmpty;
 
-  /// Does the cart contain any item that went out of stock?
+  /// Does the cart contain any item that went completely out of stock?
   bool get hasOutOfStockItems =>
       _entries.values.any((e) => !e.isAvailable);
 
-  /// Number of out-of-stock items in cart
   int get outOfStockCount =>
       _entries.values.where((e) => !e.isAvailable).length;
 
-  /// List of out of stock entries
   List<CartEntry> get outOfStockEntries =>
       _entries.values.where((e) => !e.isAvailable).toList();
 
-  /// List of available entries
   List<CartEntry> get availableEntries =>
       _entries.values.where((e) => e.isAvailable).toList();
 
-  /// Maximum prep time across available items in cart
   int get maxPrepMinutes {
     final active = _entries.values.where((e) => e.isAvailable);
     if (active.isEmpty) return 0;
@@ -90,51 +85,26 @@ class CartProvider extends ChangeNotifier {
         .reduce((a, b) => a > b ? a : b);
   }
 
-  /// Human-friendly ready time text
   String get readyTimeText {
     final mins = maxPrepMinutes;
     return mins > 0 ? 'Ready in ~$mins min' : 'Ready now';
   }
 
-  /// Get qty for a specific item (0 if not in cart)
   int getQty(String itemId) => _entries[itemId]?.qty ?? 0;
 
-  /// Check if a specific cart item is available
   bool isAvailable(String itemId) => _entries[itemId]?.isAvailable ?? true;
 
   // ─── Mutations ────────────────────────────────────────────────
 
-  /// Add one of this item to cart (or increment if already present).
-  /// Returns true if successfully added, false if stock limit reached.
-  bool addItem(MenuItem item) {
-    if (!item.isInStock) return false;
-
-    // For instant store items, enforce available stock limit
-    if (item.isInstant && item.stockCount > 0) {
-      final currentQty = getQty(item.id);
-      if (currentQty >= item.stockCount) {
-        return false; // Cannot add more than in-stock quantity
-      }
-    }
+  /// Add one of this item to cart. Cart is a wishlist — no stock limits enforced here.
+  /// Only blocks items that are completely marked unavailable (staff toggled off).
+  void addItem(MenuItem item) {
+    if (!item.isInStock) return; // Only block completely unavailable items
 
     if (_entries.containsKey(item.id)) {
       _entries[item.id]!.qty++;
     } else {
       _entries[item.id] = CartEntry(item: item);
-    }
-    notifyListeners();
-    return true;
-  }
-
-  /// Adjust item quantity to available stock (e.g. if someone else bought items)
-  void adjustItemQuantityToStock(String itemId, int availableStock) {
-    if (!_entries.containsKey(itemId)) return;
-
-    if (availableStock <= 0) {
-      _entries[itemId]!.item = _entries[itemId]!.item.copyWith(available: false, stockCount: 0);
-    } else if (_entries[itemId]!.qty > availableStock) {
-      _entries[itemId]!.qty = availableStock;
-      _entries[itemId]!.item = _entries[itemId]!.item.copyWith(stockCount: availableStock);
     }
     notifyListeners();
   }
@@ -169,7 +139,20 @@ class CartProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Sync cart items with live catalog availability from Firestore
+  /// Cap item quantity to available stock (called at checkout when backend says stock is limited)
+  void capItemQuantity(String itemId, int maxAvailable) {
+    if (!_entries.containsKey(itemId)) return;
+
+    if (maxAvailable <= 0) {
+      _entries[itemId]!.item = _entries[itemId]!.item.copyWith(available: false, stockCount: 0);
+    } else if (_entries[itemId]!.qty > maxAvailable) {
+      _entries[itemId]!.qty = maxAvailable;
+    }
+    notifyListeners();
+  }
+
+  /// Sync cart items with live catalog availability.
+  /// Only marks items completely unavailable (available: false) — NOT for quantity limits.
   void syncAvailability(List<MenuItem> allCatalogItems) {
     bool hasChanged = false;
     final map = {for (var i in allCatalogItems) i.id: i};
@@ -178,7 +161,8 @@ class CartProvider extends ChangeNotifier {
       final liveItem = map[entry.item.id];
       final isNowInStock = liveItem != null ? liveItem.isInStock : false;
 
-      if (entry.item.available != isNowInStock || (liveItem != null && entry.item.stockCount != liveItem.stockCount)) {
+      if (entry.item.available != (liveItem?.available ?? false) ||
+          entry.item.isInStock != isNowInStock) {
         entry.item = entry.item.copyWith(
           available: liveItem?.available ?? false,
           stockCount: liveItem?.stockCount ?? 0,
@@ -187,12 +171,10 @@ class CartProvider extends ChangeNotifier {
       }
     }
 
-    if (hasChanged) {
-      notifyListeners();
-    }
+    if (hasChanged) notifyListeners();
   }
 
-  /// Mark specific item IDs as out of stock (e.g. from pre-checkout check)
+  /// Mark specific item IDs as out of stock (from pre-checkout check)
   void markItemsOutOfStock(List<String> outOfStockIds) {
     bool hasChanged = false;
     for (final id in outOfStockIds) {
@@ -201,9 +183,7 @@ class CartProvider extends ChangeNotifier {
         hasChanged = true;
       }
     }
-    if (hasChanged) {
-      notifyListeners();
-    }
+    if (hasChanged) notifyListeners();
   }
 
   /// Remove all out-of-stock items in one tap

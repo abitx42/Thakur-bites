@@ -8,7 +8,8 @@ import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import 'ticket_screen.dart';
 
-/// Cart screen with Real-Time Stock Sync and Pre-Payment Verification (Zepto/Instamart style).
+/// Cart screen — stock is checked ONLY at checkout, not at cart level.
+/// Cart is a wishlist. Backend is the single source of truth.
 class CartScreen extends StatefulWidget {
   const CartScreen({super.key});
 
@@ -17,133 +18,118 @@ class CartScreen extends StatefulWidget {
 }
 
 class _CartScreenState extends State<CartScreen> {
-  final FirestoreService _firestore = FirestoreService();
-
   @override
   Widget build(BuildContext context) {
-    // Stream of all items to keep cart availability synced in real time
-    return StreamBuilder<List<MenuItem>>(
-      stream: _firestore.allMenuItemsStream(),
-      builder: (context, snapshot) {
-        if (snapshot.hasData) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            context.read<CartProvider>().syncAvailability(snapshot.data!);
-          });
-        }
+    return Scaffold(
+      backgroundColor: AppColors.surface,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // ─── Header ─────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+              decoration: const BoxDecoration(
+                border: Border(
+                    bottom: BorderSide(color: AppColors.line, width: 1)),
+              ),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: AppColors.line, width: 1.5),
+                      ),
+                      child: const Center(
+                        child: Icon(Icons.chevron_left_rounded,
+                            size: 20, color: AppColors.ink),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text('Your cart',
+                      style: AppFonts.display(fontSize: 20)),
+                ],
+              ),
+            ),
 
-        return Scaffold(
-          backgroundColor: AppColors.surface,
-          body: SafeArea(
-            child: Column(
-              children: [
-                // ─── Header ─────────────────────────────────────────
-                Container(
-                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
-                  decoration: const BoxDecoration(
-                    border: Border(
-                        bottom: BorderSide(color: AppColors.line, width: 1)),
+            // ─── Out of Stock Global Warning Banner ─────────────
+            Consumer<CartProvider>(
+              builder: (context, cart, _) {
+                if (!cart.hasOutOfStockItems) return const SizedBox.shrink();
+
+                return Container(
+                  margin: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEE2E2),
+                    border: Border.all(color: const Color(0xFFFCA5A5), width: 1),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
                     children: [
-                      // Back button
+                      const Icon(Icons.warning_amber_rounded, size: 20, color: AppColors.red),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${cart.outOfStockCount} item(s) in your cart are no longer available.',
+                          style: AppFonts.body(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.red),
+                        ),
+                      ),
                       GestureDetector(
-                        onTap: () => Navigator.of(context).pop(),
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          cart.removeOutOfStockItems();
+                        },
                         child: Container(
-                          width: 32,
-                          height: 32,
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: AppColors.line, width: 1.5),
+                            color: AppColors.red,
+                            borderRadius: BorderRadius.circular(6),
                           ),
-                          child: const Center(
-                            child: Icon(Icons.chevron_left_rounded,
-                                size: 20, color: AppColors.ink),
+                          child: Text(
+                            'Remove',
+                            style: AppFonts.body(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      Text('Your cart',
-                          style: AppFonts.display(fontSize: 20)),
                     ],
                   ),
-                ),
-
-                // ─── Out of Stock Global Warning Banner ─────────────
-                Consumer<CartProvider>(
-                  builder: (context, cart, _) {
-                    if (!cart.hasOutOfStockItems) return const SizedBox.shrink();
-
-                    return Container(
-                      margin: const EdgeInsets.fromLTRB(18, 12, 18, 0),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFEE2E2),
-                        border: Border.all(color: const Color(0xFFFCA5A5), width: 1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.warning_amber_rounded, size: 20, color: AppColors.red),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              '${cart.outOfStockCount} item(s) in your cart just went out of stock.',
-                              style: AppFonts.body(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.red),
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: () {
-                              HapticFeedback.selectionClick();
-                              cart.removeOutOfStockItems();
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: AppColors.red,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                'Remove',
-                                style: AppFonts.body(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-
-                // ─── Cart items list ────────────────────────────────
-                Expanded(
-                  child: Consumer<CartProvider>(
-                    builder: (context, cart, _) {
-                      if (cart.isEmpty) {
-                        return _buildEmptyState();
-                      }
-                      return ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                        itemCount: cart.entries.length,
-                        itemBuilder: (context, index) {
-                          final entry = cart.entries[index];
-                          return _CartItemRow(entry: entry);
-                        },
-                      );
-                    },
-                  ),
-                ),
-
-                // ─── Summary + CTA ──────────────────────────────────
-                Consumer<CartProvider>(
-                  builder: (context, cart, _) {
-                    return _CartSummary(cart: cart);
-                  },
-                ),
-              ],
+                );
+              },
             ),
-          ),
-        );
-      },
+
+            // ─── Cart items list ────────────────────────────────
+            Expanded(
+              child: Consumer<CartProvider>(
+                builder: (context, cart, _) {
+                  if (cart.isEmpty) {
+                    return _buildEmptyState();
+                  }
+                  return ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                    itemCount: cart.entries.length,
+                    itemBuilder: (context, index) {
+                      final entry = cart.entries[index];
+                      return _CartItemRow(entry: entry);
+                    },
+                  );
+                },
+              ),
+            ),
+
+            // ─── Summary + CTA ──────────────────────────────────
+            Consumer<CartProvider>(
+              builder: (context, cart, _) {
+                return _CartSummary(cart: cart);
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -214,7 +200,7 @@ class _CartItemRow extends StatelessWidget {
           ),
           const SizedBox(width: 12),
 
-          // Name + price + out of stock warning
+          // Name + price
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -229,25 +215,16 @@ class _CartItemRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 if (!isAvailable) ...[
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFEE2E2),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          'Out of stock',
-                          style: AppFonts.mono(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.red),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Canteen ran out',
-                        style: AppFonts.body(fontSize: 11, color: AppColors.inkSoft),
-                      ),
-                    ],
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE2E2),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      'No longer available',
+                      style: AppFonts.mono(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.red),
+                    ),
                   ),
                 ] else ...[
                   Text(
@@ -287,6 +264,7 @@ class _CartItemRow extends StatelessWidget {
               ),
             ),
           ] else ...[
+            // Stepper — no stock limits, cart is a wishlist
             Container(
               decoration: BoxDecoration(
                 color: AppColors.surface2,
@@ -296,7 +274,6 @@ class _CartItemRow extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Minus
                   GestureDetector(
                     onTap: () {
                       HapticFeedback.selectionClick();
@@ -318,7 +295,6 @@ class _CartItemRow extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Qty
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Text(
@@ -326,24 +302,11 @@ class _CartItemRow extends StatelessWidget {
                       style: AppFonts.mono(fontSize: 12.5, color: AppColors.ink),
                     ),
                   ),
-                  // Plus
+                  // Plus — freely add, no stock limits at cart level
                   GestureDetector(
                     onTap: () {
                       HapticFeedback.selectionClick();
-                      final added = context.read<CartProvider>().addItem(item);
-                      if (!added) {
-                        HapticFeedback.vibrate();
-                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Only ${item.stockCount} ${item.name} available in stock!'),
-                            backgroundColor: AppColors.red,
-                            duration: const Duration(seconds: 2),
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
-                        );
-                      }
+                      context.read<CartProvider>().addItem(item);
                     },
                     child: Container(
                       width: 28,
@@ -390,7 +353,7 @@ class _CartItemRow extends StatelessWidget {
   }
 }
 
-// ─── Cart Summary & CTA with Atomic Stock Check ─────────────────────
+// ─── Cart Summary & CTA — Atomic Stock Check at Checkout ────────────
 
 class _CartSummary extends StatefulWidget {
   final CartProvider cart;
@@ -409,7 +372,7 @@ class _CartSummaryState extends State<_CartSummary> {
     if (_isProcessing) return;
     final cart = widget.cart;
 
-    // 1. If cart has out-of-stock items, prompt to clean cart
+    // 1. If cart has items that went completely unavailable, prompt to clean
     if (cart.hasOutOfStockItems) {
       _showOutOfStockAlert(cart.outOfStockEntries);
       return;
@@ -419,24 +382,31 @@ class _CartSummaryState extends State<_CartSummary> {
     HapticFeedback.mediumImpact();
 
     try {
-      // 2. Pre-Payment Background Live Stock & Quantity Verification (Instamart / Zepto style)
+      // ──────────────────────────────────────────────────────────────
+      // 2. ATOMIC STOCK CHECK — Backend is the single source of truth.
+      //    This is where stock ownership is determined.
+      //    First student to reach this point and pass wins the stock.
+      // ──────────────────────────────────────────────────────────────
       final stockIssues = await _firestore.verifyItemsStockQuantity(cart.entries);
 
       if (stockIssues.isNotEmpty) {
-        // Adjust cart items to actual available stock
+        // Cap cart quantities to what's actually available
         for (final entry in stockIssues.entries) {
-          cart.adjustItemQuantityToStock(entry.key, entry.value);
+          cart.capItemQuantity(entry.key, entry.value);
         }
 
         setState(() => _isProcessing = false);
 
         if (mounted) {
-          _showQuantityAdjustedAlert(stockIssues);
+          _showStockLimitedAlert(stockIssues);
         }
         return;
       }
 
-      // 3. Place order in Firestore & automatically decrement inventory
+      // ──────────────────────────────────────────────────────────────
+      // 3. ATOMIC STOCK RESERVATION — Place order & decrement inventory
+      //    in one operation. This reserves the stock.
+      // ──────────────────────────────────────────────────────────────
       final student = context.read<AuthProvider>().currentStudent;
       final order = await _firestore.placeOrder(cart, student: student);
 
@@ -444,7 +414,7 @@ class _CartSummaryState extends State<_CartSummary> {
         context.read<AuthProvider>().incrementOrderCount();
       }
 
-      // 4. Clear cart & transition to ticket confirmation
+      // 4. Clear cart & show confirmation ticket
       cart.clear();
 
       if (mounted) {
@@ -467,8 +437,22 @@ class _CartSummaryState extends State<_CartSummary> {
     }
   }
 
-  /// Alert when live stock quantity was insufficient (Zepto/Instamart style)
-  void _showQuantityAdjustedAlert(Map<String, int> stockIssues) {
+  /// Alert when checkout stock check finds insufficient quantity
+  void _showStockLimitedAlert(Map<String, int> stockIssues) {
+    // Build per-item breakdown
+    final cart = widget.cart;
+    final lines = <String>[];
+    for (final entry in stockIssues.entries) {
+      final cartEntry = cart.entries.where((e) => e.item.id == entry.key).firstOrNull;
+      if (cartEntry != null) {
+        if (entry.value <= 0) {
+          lines.add('• ${cartEntry.item.name}: Sold out');
+        } else {
+          lines.add('• ${cartEntry.item.name}: Only ${entry.value} available');
+        }
+      }
+    }
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -498,19 +482,19 @@ class _CartSummaryState extends State<_CartSummary> {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: const BoxDecoration(
-                    color: Color(0xFFFEE2E2),
+                    color: Color(0xFFFEF3C7),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.inventory_2_outlined, color: AppColors.red, size: 24),
+                  child: const Icon(Icons.inventory_2_outlined, color: Color(0xFFB45309), size: 24),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Stock Availability Updated', style: AppFonts.display(fontSize: 20)),
+                      Text('Stock Limited', style: AppFonts.display(fontSize: 20)),
                       Text(
-                        'Live canteen inventory just changed',
+                        'Some items have limited availability',
                         style: AppFonts.body(fontSize: 12, color: AppColors.inkSoft),
                       ),
                     ],
@@ -527,7 +511,7 @@ class _CartSummaryState extends State<_CartSummary> {
                 border: Border.all(color: AppColors.line, width: 1),
               ),
               child: Text(
-                'Some items in your cart had limited stock and were adjusted to the maximum available units. Please review your updated total before completing payment.',
+                '${lines.join('\n')}\n\nYour cart has been updated to the maximum available quantities. Please review and try again.',
                 style: AppFonts.body(fontSize: 13, color: AppColors.ink),
               ),
             ),
@@ -553,13 +537,14 @@ class _CartSummaryState extends State<_CartSummary> {
                   child: ElevatedButton(
                     onPressed: () {
                       Navigator.of(ctx).pop();
+                      // Cart is already capped, student can review and retry
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.red,
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: Text('Review Cart', style: AppFonts.body(fontSize: 13.5, fontWeight: FontWeight.w700, color: Colors.white)),
+                    child: Text('Review & Pay', style: AppFonts.body(fontSize: 13.5, fontWeight: FontWeight.w700, color: Colors.white)),
                   ),
                 ),
               ],
@@ -570,7 +555,7 @@ class _CartSummaryState extends State<_CartSummary> {
     );
   }
 
-  /// Instamart / Zepto style modal when items are out of stock
+  /// Alert when items are completely out of stock
   void _showOutOfStockAlert(List<CartEntry> unavailableEntries) {
     final names = unavailableEntries.map((e) => e.item.name).join(', ');
 
@@ -613,9 +598,9 @@ class _CartSummaryState extends State<_CartSummary> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Item Out of Stock', style: AppFonts.display(fontSize: 20)),
+                      Text('Item Unavailable', style: AppFonts.display(fontSize: 20)),
                       Text(
-                        'Canteen just ran out of stock',
+                        'Canteen is no longer serving this item',
                         style: AppFonts.body(fontSize: 12, color: AppColors.inkSoft),
                       ),
                     ],
@@ -632,7 +617,7 @@ class _CartSummaryState extends State<_CartSummary> {
                 border: Border.all(color: AppColors.line, width: 1),
               ),
               child: Text(
-                'The following item(s) are currently unavailable:\n• $names\n\nWould you like to remove them and proceed with the rest of your order, or explore other options?',
+                'The following item(s) are currently unavailable:\n• $names\n\nRemove them to proceed with the rest of your order.',
                 style: AppFonts.body(fontSize: 13, color: AppColors.ink),
               ),
             ),
@@ -643,7 +628,7 @@ class _CartSummaryState extends State<_CartSummary> {
                   child: OutlinedButton(
                     onPressed: () {
                       Navigator.of(ctx).pop();
-                      Navigator.of(context).pop(); // Back to menu
+                      Navigator.of(context).pop();
                     },
                     style: OutlinedButton.styleFrom(
                       side: const BorderSide(color: AppColors.line, width: 1.5),
@@ -704,14 +689,13 @@ class _CartSummaryState extends State<_CartSummary> {
             ),
             const SizedBox(height: 8),
 
-            // Total row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('Total',
                     style: AppFonts.mono(
                         fontSize: 15, fontWeight: FontWeight.w600)),
-                Text('₹${cart.availableTotalPrice.toInt()}',
+                Text('₹${cart.totalPrice.toInt()}',
                     style: AppFonts.mono(
                         fontSize: 15, fontWeight: FontWeight.w600)),
               ],
@@ -746,15 +730,15 @@ class _CartSummaryState extends State<_CartSummary> {
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           ),
                           const SizedBox(width: 10),
-                          Text('Checking stock...', style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white)),
+                          Text('Placing order...', style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white)),
                         ],
                       )
                     : Text(
                         cart.isEmpty
                             ? 'Confirm & pay'
                             : hasStockIssue
-                                ? 'Remove Out-of-Stock Items (₹${cart.availableTotalPrice.toInt()})'
-                                : 'Confirm & pay ₹${cart.totalPrice.toInt()}',
+                                ? 'Remove unavailable items'
+                                : 'Place order · ₹${cart.totalPrice.toInt()}',
                         style: AppFonts.body(
                           fontSize: 14.5,
                           fontWeight: FontWeight.w700,
