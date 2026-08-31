@@ -15,7 +15,7 @@ class FirestoreService {
   CollectionReference<Map<String, dynamic>> get _orders =>
       _db.collection('orders');
 
-  /// Real-time stream of available menu items.
+  /// Real-time stream of available menu items (for menu browsing).
   Stream<List<MenuItem>> menuItemsStream() {
     return _menuItems
         .where('available', isEqualTo: true)
@@ -23,6 +23,39 @@ class FirestoreService {
         .map((snapshot) => snapshot.docs
             .map((doc) => MenuItem.fromFirestore(doc.id, doc.data()))
             .toList());
+  }
+
+  /// Real-time stream of ALL menu items including out-of-stock items (for cart live stock sync).
+  Stream<List<MenuItem>> allMenuItemsStream() {
+    return _menuItems
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => MenuItem.fromFirestore(doc.id, doc.data()))
+            .toList());
+  }
+
+  /// Live atomic stock verification before order placement (Instamart / Zepto style).
+  /// Returns list of item IDs that are currently out of stock.
+  Future<List<String>> verifyItemsStock(List<String> itemIds) async {
+    final List<String> outOfStock = [];
+
+    for (final id in itemIds) {
+      try {
+        final doc = await _menuItems.doc(id).get();
+        if (!doc.exists || doc.data() == null) {
+          outOfStock.add(id);
+        } else {
+          final isAvailable = doc.data()!['available'] ?? false;
+          if (!isAvailable) {
+            outOfStock.add(id);
+          }
+        }
+      } catch (e) {
+        debugPrint('Error verifying stock for item $id: $e');
+      }
+    }
+
+    return outOfStock;
   }
 
   Future<void> writeMenuItem(MenuItem item) async {

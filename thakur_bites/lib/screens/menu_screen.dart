@@ -92,10 +92,10 @@ class _MenuScreenState extends State<MenuScreen> {
                 ),
                 const SizedBox(height: 6),
 
-                // Menu grid with stream
+                // Menu grid with live all items stream & stock sync
                 Expanded(
                   child: StreamBuilder<List<MenuItem>>(
-                    stream: _firestore.menuItemsStream(),
+                    stream: _firestore.allMenuItemsStream(),
                     builder: (context, snapshot) {
                       // Loading → shimmer
                       if (snapshot.connectionState == ConnectionState.waiting) {
@@ -112,10 +112,18 @@ class _MenuScreenState extends State<MenuScreen> {
                         return _buildEmptyMenuState();
                       }
 
+                      // Sync cart items with live catalog stock availability
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        context.read<CartProvider>().syncAvailability(allItems);
+                      });
+
+                      // Filter available items for menu display
+                      final availableItems = allItems.where((i) => i.available).toList();
+
                       // Client-side category + search filter
                       var filtered = _activeCategory == 'all'
-                          ? allItems
-                          : allItems
+                          ? availableItems
+                          : availableItems
                               .where((i) => i.category == _activeCategory)
                               .toList();
 

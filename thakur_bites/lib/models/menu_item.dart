@@ -1,4 +1,4 @@
-/// Thakur Bites — Menu Item Model (Phase 2)
+/// Thakur Bites — Menu Item Model (Phase 2 & 11)
 /// Maps to the `menuItems` Firestore collection.
 class MenuItem {
   final String id;
@@ -54,5 +54,28 @@ class MenuItem {
       'imageUrl': imageUrl,
       'iconKey': iconKey,
     };
+  }
+
+  MenuItem copyWith({
+    String? name,
+    double? price,
+    String? category,
+    String? type,
+    int? prepMinutes,
+    bool? available,
+    String? imageUrl,
+    String? iconKey,
+  }) {
+    return MenuItem(
+      id: id,
+      name: name ?? this.name,
+      price: price ?? this.price,
+      category: category ?? this.category,
+      type: type ?? this.type,
+      prepMinutes: prepMinutes ?? this.prepMinutes,
+      available: available ?? this.available,
+      imageUrl: imageUrl ?? this.imageUrl,
+      iconKey: iconKey ?? this.iconKey,
+    );
   }
 }
