@@ -49,8 +49,12 @@ echo "▶ Step 8: Executing Peak Lunch Rush Concurrency Simulator (100 parallel 
 node scripts/simulate_lunch_rush.js
 
 echo ""
+echo "▶ Step 9: Executing Automated Staging DAST Security Attack Harness (10 Attack Classes)..."
+node scripts/run_dast_suite.js
+
+echo ""
 echo "══════════════════════════════════════════════════════════════════════"
-echo "🏆 ALL 8 SECURITY, SAST & INVARIANT GATES PASSED (216 TOTAL TESTS 100% GREEN)"
+echo "🏆 ALL 9 SECURITY, SAST, DAST & INVARIANT GATES PASSED (231 TOTAL TESTS 100% GREEN)"
 echo "══════════════════════════════════════════════════════════════════════"
 echo ""
 echo "📊 CATEGORICAL SECURITY & INVARIANT AUDIT REPORT:"
@@ -63,5 +67,6 @@ echo "  📺  Single TV Projection & Data Minimization: 8 Vectors Verified (100%
 echo "  🧪  RBAC Permissions & Rules Boundaries   : 36 Vectors Verified (100% Green)"
 echo "  💾  Cryptographic Backup Restore Integrity : 4 Checksums Verified (100% Green)"
 echo "  🚀  High-Concurrency Lunch Rush Simulator  : 100 Parallel Buyers (0 Oversold)"
+echo "  🎯  Automated Staging DAST Attack Harness  : 15 Attack Scenarios (100% Defended)"
 echo "  📱  Flutter Client State & Pricing Models  : 31 Client Tests (0 Issues)"
 echo "══════════════════════════════════════════════════════════════════════"
