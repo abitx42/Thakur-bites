@@ -2,10 +2,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/student.dart';
 
-/// Authentication and student profile service for Thakur Bites.
+/// Trusted Authentication and Student Profile Service for Thakur Bites.
+/// Strictly enforces verified institutional email domains (@tcetmumbai.in, @thakureducation.org).
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  static const List<String> allowedDomains = [
+    'tcetmumbai.in',
+    'thakureducation.org',
+  ];
 
   CollectionReference<Map<String, dynamic>> get _students =>
       _db.collection('students');
@@ -16,6 +22,14 @@ class AuthService {
   /// Current Firebase user
   User? get currentUser => _auth.currentUser;
 
+  /// Validates if an email belongs to an authorized institutional campus domain
+  static bool isAuthorizedCollegeDomain(String email) {
+    final clean = email.trim().toLowerCase();
+    if (!clean.contains('@')) return false;
+    final domain = clean.split('@').last;
+    return allowedDomains.any((d) => domain == d || domain.endsWith('.$d'));
+  }
+
   /// Fetch a student profile by UID
   Future<Student?> getStudentProfile(String uid) async {
     final doc = await _students.doc(uid).get();
@@ -23,7 +37,7 @@ class AuthService {
     return Student.fromFirestore(doc.id, doc.data()!);
   }
 
-  /// Sign up with college email and password
+  /// Sign up with authentic college email and password
   Future<Student> signUpWithEmail({
     required String email,
     required String password,
@@ -33,6 +47,12 @@ class AuthService {
     String? department,
   }) async {
     final cleanEmail = email.trim().toLowerCase();
+
+    if (!isAuthorizedCollegeDomain(cleanEmail)) {
+      throw Exception(
+          'Registration is restricted to official college email addresses (@tcetmumbai.in or @thakureducation.org).');
+    }
+
     final userCredential = await _auth.createUserWithEmailAndPassword(
       email: cleanEmail,
       password: password,
@@ -43,11 +63,8 @@ class AuthService {
       throw Exception('Failed to create student account.');
     }
 
-    final domain = cleanEmail.contains('@') ? cleanEmail.split('@').last : '';
-    final isCollegeDomain = domain == 'thakureducation.org' ||
-        domain == 'tcetmumbai.in' ||
-        domain.endsWith('.tcetmumbai.in') ||
-        domain.endsWith('.thakureducation.org');
+    // Send email verification link
+    await user.sendEmailVerification();
 
     final student = Student(
       uid: user.uid,
@@ -56,7 +73,7 @@ class AuthService {
       rollNo: rollNo.trim().toUpperCase(),
       email: cleanEmail,
       department: department?.trim(),
-      isVerified: isCollegeDomain,
+      isVerified: user.emailVerified,
       accountDisabled: false,
       createdAt: DateTime.now(),
       lastLoginAt: DateTime.now(),
@@ -67,13 +84,20 @@ class AuthService {
     return student;
   }
 
-  /// Sign in with email and password
+  /// Sign in with authentic college email and password
   Future<Student> signInWithEmail({
     required String email,
     required String password,
   }) async {
+    final cleanEmail = email.trim().toLowerCase();
+
+    if (!isAuthorizedCollegeDomain(cleanEmail)) {
+      throw Exception(
+          'Sign in is restricted to official college email addresses (@tcetmumbai.in or @thakureducation.org).');
+    }
+
     final userCredential = await _auth.signInWithEmailAndPassword(
-      email: email.trim().toLowerCase(),
+      email: cleanEmail,
       password: password,
     );
 
@@ -82,48 +106,58 @@ class AuthService {
       throw Exception('Failed to authenticate student.');
     }
 
-    final profile = await getStudentProfile(user.uid);
+    // Reload user to get latest emailVerified state
+    await user.reload();
+    final refreshedUser = _auth.currentUser ?? user;
+
+    final profile = await getStudentProfile(refreshedUser.uid);
     if (profile != null) {
       if (profile.accountDisabled) {
         await _auth.signOut();
-        throw Exception('Account has been deactivated. Please contact campus canteen admin.');
+        throw Exception(
+            'Account has been deactivated. Please contact campus canteen admin.');
       }
-      // Update lastLoginAt
-      await _students.doc(user.uid).update({
+
+      final updatedProfile = profile.copyWith(
+        isVerified: refreshedUser.emailVerified,
+        lastLoginAt: DateTime.now(),
+      );
+
+      await _students.doc(refreshedUser.uid).update({
+        'isVerified': refreshedUser.emailVerified,
         'lastLoginAt': Timestamp.now(),
       });
-      return profile;
+
+      return updatedProfile;
     }
 
-    // Fallback profile if record is missing
+    // Fallback provisioning if profile doc is missing
     final fallback = Student(
-      uid: user.uid,
-      name: user.displayName ?? 'TCET Student',
+      uid: refreshedUser.uid,
+      name: refreshedUser.displayName ?? 'TCET Student',
       phone: '',
       rollNo: 'TCET',
-      email: user.email,
+      email: refreshedUser.email,
+      isVerified: refreshedUser.emailVerified,
       createdAt: DateTime.now(),
       lastLoginAt: DateTime.now(),
     );
-    await _students.doc(user.uid).set(fallback.toFirestore());
+
+    await _students.doc(refreshedUser.uid).set(fallback.toFirestore());
     return fallback;
   }
 
-  /// Fast student sign-in with Roll Number & Phone
+  /// Sign in student with roll number and password
   Future<Student> signInStudent({
     required String name,
     required String phone,
     required String rollNo,
     String? email,
   }) async {
-    User? user = _auth.currentUser;
+    final user = _auth.currentUser;
     if (user == null) {
-      final userCredential = await _auth.signInAnonymously();
-      user = userCredential.user;
-    }
-
-    if (user == null) {
-      throw Exception('Failed to initialize Firebase Auth session.');
+      throw Exception(
+          'Please sign in or register with your college email (@tcetmumbai.in).');
     }
 
     final uid = user.uid;
@@ -136,23 +170,19 @@ class AuthService {
         name: name.trim(),
         phone: phone.trim(),
         rollNo: rollNo.trim().toUpperCase(),
-        email: email?.trim().toLowerCase(),
+        email: email?.trim().toLowerCase() ?? user.email,
+        isVerified: user.emailVerified,
         lastLoginAt: DateTime.now(),
       );
     } else {
-      final cleanEmail = email?.trim().toLowerCase();
-      final isCollegeDomain = cleanEmail != null &&
-          (cleanEmail.endsWith('@thakureducation.org') ||
-              cleanEmail.endsWith('@tcetmumbai.in') ||
-              cleanEmail.endsWith('.edu.in'));
-
+      final cleanEmail = email?.trim().toLowerCase() ?? user.email;
       student = Student(
         uid: uid,
         name: name.trim(),
         phone: phone.trim(),
         rollNo: rollNo.trim().toUpperCase(),
         email: cleanEmail,
-        isVerified: isCollegeDomain,
+        isVerified: user.emailVerified,
         createdAt: DateTime.now(),
         lastLoginAt: DateTime.now(),
         totalOrders: 0,
@@ -165,7 +195,12 @@ class AuthService {
 
   /// Send password reset link to student email
   Future<void> sendPasswordReset(String email) async {
-    await _auth.sendPasswordResetEmail(email: email.trim().toLowerCase());
+    final cleanEmail = email.trim().toLowerCase();
+    if (!isAuthorizedCollegeDomain(cleanEmail)) {
+      throw Exception(
+          'Password reset is only available for institutional emails (@tcetmumbai.in).');
+    }
+    await _auth.sendPasswordResetEmail(email: cleanEmail);
   }
 
   /// Increment student total orders count

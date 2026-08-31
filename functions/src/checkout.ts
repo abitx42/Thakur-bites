@@ -18,6 +18,16 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   }
 
   const studentId = request.auth.uid;
+  const tokenEmail = (request.auth.token.email as string | undefined)?.toLowerCase();
+  if (tokenEmail) {
+    const isCollegeDomain = tokenEmail.endsWith('@tcetmumbai.in') || tokenEmail.endsWith('@thakureducation.org');
+    if (!isCollegeDomain) {
+      throw new HttpsError(
+        'permission-denied',
+        'Checkout is restricted to authorized college domain accounts (@tcetmumbai.in or @thakureducation.org).'
+      );
+    }
+  }
   await enforceRateLimit(studentId, 'checkout');
   const { idempotencyKey, items, paymentMethod = 'online' } = request.data;
 
@@ -161,8 +171,8 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       }
       const tokenNumber = `TB-${String(nextSeq).padStart(3, '0')}`;
 
-      // Cryptographically secure CSPRNG 4-digit PIN
-      const rawPin = String(crypto.randomInt(1000, 10000));
+      // Cryptographically secure CSPRNG 6-digit PIN (P0: 14)
+      const rawPin = String(crypto.randomInt(100000, 1000000));
       const pinHash = crypto.createHash('sha256').update(rawPin).digest('hex');
 
       // Signed QR Token (valid for 2 hours)
