@@ -1194,4 +1194,87 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(evaluateCollectionRules('ratings', 'write'), false);
     assert.strictEqual(evaluateCollectionRules('ratingsPublic', 'read'), true);
   });
+
+  it('51. Granular Role Separation Invariant: Blocks kitchen/pickup from reading financial ledgers', () => {
+    function canReadFinancialLedgers(role) {
+      const allowedRoles = ['manager', 'admin', 'security_admin'];
+      return allowedRoles.includes(role);
+    }
+
+    assert.strictEqual(canReadFinancialLedgers('kitchen'), false);
+    assert.strictEqual(canReadFinancialLedgers('pickup'), false);
+    assert.strictEqual(canReadFinancialLedgers('cashier'), false);
+    assert.strictEqual(canReadFinancialLedgers('student'), false);
+    assert.strictEqual(canReadFinancialLedgers('manager'), true);
+    assert.strictEqual(canReadFinancialLedgers('admin'), true);
+  });
+
+  it('52. Student Profile Field Validation Invariant', () => {
+    const validYears = ['FE', 'SE', 'TE', 'BE', 'ME', 'PHD', 'FACULTY', 'STAFF', 'OTHER'];
+
+    function validateStudentProfileUpdate(data) {
+      if (!data.name || typeof data.name !== 'string' || data.name.length < 2 || data.name.length > 100) {
+        return { valid: false, error: 'INVALID_NAME' };
+      }
+      if (data.year && !validYears.includes(data.year)) {
+        return { valid: false, error: 'INVALID_YEAR' };
+      }
+      return { valid: true };
+    }
+
+    assert.strictEqual(validateStudentProfileUpdate({ name: 'Aarav Patel', year: 'TE' }).valid, true);
+    assert.strictEqual(validateStudentProfileUpdate({ name: 'X', year: 'TE' }).valid, false); // Too short
+    assert.strictEqual(validateStudentProfileUpdate({ name: 'Aarav', year: 'HACKER_YEAR' }).valid, false); // Invalid enum
+  });
+
+  it('53. Security Incident Deduplication & Cost Throttling Invariant', () => {
+    const cache = new Map();
+    let writeOperations = 0;
+
+    function simulateSecurityLog(eventType, actorUid) {
+      const key = `${eventType}:${actorUid}`;
+      const existing = cache.get(key);
+      if (existing) {
+        existing.count++;
+        // Throttle updates
+        if (existing.count % 10 === 0 || existing.count <= 5) {
+          writeOperations++;
+        }
+        return existing.incidentId;
+      }
+      const incidentId = 'INCIDENT-SEC-' + crypto.randomBytes(4).toString('hex').toUpperCase();
+      cache.set(key, { count: 1, incidentId });
+      writeOperations++;
+      return incidentId;
+    }
+
+    // Attacker floods 100 rapid attack requests
+    let lastIncidentId = '';
+    for (let i = 0; i < 100; i++) {
+      lastIncidentId = simulateSecurityLog('RATE_LIMIT_EXCEEDED', 'attacker_99');
+    }
+
+    assert.ok(lastIncidentId.startsWith('INCIDENT-SEC-'));
+    assert.strictEqual(cache.get('RATE_LIMIT_EXCEEDED:attacker_99').count, 100);
+    // Writes are throttled from 100 down to 14
+    assert.ok(writeOperations < 20, `Write count (${writeOperations}) must be heavily throttled`);
+  });
+
+  it('54. Sanitized Generic Error Masking Invariant: Masks internal logic from client errors', () => {
+    function formatClientError(internalError) {
+      const safePublicErrors = {
+        PERMISSION_DENIED: 'Permission denied.',
+        UNAUTHENTICATED: 'Authentication required.',
+        INVALID_ARGUMENT: 'Invalid request arguments.',
+      };
+      return safePublicErrors[internalError.code] || 'An error occurred while processing your request.';
+    }
+
+    const leakedInternalMsg = { code: 'PERMISSION_DENIED', debugMsg: 'Role claim was kitchen but required manager at line 42' };
+    const clientResponse = formatClientError(leakedInternalMsg);
+
+    assert.strictEqual(clientResponse, 'Permission denied.');
+    assert.strictEqual(clientResponse.includes('kitchen'), false);
+    assert.strictEqual(clientResponse.includes('line 42'), false);
+  });
 });

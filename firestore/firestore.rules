@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions for Role-Based Access Control (RBAC)
+    // ─── Granular Role-Based Access Control (RBAC) Functions ─────
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -11,20 +11,36 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function hasRole(role) {
-      return isAuthenticated() && request.auth.token.role == role;
+    function isKitchen() {
+      return isAuthenticated() && request.auth.token.role == 'kitchen';
     }
 
-    function isStaff() {
-      return isAuthenticated() && request.auth.token.role in ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'security_admin'];
+    function isPickup() {
+      return isAuthenticated() && request.auth.token.role == 'pickup';
     }
 
-    function isManagerOrAdmin() {
-      return isAuthenticated() && request.auth.token.role in ['manager', 'admin', 'security_admin'];
+    function isCashier() {
+      return isAuthenticated() && request.auth.token.role == 'cashier';
+    }
+
+    function isManager() {
+      return isAuthenticated() && request.auth.token.role == 'manager';
     }
 
     function isAdmin() {
-      return isAuthenticated() && request.auth.token.role in ['admin', 'security_admin'];
+      return isAuthenticated() && request.auth.token.role == 'admin';
+    }
+
+    function isSecurityAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'security_admin';
+    }
+
+    function isManagerOrAdmin() {
+      return isManager() || isAdmin() || isSecurityAdmin();
+    }
+
+    function isOperationalStaff() {
+      return isKitchen() || isPickup() || isCashier() || isManager() || isAdmin() || isSecurityAdmin();
     }
 
     // ─── Menu Items ─────────────────────────────────────────────
@@ -35,12 +51,11 @@ service cloud.firestore {
     }
 
     // ─── Orders ─────────────────────────────────────────────────
-    // Students can ONLY read their own orders. Staff can read orders for operations.
-    // DIRECT CLIENT WRITES ARE BLOCKED: All order placement, price calculation,
-    // and status transitions must execute through trusted Cloud Functions.
+    // Students can ONLY read their own orders. Operational staff can read orders for operations.
+    // DIRECT CLIENT WRITES ARE BLOCKED: All mutations execute through trusted Cloud Functions.
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (
-        resource.data.studentId == request.auth.uid || isStaff()
+        resource.data.studentId == request.auth.uid || isOperationalStaff()
       );
       allow write: if false; // All mutations strictly through Cloud Functions
     }
@@ -51,13 +66,16 @@ service cloud.firestore {
     }
 
     // ─── Students Profile ───────────────────────────────────────
-    // Students profile creation is restricted strictly to trusted backend Cloud Functions (provisionStudentProfile).
-    // Students can read and update ONLY harmless profile fields (name, phone, department, photoUrl, preferences).
-    // Security fields (role, isVerified, accountDisabled, totalOrders, uid) are strictly protected.
+    // Profile creation is restricted strictly to backend Cloud Functions (provisionStudentProfile).
+    // Students can update ONLY validated profile fields (name, phone, department, year, photoUrl, preferences).
     match /students/{studentId} {
-      allow read: if isOwner(studentId) || isStaff();
+      allow read: if isOwner(studentId) || isOperationalStaff();
       allow create: if false; // Backend Cloud Function ONLY
-      allow update: if isOwner(studentId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'phone', 'department', 'year', 'photoUrl', 'preferences', 'updatedAt']);
+      allow update: if isOwner(studentId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'phone', 'department', 'year', 'photoUrl', 'preferences', 'updatedAt'])
+        && request.resource.data.name is string && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 100
+        && (!('department' in request.resource.data) || (request.resource.data.department is string && request.resource.data.department.size() <= 50))
+        && (!('year' in request.resource.data) || (request.resource.data.year is string && request.resource.data.year in ['FE', 'SE', 'TE', 'BE', 'ME', 'PHD', 'FACULTY', 'STAFF', 'OTHER']));
       allow delete: if false;
     }
 
@@ -70,7 +88,7 @@ service cloud.firestore {
 
     // Private audit ratings (backend verified)
     match /ratingsPrivate/{ratingId} {
-      allow read: if isStaff() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
+      allow read: if isManagerOrAdmin() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
       allow write: if false;
     }
 
@@ -82,54 +100,53 @@ service cloud.firestore {
     // ─── Staff Users (RBAC Records) ─────────────────────────────
     // Staff profiles managed exclusively via admin Cloud Functions.
     match /staffUsers/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isManagerOrAdmin());
       allow write: if false;
     }
 
-    // ─── Payments & Financial Records ───────────────────────────
-    // Students can read their own receipts. Writes are backend-only.
+    // ─── Payments & Financial Records (Least-Privilege Isolation) ─
+    // Students can read their own receipts. Cashiers/Kitchen CANNOT browse double-entry ledgers.
     match /payments/{paymentId} {
       allow read: if isAuthenticated() && (
-        resource.data.studentId == request.auth.uid || isStaff()
+        resource.data.studentId == request.auth.uid || isOperationalStaff()
       );
       allow write: if false;
     }
 
     match /financialTransactions/{txnId} {
-      allow read: if isStaff();
+      allow read: if isManagerOrAdmin();
       allow write: if false;
     }
 
     match /dailyReconciliations/{date} {
-      allow read: if isStaff();
+      allow read: if isManagerOrAdmin();
       allow write: if false;
     }
 
     // ─── Inventory Reservations & Audit Ledgers ─────────────────
     match /inventoryReservations/{resId} {
-      allow read: if isStaff() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
+      allow read: if isOperationalStaff() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
       allow write: if false;
     }
 
     match /inventoryLedger/{ledgerId} {
-      allow read: if isStaff();
+      allow read: if isManagerOrAdmin();
       allow write: if false;
     }
 
     match /orderEvents/{eventId} {
       allow read: if isAuthenticated() && (
-        resource.data.actorId == request.auth.uid || isStaff()
+        resource.data.actorId == request.auth.uid || isOperationalStaff()
       );
       allow write: if false;
     }
 
     match /securityEvents/{eventId} {
-      allow read: if isAdmin();
+      allow read: if isSecurityAdmin() || isAdmin();
       allow write: if false;
     }
 
     // ─── Internal System Tables ─────────────────────────────────
-    // Internal counters, idempotent locks, and gateway locks.
     match /counters/{counterId} {
       allow read, write: if false;
     }
