@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Thakur Bites — Canteen Live Order Dispatch Board</title>
+  
+  <!-- High-Contrast Display Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="tv-header">
+    <div class="header-left">
+      <div class="brand-logo">TB</div>
+      <div>
+        <h1 class="brand-title">THAKUR BITES · CANTEEN ORDER BOARD</h1>
+        <div class="brand-subtitle">TCET ENGINEERING CAMPUS · GROUND FLOOR STATION</div>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div id="connection-status-pill" class="status-pill live">
+        <span class="status-dot"></span>
+        <span id="status-text">LIVE DISPATCH</span>
+      </div>
+      <div id="clock-display" class="clock-display">--:--:--</div>
+    </div>
+  </header>
+
+  <!-- Reconnecting Warning Banner (Non-intrusive) -->
+  <div id="reconnecting-banner" class="reconnecting-banner hidden">
+    ⚡️ Reconnecting to canteen server... Showing cached queue.
+  </div>
+
+  <!-- Main Split Display Grid -->
+  <main id="tv-main-content" class="tv-container">
+    
+    <!-- LEFT: PREPARING IN KITCHEN -->
+    <section class="queue-section preparing-section">
+      <div class="section-header preparing-header">
+        <div class="section-title-wrap">
+          <span class="section-icon">🔥</span>
+          <h2 class="section-title">NOW PREPARING</h2>
+        </div>
+        <span id="preparing-count" class="count-badge preparing-badge">0</span>
+      </div>
+
+      <div id="preparing-grid" class="tokens-grid">
+        <!-- Preparing tokens inserted dynamically -->
+      </div>
+    </section>
+
+    <!-- RIGHT: READY FOR PICKUP -->
+    <section class="queue-section ready-section">
+      <div class="section-header ready-header">
+        <div class="section-title-wrap">
+          <span class="section-icon">🟢</span>
+          <h2 class="section-title">READY FOR PICKUP</h2>
+        </div>
+        <span id="ready-count" class="count-badge ready-badge">0</span>
+      </div>
+
+      <div id="ready-grid" class="tokens-grid">
+        <!-- Ready tokens inserted dynamically -->
+      </div>
+    </section>
+  </main>
+
+  <!-- Off-Hours / Empty Queue Standby Graphic -->
+  <div id="standby-overlay" class="standby-overlay hidden">
+    <div class="standby-card">
+      <div class="standby-icon">🍱</div>
+      <h2 class="standby-title">CANTEEN IS ALL CAUGHT UP</h2>
+      <p class="standby-desc">All student and faculty orders have been collected.<br>Operating Hours: 8:00 AM – 5:30 PM</p>
+      <div class="standby-badge">TCET DIGITAL CANTEEN</div>
+    </div>
+  </div>
+
+  <!-- Audio Prompt Bar (Allows User Interaction to Enable Web Audio API Chime) -->
+  <div id="audio-enable-banner" class="audio-banner">
+    <span>🔔 Click anywhere on screen to enable audible pickup chimes</span>
+  </div>
+
+  <!-- TV Script Module -->
+  <script type="module" src="tv.js"></script>
+</body>
+</html>

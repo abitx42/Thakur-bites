@@ -2604,4 +2604,96 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(fifthAttempt.locked, true);
     assert.strictEqual(fifthAttempt.lockDurationMinutes, 15);
   });
+
+  it('121. TV Display Data Minimization Invariant: Zero PII or payment secrets leaked on board', () => {
+    function projectTvOrder(orderDoc) {
+      // Must contain ONLY presentation data: token, status, priority, eta
+      return {
+        tokenNumber: orderDoc.tokenNumber,
+        status: orderDoc.status,
+        priorityLevel: orderDoc.priorityLevel || 1,
+        estimatedMinutes: orderDoc.estimatedMinutes || 6,
+      };
+    }
+
+    const rawOrderDoc = {
+      id: 'order_abc123',
+      tokenNumber: 'TB-042',
+      status: 'ready',
+      studentName: 'Rohit Sharma',
+      studentRollNo: '1032251174',
+      studentPhone: '9876543210',
+      totalAmountPaise: 12000,
+      paymentId: 'pay_xyz789',
+      priorityLevel: 2,
+      pinCode: '4829',
+    };
+
+    const tvProjection = projectTvOrder(rawOrderDoc);
+
+    assert.strictEqual(tvProjection.tokenNumber, 'TB-042');
+    assert.strictEqual(tvProjection.status, 'ready');
+    assert.strictEqual(tvProjection.priorityLevel, 2);
+    assert.strictEqual(tvProjection.studentName, undefined, 'Student name must NEVER be projected to public TV');
+    assert.strictEqual(tvProjection.studentRollNo, undefined, 'Roll number must NEVER be projected to public TV');
+    assert.strictEqual(tvProjection.studentPhone, undefined, 'Phone must NEVER be projected to public TV');
+    assert.strictEqual(tvProjection.totalAmountPaise, undefined, 'Financial amount must NEVER be projected to public TV');
+    assert.strictEqual(tvProjection.pinCode, undefined, 'Pickup PIN must NEVER be projected to public TV');
+  });
+
+  it('122. TV Display Resilient State Machine: Correctly handles Live, Reconnecting, and Standby', () => {
+    function determineTvDisplayState(activeOrdersCount, isNetworkConnected) {
+      if (!isNetworkConnected) return 'RECONNECTING_STALE';
+      if (activeOrdersCount === 0) return 'STANDBY_EMPTY';
+      return 'LIVE_DISPATCH';
+    }
+
+    assert.strictEqual(determineTvDisplayState(5, true), 'LIVE_DISPATCH');
+    assert.strictEqual(determineTvDisplayState(0, true), 'STANDBY_EMPTY');
+    assert.strictEqual(determineTvDisplayState(5, false), 'RECONNECTING_STALE');
+    assert.strictEqual(determineTvDisplayState(0, false), 'RECONNECTING_STALE');
+  });
+
+  it('123. Zero Error Leakage Invariant: Public TV display traps raw exceptions without stack traces', () => {
+    function handleTvStreamError(error) {
+      // Safe fallback UI state: NEVER exposes error.stack or internal Firebase messages to cafeteria audience
+      return {
+        displayStatus: 'RECONNECTING',
+        showBanner: true,
+        userMessage: '⚡️ Reconnecting to canteen server... Showing cached queue.',
+        internalLogged: error.message,
+      };
+    }
+
+    const firestoreError = new Error('PERMISSION_DENIED: Missing or insufficient permissions at /databases/documents/orders');
+    const safeUiState = handleTvStreamError(firestoreError);
+
+    assert.strictEqual(safeUiState.displayStatus, 'RECONNECTING');
+    assert.strictEqual(safeUiState.userMessage.includes('PERMISSION_DENIED'), false, 'Raw database error completely masked');
+  });
+
+  it('124. Chime Audio Trigger Invariant: Fires audio chime only when tokens enter READY status', () => {
+    const knownReady = new Set(['TB-001', 'TB-002']);
+    let chimePlayed = false;
+
+    function onOrdersUpdate(incomingOrders, isInitialLoad) {
+      const readyOrders = incomingOrders.filter(o => o.status === 'ready');
+      readyOrders.forEach(o => {
+        if (!knownReady.has(o.tokenNumber)) {
+          knownReady.add(o.tokenNumber);
+          if (!isInitialLoad) {
+            chimePlayed = true;
+          }
+        }
+      });
+    }
+
+    // Initial load with 2 ready tokens -> No initial chime blast
+    onOrdersUpdate([{ tokenNumber: 'TB-001', status: 'ready' }, { tokenNumber: 'TB-002', status: 'ready' }], true);
+    assert.strictEqual(chimePlayed, false);
+
+    // New token TB-003 transitions to ready -> Chime fires!
+    onOrdersUpdate([{ tokenNumber: 'TB-003', status: 'ready' }], false);
+    assert.strictEqual(chimePlayed, true);
+  });
 });

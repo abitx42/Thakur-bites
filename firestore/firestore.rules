@@ -225,5 +225,17 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false; // Backend Cloud Function ONLY
     }
+
+    // ─── Staff Shift PINs ─────────────────────────────────────────
+    match /shiftPins/{pinId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Backend Cloud Function ONLY
+    }
+
+    // ─── Public Live Queue (TV Display Zero-PII Projection) ───────
+    match /publicLiveQueue/{tokenId} {
+      allow read: if true; // Public read for cafeteria wall monitors
+      allow write: if false; // Backend Cloud Function ONLY
+    }
   }
 }
