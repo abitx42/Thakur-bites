@@ -5,6 +5,7 @@ import { UserRole } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
 import { logSecurityEvent } from './security_logger';
+import { enforceAppCheck } from './app_check';
 
 const db = admin.firestore();
 
@@ -19,6 +20,7 @@ const db = admin.firestore();
  * 4. Multi-staff brute force lockout tracking.
  */
 export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?: string }>(async (request) => {
+  enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
@@ -215,6 +217,7 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
  * Manager/Admin Manual Physical Override for Locked Orders
  */
 export const unlockOrderPickupVerification = onCall<{ orderId: string; reason: string }>(async (request) => {
+  enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
