@@ -13,11 +13,26 @@
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
+// Environment isolation guardrail: strictly prevent seeding production project
+const targetProject = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'adi-thakur-bite-staging';
+const isExplicitStaging = targetProject.includes('staging') ||
+  targetProject.includes('dev') ||
+  targetProject.includes('emulator') ||
+  process.env.APP_ENV === 'staging' ||
+  process.env.APP_ENV === 'development' ||
+  process.env.ALLOW_STAGING_SEED === 'true';
+
+if (!isExplicitStaging && (process.env.APP_ENV === 'production' || process.env.NODE_ENV === 'production')) {
+  console.error('\n🚨 REFUSING EXECUTION: Cannot seed demo data into production environment.');
+  console.error('   Production protection guardrail triggered. Target project:', targetProject);
+  console.error('   To seed staging, set APP_ENV=staging or point FIREBASE_PROJECT_ID to a staging project.\n');
+  process.exit(1);
+}
+
 // Initialize admin if not already initialized
 if (!admin.apps.length) {
-  // Use default project credentials
   admin.initializeApp({
-    projectId: 'adi-thakur-bite',
+    projectId: targetProject,
   });
 }
 
@@ -35,6 +50,7 @@ function getTodayStr() {
 async function seedDemoData() {
   console.log('════════════════════════════════════════════════════════════════');
   console.log('🌱 THAKUR BITES PLATFORM 2.0 — DEMO DATA SEEDER');
+  console.log('   Target Project:', targetProject);
   console.log('════════════════════════════════════════════════════════════════\n');
 
   const todayStr = getTodayStr();
@@ -53,11 +69,11 @@ async function seedDemoData() {
   }, { merge: true });
   console.log('  ✓ featureFlags/global set.\n');
 
-  // 2. Seed Shift PINs for Today
-  console.log('▶ Step 2: Seeding Today Workstation Shift PINs...');
-  const testSalt = '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d';
-  const defaultPin = '123456';
-  const pinHash = hashPin(defaultPin, testSalt);
+  // 2. Seed Dynamic CSPRNG Shift PINs for Today (Zero static/predictable credentials)
+  console.log('▶ Step 2: Generating Dynamic CSPRNG Workstation Shift PINs...');
+  const dynamicPin = (100000 + (crypto.randomBytes(3).readUIntBE(0, 3) % 900000)).toString();
+  const dynamicSalt = crypto.randomBytes(16).toString('hex');
+  const pinHash = hashPin(dynamicPin, dynamicSalt);
 
   const shiftRoles = ['kitchen', 'pickup', 'cashier'];
   for (const role of shiftRoles) {
@@ -68,7 +84,7 @@ async function seedDemoData() {
       shiftDate: todayStr,
       shiftWindow: 'FULL_DAY',
       pinHash,
-      salt: testSalt,
+      salt: dynamicSalt,
       boundDevices: [],
       maxDevices: 3,
       failedAttempts: 0,
@@ -78,9 +94,10 @@ async function seedDemoData() {
       createdAt: now,
       expiresAt: admin.firestore.Timestamp.fromDate(new Date(Date.now() + 24 * 60 * 60 * 1000)),
     }, { merge: true });
-    console.log(`  ✓ Shift PIN for ${role.toUpperCase()} created: PIN = ${defaultPin} (ID: ${pinId})`);
+    console.log(`  ✓ Shift PIN for ${role.toUpperCase()} provisioned (ID: ${pinId})`);
   }
-  console.log('');
+  console.log(`\n  🔑 RUNTIME DYNAMIC SHIFT PIN FOR ALL STATIONS: ${dynamicPin}`);
+  console.log(`     (Salted SHA-256 hash stored in Firestore; dynamic PIN printed ONLY to local stdout)\n`);
 
   // 3. Seed Menu Items
   console.log('▶ Step 3: Seeding Campus Menu Catalog...');

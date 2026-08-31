@@ -17,8 +17,8 @@ This guide details the operational procedures, security test cases, and automate
 Before running DAST suites against staging, seed the staging project (`adi-thakur-bite-staging`):
 
 ```bash
-# Seed realistic students, faculty, visitors, and workstation shift PINs (PIN: 123456)
-node scripts/seed_demo_data.js
+# Seed realistic students, faculty, visitors, and dynamic CSPRNG workstation shift PINs
+APP_ENV=staging node scripts/seed_demo_data.js
 ```
 
 ### Staging Identities Configured:

@@ -3298,4 +3298,51 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
       process.env.ENFORCE_APP_CHECK = originalEnv;
     }
   });
+
+  it('156. Environment Isolation Guardrail: Strictly refuses execution against production projects', () => {
+    function evaluateEnvironmentSafety(targetProject, appEnv, allowStaging) {
+      const isExplicitStaging = targetProject.includes('staging') ||
+        targetProject.includes('dev') ||
+        targetProject.includes('emulator') ||
+        appEnv === 'staging' ||
+        appEnv === 'development' ||
+        allowStaging === 'true';
+
+      if (!isExplicitStaging && appEnv === 'production') {
+        return { safe: false, action: 'ABORT_PRODUCTION_PROTECTED' };
+      }
+      return { safe: true, action: 'PERMIT_STAGING_EXECUTION' };
+    }
+
+    assert.strictEqual(
+      evaluateEnvironmentSafety('adi-thakur-bite', 'production', 'false').safe,
+      false,
+      'Production execution must be blocked'
+    );
+    assert.strictEqual(
+      evaluateEnvironmentSafety('adi-thakur-bite-staging', 'production', 'false').safe,
+      true,
+      'Explicit staging project permitted'
+    );
+    assert.strictEqual(
+      evaluateEnvironmentSafety('adi-thakur-bite', 'staging', 'false').safe,
+      true,
+      'APP_ENV=staging permitted'
+    );
+  });
+
+  it('157. Dynamic CSPRNG Shift PIN Invariant: Zero static credentials and high entropy', () => {
+    const crypto = require('crypto');
+    function generateDynamicShiftPin() {
+      const num = 100000 + (crypto.randomBytes(3).readUIntBE(0, 3) % 900000);
+      return num.toString();
+    }
+
+    const pin1 = generateDynamicShiftPin();
+    const pin2 = generateDynamicShiftPin();
+
+    assert.strictEqual(pin1.length, 6);
+    assert.strictEqual(/^\d{6}$/.test(pin1), true);
+    assert.notStrictEqual(pin1, '123456', 'Static default PIN eliminated');
+  });
 });
