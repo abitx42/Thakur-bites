@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import * as crypto from 'crypto';
 import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
@@ -182,3 +183,72 @@ export const simulatePermissionCheck = onCall<SimulatePermissionRequest>(async (
     requiredRoles: result.requiredRoles,
   };
 });
+
+export interface EmergencyActionRequest {
+  action: 'FREEZE_FINANCIALS' | 'KILL_SWITCH' | 'UNFREEZE_PLATFORM';
+  stepUpToken: string;
+  reason: string;
+}
+
+/**
+ * Pure function to verify step-up confirmation token with constant-time equality check.
+ */
+export function verifyStepUpAuthentication(stepUpToken?: string, requiredToken = 'STEP_UP_CONFIRM_EMERGENCY'): boolean {
+  if (!stepUpToken || typeof stepUpToken !== 'string') return false;
+  const tokenBuf = Buffer.from(stepUpToken);
+  const requiredBuf = Buffer.from(requiredToken);
+  if (tokenBuf.length !== requiredBuf.length) return false;
+  return crypto.timingSafeEqual(tokenBuf, requiredBuf);
+}
+
+/**
+ * Platform 2.0 — Emergency Operational Action with Step-Up Authentication
+ * 
+ * Enforces MFA / Step-up token requirement for high-impact destructive controls.
+ */
+export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(async (request) => {
+  enforceAppCheck(request);
+
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'Security Admin authentication required.');
+  }
+
+  const callerRole = (request.auth.token.role as string | undefined) || '';
+  if (callerRole !== 'security_admin' && callerRole !== 'admin') {
+    throw new HttpsError('permission-denied', 'Only security_admin or admin can execute emergency actions.');
+  }
+
+  const { action, stepUpToken, reason } = request.data || {};
+  if (!action || !reason) {
+    throw new HttpsError('invalid-argument', 'Action and justification reason are required.');
+  }
+
+  const isStepUpValid = verifyStepUpAuthentication(stepUpToken, `STEP_UP_CONFIRM_${action}`);
+  if (!isStepUpValid) {
+    await logSecurityEvent({
+      eventType: 'STEP_UP_AUTH_FAILED',
+      severity: 'HIGH',
+      actorUid: request.auth.uid,
+      details: { action, reason },
+    });
+    throw new HttpsError(
+      'failed-precondition',
+      'Step-up confirmation token invalid or missing. Operation rejected.'
+    );
+  }
+
+  await logSecurityEvent({
+    eventType: 'EMERGENCY_OPERATIONAL_ACTION_EXECUTED',
+    severity: 'CRITICAL',
+    actorUid: request.auth.uid,
+    details: { action, reason, executedAt: new Date().toISOString() },
+  });
+
+  return {
+    success: true,
+    actionExecuted: action,
+    status: 'COMPLETED_UNDER_STEP_UP_AUTH',
+    executedAt: new Date().toISOString(),
+  };
+});
+

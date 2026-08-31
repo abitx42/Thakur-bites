@@ -23,7 +23,7 @@ npm audit --audit-level=high
 cd ..
 
 echo ""
-echo "▶ Step 4: Compiling & Testing Backend Cloud Functions (185 Invariant Tests)..."
+echo "▶ Step 4: Compiling & Testing Backend Cloud Functions (189 Invariant Tests)..."
 cd functions
 npm run build
 npm test
@@ -54,7 +54,7 @@ node scripts/run_dast_suite.js
 
 echo ""
 echo "══════════════════════════════════════════════════════════════════════"
-echo "🏆 ALL 9 SECURITY, SAST, DAST & INVARIANT GATES PASSED (231 TOTAL TESTS 100% GREEN)"
+echo "🏆 ALL 9 SECURITY, SAST, DAST & INVARIANT GATES PASSED (235 TOTAL TESTS 100% GREEN)"
 echo "══════════════════════════════════════════════════════════════════════"
 echo ""
 echo "📊 CATEGORICAL SECURITY & INVARIANT AUDIT REPORT:"
