@@ -1,5 +1,6 @@
 // Phase 11 — Live Menu & Stock Management View with Distinct Cooked vs Store Item Logic
 import { 
+  db,
   subscribeMenuItems, 
   toggleItemAvailability, 
   updateItemStockCount, 
@@ -7,23 +8,67 @@ import {
   saveMenuItem, 
   deleteMenuItem 
 } from '../firebase.js';
+import { doc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 
 let unsubscribeMenu = null;
+let unsubscribeStatus = null;
 let currentItems = [];
 let showAddModal = false;
 let editingItem = null; // Item object currently being edited in details modal
+let currentMode = 'NORMAL';
+let modeLoading = false;
 
 export function renderAdminView(container) {
-  if (unsubscribeMenu) {
-    unsubscribeMenu();
-  }
+  if (unsubscribeMenu) unsubscribeMenu();
+  if (unsubscribeStatus) unsubscribeStatus();
 
   function render() {
     const cookedItems = currentItems.filter(i => i.type === 'cooked');
     const storeItems = currentItems.filter(i => i.type === 'instant');
 
+    const modeColors = {
+      NORMAL: { bg: '#F0FDF4', border: '#86EFAC', text: '#166534', badge: '#16A34A' },
+      DEGRADED: { bg: '#FFFBEB', border: '#FDE68A', text: '#92400E', badge: '#D97706' },
+      FINANCIAL_FROZEN: { bg: '#FEF2F2', border: '#FCA5A5', text: '#991B1B', badge: '#DC2626' },
+      EMERGENCY_HALT: { bg: '#450A0A', border: '#7F1D1D', text: '#FEF2F2', badge: '#991B1B' },
+    };
+    const activeColor = modeColors[currentMode] || modeColors.NORMAL;
+
     container.innerHTML = `
       <div class="main-wrapper" style="max-width: 1300px; margin: 0 auto; padding: 1.5rem 1rem;">
+        
+        <!-- Emergency Operational Mode Controller Bar -->
+        <div style="background: ${activeColor.bg}; border: 2px solid ${activeColor.border}; border-radius: 14px; padding: 1.2rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
+          <div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-family: var(--font-display); font-size: 1.3rem; font-weight: 800; color: ${activeColor.text};">
+                🚨 SYSTEM OPERATIONAL STATUS:
+              </span>
+              <span style="background: ${activeColor.badge}; color: #FFF; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; padding: 3px 12px; border-radius: 999px;">
+                ${currentMode}
+              </span>
+            </div>
+            <p style="font-family: var(--font-sans); font-size: 0.85rem; color: ${activeColor.text}; margin-top: 4px; opacity: 0.9;">
+              ${currentMode === 'NORMAL' ? 'All canteen operations, online ordering, and checkout are active.' : (currentMode === 'DEGRADED' ? 'Online checkout paused. Counter cash orders only.' : (currentMode === 'FINANCIAL_FROZEN' ? 'All financial transactions frozen for audit reconciliation.' : 'TOTAL EMERGENCY HALT: All canteen operations paused.'))}
+            </p>
+          </div>
+
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="mode-btn" data-mode="NORMAL" ${modeLoading || currentMode === 'NORMAL' ? 'disabled' : ''} style="padding: 7px 14px; border-radius: 8px; border: 1.5px solid #16A34A; background: #FFF; color: #166534; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+              NORMAL
+            </button>
+            <button class="mode-btn" data-mode="DEGRADED" ${modeLoading || currentMode === 'DEGRADED' ? 'disabled' : ''} style="padding: 7px 14px; border-radius: 8px; border: 1.5px solid #D97706; background: #FFF; color: #92400E; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+              PAUSE ONLINE (DEGRADED)
+            </button>
+            <button class="mode-btn" data-mode="FINANCIAL_FROZEN" ${modeLoading || currentMode === 'FINANCIAL_FROZEN' ? 'disabled' : ''} style="padding: 7px 14px; border-radius: 8px; border: 1.5px solid #DC2626; background: #FFF; color: #991B1B; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+              FREEZE CHECKOUT
+            </button>
+            <button class="mode-btn" data-mode="EMERGENCY_HALT" ${modeLoading || currentMode === 'EMERGENCY_HALT' ? 'disabled' : ''} style="padding: 7px 14px; border-radius: 8px; border: 1.5px solid #991B1B; background: #7F1D1D; color: #FFF; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+              EMERGENCY HALT
+            </button>
+          </div>
+        </div>
         
         <!-- Header -->
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
@@ -531,11 +576,14 @@ export function renderAdminView(container) {
 
         await saveMenuItem({
           name,
-          price,
-          stockCount: type === 'instant' ? Number(stockCount) : 100,
+          price: Number(price),
+          stockOnHand: type === 'instant' ? Number(stockCount) : 100,
+          reservedStock: 0,
           prepMinutes: type === 'instant' ? 0 : Number(prepMinutes),
           category,
           type,
+          isPublished: true,
+          isOrderable: true,
           available: true
         });
 
@@ -543,10 +591,46 @@ export function renderAdminView(container) {
         render();
       });
     }
+
+    // 7. Emergency Operational Mode Controller Listeners
+    container.querySelectorAll('.mode-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const targetMode = btn.getAttribute('data-mode');
+        const reason = prompt(`Reason for changing operational status to ${targetMode}:`, `Staff manual override to ${targetMode}`);
+        if (reason === null) return; // User cancelled
+
+        try {
+          modeLoading = true;
+          render();
+          const functions = getFunctions();
+          const setModeFn = httpsCallable(functions, 'setSystemOperationalMode');
+          await setModeFn({ mode: targetMode, reason: reason || 'Manual admin override' });
+          currentMode = targetMode;
+        } catch (err) {
+          alert('Mode Transition Error: ' + (err.message || err));
+        } finally {
+          modeLoading = false;
+          render();
+        }
+      });
+    });
   }
 
+  // Subscribe to menu items
   unsubscribeMenu = subscribeMenuItems((items) => {
     currentItems = items;
     render();
   });
+
+  // Subscribe to operational status
+  const statusDocRef = doc(db, 'publicSystemStatus', 'global');
+  unsubscribeStatus = onSnapshot(statusDocRef, (snap) => {
+    if (snap.exists()) {
+      currentMode = snap.data()?.mode || 'NORMAL';
+      render();
+    }
+  }, (err) => {
+    console.error("Status subscription notice:", err);
+  });
 }
+
