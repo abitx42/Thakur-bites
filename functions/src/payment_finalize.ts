@@ -111,61 +111,66 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       throw new Error(`Payment amount or currency mismatch. Expected ${expectedPaise} ${expectedCurrency}, received ${amountPaise} ${currency}.`);
     }
 
-    // 4. Cancelled Order / Orphaned Payment Handling (TB-003 Remediation)
+    // 4. Cancelled Order / Orphaned Payment Handling (TB-003 & TB-NEW-002 Remediation)
     // Invariant: Cancelled orders are NEVER resurrected. Late payment is recorded as ORPHANED for automated refund.
+    // Invariant TB-NEW-002: Deterministic transaction ID orphan_fin_${gatewayPaymentId} guarantees exactly 1 ledger posting.
     if (orderData.status === 'cancelled' || orderData.paymentStatus === 'cancelled') {
       const paymentId = `orphan_${gatewayPaymentId}`;
       const orphanRef = db.collection('orphanedPayments').doc(paymentId);
-      const orphanRecord = {
-        paymentId,
-        orderId,
-        studentId: orderData.studentId || 'unknown',
-        gateway: source === 'webhook' ? 'razorpay_webhook' : 'razorpay_direct',
-        gatewayOrderId,
-        gatewayPaymentId,
-        amountPaise: expectedPaise,
-        amount: expectedPaise / 100,
-        currency: expectedCurrency,
-        orderStatusAtCapture: orderData.status,
-        capturedAt: now,
-        refundStatus: 'REFUND_QUEUED',
-      };
-      transaction.set(orphanRef, orphanRecord);
+      const finTxRef = db.collection('financialTransactions').doc(`orphan_fin_${gatewayPaymentId}`);
 
-      const finTxRef = db.collection('financialTransactions').doc();
-      transaction.set(finTxRef, {
-        transactionId: finTxRef.id,
-        orderId,
-        type: 'ORPHANED_PAYMENT_CAPTURE',
-        amount: expectedPaise / 100,
-        amountPaise: expectedPaise,
-        currency: 'INR',
-        postings: [
-          {
-            account: 'GATEWAY_RECEIVABLE',
-            debitPaise: expectedPaise,
-            creditPaise: 0,
-          },
-          {
-            account: 'ORPHAN_SUSPENSE',
-            debitPaise: 0,
-            creditPaise: expectedPaise,
-          },
-        ],
-        gatewayTransactionId: gatewayPaymentId,
-        gatewayOrderId,
-        actorId,
-        timestamp: now,
-        status: 'ORPHANED',
-      });
+      const orphanSnap = await transaction.get(orphanRef);
+      if (!orphanSnap.exists) {
+        const orphanRecord = {
+          paymentId,
+          orderId,
+          studentId: orderData.studentId || 'unknown',
+          gateway: source === 'webhook' ? 'razorpay_webhook' : 'razorpay_direct',
+          gatewayOrderId,
+          gatewayPaymentId,
+          amountPaise: expectedPaise,
+          amount: expectedPaise / 100,
+          currency: expectedCurrency,
+          orderStatusAtCapture: orderData.status,
+          capturedAt: now,
+          refundStatus: 'REFUND_QUEUED',
+        };
+        transaction.set(orphanRef, orphanRecord);
 
-      logSecurityEvent({
-        eventType: 'ORPHANED_PAYMENT_ON_CANCELLED_ORDER',
-        orderId,
-        actorUid: actorId,
-        severity: 'HIGH',
-        details: { gatewayPaymentId, amountPaise: expectedPaise, reason: 'Payment arrived after order cancellation' },
-      }).catch(() => {});
+        transaction.set(finTxRef, {
+          transactionId: finTxRef.id,
+          orderId,
+          type: 'ORPHANED_PAYMENT_CAPTURE',
+          amount: expectedPaise / 100,
+          amountPaise: expectedPaise,
+          currency: 'INR',
+          postings: [
+            {
+              account: 'GATEWAY_RECEIVABLE',
+              debitPaise: expectedPaise,
+              creditPaise: 0,
+            },
+            {
+              account: 'ORPHAN_SUSPENSE',
+              debitPaise: 0,
+              creditPaise: expectedPaise,
+            },
+          ],
+          gatewayTransactionId: gatewayPaymentId,
+          gatewayOrderId,
+          actorId,
+          timestamp: now,
+          status: 'ORPHANED',
+        });
+
+        logSecurityEvent({
+          eventType: 'ORPHANED_PAYMENT_ON_CANCELLED_ORDER',
+          orderId,
+          actorUid: actorId,
+          severity: 'HIGH',
+          details: { gatewayPaymentId, amountPaise: expectedPaise, reason: 'Payment arrived after order cancellation' },
+        }).catch(() => {});
+      }
 
       return {
         success: true,

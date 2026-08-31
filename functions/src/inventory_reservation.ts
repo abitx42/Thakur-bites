@@ -137,46 +137,48 @@ export async function commitInventoryInTransaction(
   for (const item of resData.items) {
     const itemRef = db.collection('menuItems').doc(item.itemId);
     const snap = await transaction.get(itemRef);
-    if (snap.exists) {
-      const data = snap.data()!;
-      if (data.type === 'instant') {
-        const stockOnHand = data.stockOnHand;
-        const reservedStock = data.reservedStock !== undefined ? data.reservedStock : 0;
+    if (!snap.exists) {
+      throw new Error(`INVENTORY_ITEM_NOT_FOUND: Item ${item.itemId} missing from catalog during inventory commit.`);
+    }
 
-        if (typeof stockOnHand !== 'number' || !Number.isSafeInteger(stockOnHand) || stockOnHand < item.quantity) {
-          throw new Error(`INVENTORY_CORRUPTION: stockOnHand (${stockOnHand}) insufficient to commit ${item.quantity} units for ${item.itemId}.`);
-        }
-        if (typeof reservedStock !== 'number' || !Number.isSafeInteger(reservedStock) || reservedStock < item.quantity) {
-          throw new Error(`INVENTORY_CORRUPTION: reservedStock (${reservedStock}) insufficient to commit ${item.quantity} units for ${item.itemId}.`);
-        }
+    const data = snap.data()!;
+    if (data.type === 'instant') {
+      const stockOnHand = data.stockOnHand;
+      const reservedStock = data.reservedStock !== undefined ? data.reservedStock : 0;
 
-        const newReservedStock = reservedStock - item.quantity;
-        const newStockOnHand = stockOnHand - item.quantity;
-        const newAvailableStock = newStockOnHand - newReservedStock;
-
-        transaction.update(itemRef, {
-          stockOnHand: newStockOnHand,
-          reservedStock: newReservedStock,
-          isOrderable: newAvailableStock > 0,
-          available: newAvailableStock > 0,
-          updatedAt: now,
-        });
-
-        // Append to inventoryLedger
-        const ledgerRef = db.collection('inventoryLedger').doc();
-        transaction.set(ledgerRef, {
-          itemId: item.itemId,
-          orderId,
-          changeType: 'STOCK_COMMITTED',
-          deltaUnits: 0, // Decrement was reserved at checkout
-          previousAvailable: newAvailableStock,
-          newAvailable: newAvailableStock,
-          stockOnHand: newStockOnHand,
-          reservedStock: newReservedStock,
-          actorId,
-          timestamp: now,
-        });
+      if (typeof stockOnHand !== 'number' || !Number.isSafeInteger(stockOnHand) || stockOnHand < item.quantity) {
+        throw new Error(`INVENTORY_CORRUPTION: stockOnHand (${stockOnHand}) insufficient to commit ${item.quantity} units for ${item.itemId}.`);
       }
+      if (typeof reservedStock !== 'number' || !Number.isSafeInteger(reservedStock) || reservedStock < item.quantity) {
+        throw new Error(`INVENTORY_CORRUPTION: reservedStock (${reservedStock}) insufficient to commit ${item.quantity} units for ${item.itemId}.`);
+      }
+
+      const newReservedStock = reservedStock - item.quantity;
+      const newStockOnHand = stockOnHand - item.quantity;
+      const newAvailableStock = newStockOnHand - newReservedStock;
+
+      transaction.update(itemRef, {
+        stockOnHand: newStockOnHand,
+        reservedStock: newReservedStock,
+        isOrderable: newAvailableStock > 0,
+        available: newAvailableStock > 0,
+        updatedAt: now,
+      });
+
+      // Append to inventoryLedger
+      const ledgerRef = db.collection('inventoryLedger').doc();
+      transaction.set(ledgerRef, {
+        itemId: item.itemId,
+        orderId,
+        changeType: 'STOCK_COMMITTED',
+        deltaUnits: 0, // Decrement was reserved at checkout
+        previousAvailable: newAvailableStock,
+        newAvailable: newAvailableStock,
+        stockOnHand: newStockOnHand,
+        reservedStock: newReservedStock,
+        actorId,
+        timestamp: now,
+      });
     }
   }
 

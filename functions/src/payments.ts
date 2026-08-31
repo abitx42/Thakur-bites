@@ -270,21 +270,43 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
   const now = admin.firestore.Timestamp.now();
 
   try {
-    // Check if already processed
-    const eventSnap = await eventDocRef.get();
-    if (eventSnap.exists && eventSnap.data()?.status === 'PROCESSED') {
-      res.status(200).json({ received: true, alreadyProcessed: true });
+    // Atomic Transaction Claiming with 30s Lease Timeout (TB-NEW-003 Remediation)
+    const claimResult = await db.runTransaction(async (t) => {
+      const snap = await t.get(eventDocRef);
+      if (snap.exists) {
+        const data = snap.data()!;
+        if (data.status === 'PROCESSED') {
+          return { status: 'ALREADY_PROCESSED' };
+        }
+        // Check if another worker is currently processing this event within 30s lease
+        const lastAttemptMs = data.lastAttemptAt?.toMillis?.() || 0;
+        const elapsedMs = Date.now() - lastAttemptMs;
+        if (data.status === 'PROCESSING' && elapsedMs < 30000) {
+          return { status: 'IN_FLIGHT_LOCKED' };
+        }
+        t.update(eventDocRef, {
+          status: 'PROCESSING',
+          attemptCount: admin.firestore.FieldValue.increment(1),
+          lastAttemptAt: now,
+        });
+        return { status: 'CLAIMED' };
+      }
+
+      t.set(eventDocRef, {
+        eventId,
+        eventType,
+        status: 'PROCESSING',
+        attemptCount: 1,
+        lastAttemptAt: now,
+        createdAt: now,
+      });
+      return { status: 'CLAIMED' };
+    });
+
+    if (claimResult.status === 'ALREADY_PROCESSED' || claimResult.status === 'IN_FLIGHT_LOCKED') {
+      res.status(200).json({ received: true, alreadyProcessed: true, status: claimResult.status });
       return;
     }
-
-    // Mark event as PROCESSING (P0: 2: Never permanently consume event before business effect succeeds)
-    await eventDocRef.set({
-      eventId,
-      eventType,
-      status: 'PROCESSING',
-      attemptCount: admin.firestore.FieldValue.increment(1),
-      lastAttemptAt: now,
-    }, { merge: true });
 
     if (eventType === 'payment.captured') {
       const paymentEntity = eventPayload.payload?.payment?.entity;

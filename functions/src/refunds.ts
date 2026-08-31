@@ -50,11 +50,16 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
 
   await enforceRateLimit(request.auth.uid, 'refund');
 
-  const { orderId, reason, amountPaise } = request.data;
-  if (!orderId || !reason || reason.trim().length === 0) {
-    throw new HttpsError('invalid-argument', 'orderId and a non-empty refund reason are required.');
+  const { orderId, reason, amountPaise } = request.data || {};
+  if (!orderId || typeof orderId !== 'string' || orderId.trim().length === 0 || orderId.length > 128) {
+    throw new HttpsError('invalid-argument', 'Valid non-empty orderId (max 128 chars) is required.');
   }
 
+  if (!reason || typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 200) {
+    throw new HttpsError('invalid-argument', 'Valid refund reason string (1-200 characters) is required.');
+  }
+
+  const cleanReason = reason.trim();
   const orderRef = db.collection('orders').doc(orderId);
   const now = admin.firestore.Timestamp.now();
   const refundId = `rfnd_${crypto.randomBytes(8).toString('hex')}`;
@@ -74,8 +79,13 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     }
 
     // Cumulative Refund Bounds Assertion
-    const orderTotalPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
-    const amountPaidPaise = orderData.amountPaidPaise || orderTotalPaise;
+    const orderTotalPaise = Number(orderData.totalAmountPaise || (orderData.totalAmount ? Math.round(orderData.totalAmount * 100) : 0));
+    const amountPaidPaise = Number(orderData.amountPaidPaise || orderTotalPaise);
+
+    if (!Number.isSafeInteger(amountPaidPaise) || amountPaidPaise <= 0) {
+      throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Order ${orderId} has invalid paid amount.`);
+    }
+
     const previouslyRefundedPaise = Number(orderData.amountRefundedPaise || 0);
     const remainingRefundablePaise = Math.max(0, amountPaidPaise - previouslyRefundedPaise);
 
@@ -83,7 +93,7 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
       throw new HttpsError('failed-precondition', `Order ${orderId} has already been fully refunded.`);
     }
 
-    const requestedRefundPaise = amountPaise !== undefined ? amountPaise : remainingRefundablePaise;
+    const requestedRefundPaise = amountPaise !== undefined ? Number(amountPaise) : remainingRefundablePaise;
 
     if (!Number.isSafeInteger(requestedRefundPaise) || requestedRefundPaise <= 0 || requestedRefundPaise > remainingRefundablePaise) {
       throw new HttpsError(
@@ -97,9 +107,9 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     const nextPaymentStatus = isFullRefund ? 'refunded' : 'partially_refunded';
     const nextOrderStatus = isFullRefund ? 'cancelled' : orderData.status;
 
-    // 1. Write to immutable financialTransactions ledger (Double-Entry Debit/Credit)
+    // 1. Write to immutable financialTransactions ledger with deterministic ID (TB-NEW-001 & TB-NEW-002)
     const isCash = orderData.paymentMethod === 'counter_cash';
-    const finTxRef = db.collection('financialTransactions').doc();
+    const finTxRef = db.collection('financialTransactions').doc(`refund_fin_${refundId}`);
     const finRecord: FinancialTransactionRecord = {
       transactionId: finTxRef.id,
       orderId,
@@ -136,7 +146,7 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
       amountRefundedPaise: newTotalRefundedPaise,
       amountRefundablePaise: amountPaidPaise - newTotalRefundedPaise,
       lastRefundAmountPaise: requestedRefundPaise,
-      refundReason: reason,
+      refundReason: cleanReason,
       refundedByStaffId: request.auth!.uid,
       updatedAt: now,
     });
@@ -150,12 +160,13 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
       actorId: request.auth!.uid,
       actorRole,
       timestamp: now,
-      reason: `REFUND_PROCESSED: ${reason}`,
+      reason: `REFUND_PROCESSED: ${cleanReason}`,
       metadata: {
         refundId,
         refundAmountPaise: requestedRefundPaise,
         totalRefundedPaise: newTotalRefundedPaise,
         isFullRefund,
+        paymentMethod: orderData.paymentMethod,
       },
     });
 
