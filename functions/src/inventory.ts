@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import { UserRole } from './types';
 import { logSecurityEvent } from './security_logger';
 import { enforceRateLimit } from './rate_limiter';
+import { enforceAppCheck } from './app_check';
 
 const db = admin.firestore();
 
@@ -32,6 +33,7 @@ export interface InventoryAdjustmentResponse {
  * Operates purely on stockOnHand and strictly maintains availableStock = stockOnHand - reservedStock.
  */
 export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (request) => {
+  enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
