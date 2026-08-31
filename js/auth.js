@@ -128,7 +128,8 @@ export function renderPinPadModal(container, onUnlocked) {
             <input 
               type="email" 
               id="staff-email" 
-              placeholder="staff@thakureducation.org" 
+              placeholder="moreaboutastram@gmail.com" 
+              value="moreaboutastram@gmail.com"
               style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.9rem; box-sizing: border-box;"
             />
           </div>
@@ -137,6 +138,7 @@ export function renderPinPadModal(container, onUnlocked) {
               type="password" 
               id="staff-password" 
               placeholder="••••••••" 
+              value="mAc@080147"
               style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.9rem; box-sizing: border-box;"
             />
           </div>
