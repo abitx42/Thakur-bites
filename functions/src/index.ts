@@ -16,3 +16,4 @@ export {
   reconcileDailyLedger,
 } from './payments';
 export { processOrderRefund } from './refunds';
+export { adjustInventoryStock } from './inventory';
