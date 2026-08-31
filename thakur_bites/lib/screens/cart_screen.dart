@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/cart_provider.dart';
+import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
+import 'ticket_screen.dart';
 
 /// Cart screen — shows all items in cart with per-item steppers,
 /// ready-time estimate, total, and a "Confirm & pay" CTA.
@@ -258,13 +260,56 @@ class _CartItemRow extends StatelessWidget {
 
 // ─── Cart Summary & CTA ─────────────────────────────────────────────
 
-class _CartSummary extends StatelessWidget {
+class _CartSummary extends StatefulWidget {
   final CartProvider cart;
 
   const _CartSummary({required this.cart});
 
   @override
+  State<_CartSummary> createState() => _CartSummaryState();
+}
+
+class _CartSummaryState extends State<_CartSummary> {
+  final FirestoreService _firestore = FirestoreService();
+  bool _isPlacing = false;
+
+  Future<void> _placeOrder() async {
+    if (_isPlacing) return;
+    setState(() => _isPlacing = true);
+
+    try {
+      HapticFeedback.mediumImpact();
+      final cart = widget.cart;
+      final order = await _firestore.placeOrder(cart);
+
+      // Clear the cart
+      cart.clear();
+
+      // Navigate to ticket screen
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => TicketScreen(order: order),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _isPlacing = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to place order: $e'),
+            backgroundColor: AppColors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final cart = widget.cart;
+
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
       decoration: const BoxDecoration(
@@ -308,30 +353,37 @@ class _CartSummary extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: GestureDetector(
-              onTap: cart.isEmpty
-                  ? null
-                  : () {
-                      HapticFeedback.mediumImpact();
-                      // Phase 4: order placement
-                    },
+              onTap: cart.isEmpty || _isPlacing ? null : _placeOrder,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 decoration: BoxDecoration(
-                  color: cart.isEmpty ? AppColors.line : AppColors.red,
+                  color: cart.isEmpty || _isPlacing
+                      ? AppColors.line
+                      : AppColors.red,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 alignment: Alignment.center,
-                child: Text(
-                  cart.isEmpty
-                      ? 'Confirm & pay'
-                      : 'Confirm & pay ₹${cart.totalPrice.toInt()}',
-                  style: AppFonts.body(
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w700,
-                    color: cart.isEmpty ? AppColors.inkSoft : Colors.white,
-                  ),
-                ),
+                child: _isPlacing
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Text(
+                        cart.isEmpty
+                            ? 'Confirm & pay'
+                            : 'Confirm & pay ₹${cart.totalPrice.toInt()}',
+                        style: AppFonts.body(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w700,
+                          color:
+                              cart.isEmpty ? AppColors.inkSoft : Colors.white,
+                        ),
+                      ),
               ),
             ),
           ),
