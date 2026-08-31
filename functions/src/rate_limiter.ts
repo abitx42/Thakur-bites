@@ -24,12 +24,21 @@ export const ENDPOINT_LIMITS: Record<string, RateLimitConfig> = {
 
 /**
  * Checks and updates sliding window rate limit for an actor on a specific endpoint.
- * Fix 7: Adds expireAt TTL timestamp and array pruning to prevent unbounded document accumulation.
+ * College NAT-Aware Architecture:
+ * - Authenticated users are keyed on UID (strict individual quota, immune to noisy campus neighbors).
+ * - Anonymous / IP-based requests apply a NAT multiplier to avoid blocking entire college subnets.
  */
-export async function enforceRateLimit(actorId: string, endpoint: string): Promise<void> {
-  const config = ENDPOINT_LIMITS[endpoint] || { maxRequests: 30, windowSeconds: 60 };
+export async function enforceRateLimit(
+  actorId: string,
+  endpoint: string,
+  options?: { isIpBased?: boolean; natMultiplier?: number }
+): Promise<void> {
+  const baseConfig = ENDPOINT_LIMITS[endpoint] || { maxRequests: 30, windowSeconds: 60 };
+  const multiplier = options?.isIpBased ? (options.natMultiplier || 10) : 1;
+  const maxAllowed = baseConfig.maxRequests * multiplier;
+
   const now = Date.now();
-  const windowStart = now - config.windowSeconds * 1000;
+  const windowStart = now - baseConfig.windowSeconds * 1000;
   const docKey = `${endpoint}_${actorId}`;
   const rateLimitRef = db.collection('rateLimits').doc(docKey);
 
@@ -43,17 +52,18 @@ export async function enforceRateLimit(actorId: string, endpoint: string): Promi
       timestamps = existing.filter(t => t > windowStart);
     }
 
-    if (timestamps.length >= config.maxRequests) {
+    if (timestamps.length >= maxAllowed) {
       return false;
     }
 
     timestamps.push(now);
-    const expireAt = admin.firestore.Timestamp.fromMillis(now + config.windowSeconds * 2000);
+    const expireAt = admin.firestore.Timestamp.fromMillis(now + baseConfig.windowSeconds * 2000);
 
     transaction.set(rateLimitRef, {
       actorId,
       endpoint,
       timestamps,
+      isIpBased: options?.isIpBased || false,
       lastUpdatedAt: admin.firestore.Timestamp.now(),
       expireAt,
     });
@@ -67,9 +77,17 @@ export async function enforceRateLimit(actorId: string, endpoint: string): Promi
       eventType: 'RATE_LIMIT_EXCEEDED',
       severity: 'LOW',
       actorUid: actorId,
-      details: { endpoint, maxRequests: config.maxRequests, windowSeconds: config.windowSeconds },
+      details: {
+        endpoint,
+        maxRequests: maxAllowed,
+        windowSeconds: baseConfig.windowSeconds,
+        isIpBased: options?.isIpBased || false,
+      },
     });
 
-    throw new HttpsError('resource-exhausted', 'Request blocked. Please try again in a few moments.');
+    throw new HttpsError(
+      'resource-exhausted',
+      `Rate limit exceeded for ${endpoint}. Please wait a moment before trying again.`
+    );
   }
 }

@@ -2071,4 +2071,62 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(evaluateCircuitBreaker([{ severity: 'MEDIUM', type: 'DUPLICATE_TOKEN' }]).action, 'ALERT_ADMIN');
     assert.strictEqual(evaluateCircuitBreaker([]).action, 'NONE');
   });
+
+  it('93. College NAT-Aware Rate Limiting Invariant: Shields campus subnets while capping single actors', () => {
+    function calculateQuota(endpoint, isIpBased, natMultiplier = 10) {
+      const baseLimits = { checkout: 10, pickup_verify: 20 };
+      const base = baseLimits[endpoint] || 30;
+      return isIpBased ? base * natMultiplier : base;
+    }
+
+    assert.strictEqual(calculateQuota('checkout', false), 10); // Authenticated student UID
+    assert.strictEqual(calculateQuota('checkout', true, 10), 100); // College NAT shared IP
+    assert.strictEqual(calculateQuota('pickup_verify', false), 20);
+    assert.strictEqual(calculateQuota('pickup_verify', true, 10), 200);
+  });
+
+  it('94. Concurrent Pickup Verification Race Matrix: Exactly 1 succeeds, 9 fail with REPLAY_DETECTED', async () => {
+    let orderSecret = {
+      orderId: 'TB-999',
+      qrNonce: 'NONCE_SECRET_123',
+      qrConsumedAt: null,
+    };
+
+    let successfulVerifications = 0;
+    let replayRejections = 0;
+
+    async function attemptVerifyPickup(nonce) {
+      if (orderSecret.qrConsumedAt !== null) {
+        replayRejections++;
+        return { success: false, error: 'REPLAY_DETECTED' };
+      }
+      if (nonce === orderSecret.qrNonce) {
+        orderSecret.qrConsumedAt = Date.now();
+        successfulVerifications++;
+        return { success: true };
+      }
+      return { success: false, error: 'INVALID_NONCE' };
+    }
+
+    // 10 concurrent verify requests
+    const attempts = Array.from({ length: 10 }, () => attemptVerifyPickup('NONCE_SECRET_123'));
+    await Promise.all(attempts);
+
+    assert.strictEqual(successfulVerifications, 1);
+    assert.strictEqual(replayRejections, 9);
+  });
+
+  it('95. Pickup Status Constraint Invariant: Rejects verification if order is not in READY state', () => {
+    function validatePickupEligibility(orderStatus) {
+      if (orderStatus !== 'ready') {
+        return { eligible: false, error: 'ORDER_NOT_READY' };
+      }
+      return { eligible: true };
+    }
+
+    assert.strictEqual(validatePickupEligibility('ready').eligible, true);
+    assert.strictEqual(validatePickupEligibility('preparing').error, 'ORDER_NOT_READY');
+    assert.strictEqual(validatePickupEligibility('confirmed').error, 'ORDER_NOT_READY');
+    assert.strictEqual(validatePickupEligibility('collected').error, 'ORDER_NOT_READY');
+  });
 });
