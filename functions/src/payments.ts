@@ -10,28 +10,73 @@ import {
   FinancialTransactionRecord,
 } from './types';
 import { enforceRateLimit } from './rate_limiter';
+import { getRequiredSecret } from './secrets';
 
 const db = admin.firestore();
 
 /**
- * Returns gateway secret with strict production safety (no insecure fallback in production).
+ * ═══════════════════════════════════════════════════════════════════
+ * PAYMENT GATEWAY ADAPTER ARCHITECTURE
+ * ═══════════════════════════════════════════════════════════════════
  */
-function getGatewaySecret(): string {
-  const secret = process.env.PAYMENT_GATEWAY_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FATAL: PAYMENT_GATEWAY_SECRET environment variable is missing in production.');
-    }
-    return 'tcet_thakur_bites_dev_secret_2026';
-  }
-  return secret;
+export interface PaymentGatewayAdapter {
+  verifyPaymentSignature(gatewayOrderId: string, gatewayPaymentId: string, signature: string): boolean;
+  verifyWebhookSignature(payloadRaw: string, signature: string): boolean;
 }
 
 /**
- * Computes standard HMAC-SHA256 signature for payment verification.
+ * Standard Production Gateway Adapter for Razorpay / Institutional UPI.
  */
+export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
+  private secret: string;
+  private webhookSecret: string;
+
+  constructor() {
+    this.secret = getRequiredSecret('PAYMENT_GATEWAY_SECRET');
+    this.webhookSecret = getRequiredSecret('RAZORPAY_WEBHOOK_SECRET');
+  }
+
+  verifyPaymentSignature(gatewayOrderId: string, gatewayPaymentId: string, signature: string): boolean {
+    const expected = crypto
+      .createHmac('sha256', this.secret)
+      .update(`${gatewayOrderId}|${gatewayPaymentId}`)
+      .digest('hex');
+
+    const cleanSig = typeof signature === 'string' ? signature.trim() : '';
+    try {
+      const expBuf = Buffer.from(expected, 'utf8');
+      const actBuf = Buffer.from(cleanSig, 'utf8');
+      if (expBuf.length === actBuf.length) {
+        return crypto.timingSafeEqual(expBuf, actBuf);
+      }
+    } catch (_) {
+      return false;
+    }
+    return false;
+  }
+
+  verifyWebhookSignature(payloadRaw: string, signature: string): boolean {
+    const expected = crypto
+      .createHmac('sha256', this.webhookSecret)
+      .update(payloadRaw)
+      .digest('hex');
+
+    const cleanSig = typeof signature === 'string' ? signature.trim() : '';
+    try {
+      const expBuf = Buffer.from(expected, 'utf8');
+      const actBuf = Buffer.from(cleanSig, 'utf8');
+      if (expBuf.length === actBuf.length) {
+        return crypto.timingSafeEqual(expBuf, actBuf);
+      }
+    } catch (_) {
+      return false;
+    }
+    return false;
+  }
+}
+
 export function computeGatewaySignature(gatewayOrderId: string, gatewayPaymentId: string): string {
-  const secret = getGatewaySecret();
+  const secret = getRequiredSecret('PAYMENT_GATEWAY_SECRET');
   return crypto
     .createHmac('sha256', secret)
     .update(`${gatewayOrderId}|${gatewayPaymentId}`)
@@ -39,7 +84,7 @@ export function computeGatewaySignature(gatewayOrderId: string, gatewayPaymentId
 }
 
 /**
- * 1. Creates an authoritative payment session for checkout.
+ * 1. Creates an authoritative, idempotent payment session for checkout.
  */
 export const createPaymentSession = onCall<PaymentSessionRequest>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -68,9 +113,19 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
     throw new HttpsError('already-exists', 'Order is already paid.');
   }
 
-  const gatewayOrderId = `order_${crypto.randomBytes(8).toString('hex')}`;
-  const isProduction = process.env.NODE_ENV === 'production';
+  // Idempotency: If an active gatewayOrderId exists on the order, reuse it
+  let gatewayOrderId = orderData.gatewayOrderId;
+  if (!gatewayOrderId || typeof gatewayOrderId !== 'string') {
+    gatewayOrderId = `order_${crypto.randomBytes(8).toString('hex')}`;
+    await db.collection('orders').doc(orderId).update({
+      paymentStatus: 'pending',
+      status: 'payment_pending',
+      gatewayOrderId,
+      paymentSessionCreatedAt: admin.firestore.Timestamp.now(),
+    });
+  }
 
+  const isProduction = process.env.NODE_ENV === 'production';
   const response: PaymentSessionResponse = {
     orderId,
     gatewayOrderId,
@@ -84,13 +139,6 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
       college: 'TCET Mumbai',
     },
   };
-
-  // Log payment session creation
-  await db.collection('orders').doc(orderId).update({
-    paymentStatus: 'pending',
-    status: 'payment_pending',
-    gatewayOrderId,
-  });
 
   return response;
 });
@@ -109,25 +157,13 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
     throw new HttpsError('invalid-argument', 'All payment verification arguments are required.');
   }
 
-  const expectedSignature = computeGatewaySignature(gatewayOrderId, gatewayPaymentId);
-  const cleanSignature = typeof gatewaySignature === 'string' ? gatewaySignature.trim() : '';
-
-  let isValid = false;
-  try {
-    const expectedBuf = Buffer.from(expectedSignature, 'utf8');
-    const actualBuf = Buffer.from(cleanSignature, 'utf8');
-    if (expectedBuf.length === actualBuf.length) {
-      isValid = crypto.timingSafeEqual(expectedBuf, actualBuf);
-    }
-  } catch (_) {
-    isValid = false;
-  }
+  const adapter = new RazorpayPaymentAdapter();
+  const isValid = adapter.verifyPaymentSignature(gatewayOrderId, gatewayPaymentId, gatewaySignature);
 
   const now = admin.firestore.Timestamp.now();
   const orderRef = db.collection('orders').doc(orderId);
 
   if (!isValid) {
-    // Record security alert
     await db.collection('securityEvents').doc().set({
       eventType: 'PAYMENT_SIGNATURE_MISMATCH',
       orderId,
@@ -166,7 +202,7 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
       currency: orderData.currency || 'INR',
       status: 'captured',
       verifiedAt: now,
-      auditSignature: expectedSignature,
+      auditSignature: gatewaySignature,
     };
     transaction.set(paymentRef, paymentRecord);
 
@@ -219,7 +255,7 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
 });
 
 /**
- * 3. Server-to-Server Razorpay Webhook Handler
+ * 3. Server-to-Server Razorpay Webhook Handler with Idempotency & Amount Cross-Verification
  */
 export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) => {
   if (req.method !== 'POST') {
@@ -228,41 +264,160 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
   }
 
   const webhookSignature = req.headers['x-razorpay-signature'] as string;
-  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || getGatewaySecret();
-
   if (!webhookSignature) {
-    res.status(400).send('Missing webhook signature');
+    res.status(400).send('Missing webhook signature header.');
     return;
   }
 
-  const bodyStr = JSON.stringify(req.body);
-  const expectedSig = crypto.createHmac('sha256', webhookSecret).update(bodyStr).digest('hex');
+  const bodyStr = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+  const adapter = new RazorpayPaymentAdapter();
+  const isSignatureValid = adapter.verifyWebhookSignature(bodyStr, webhookSignature);
 
-  if (webhookSignature !== expectedSig) {
+  if (!isSignatureValid) {
     await db.collection('securityEvents').doc().set({
       eventType: 'INVALID_WEBHOOK_SIGNATURE',
       severity: 'critical',
       timestamp: admin.firestore.Timestamp.now(),
     });
-    res.status(400).send('Invalid signature');
+    res.status(400).send('Invalid webhook signature.');
     return;
   }
 
-  const event = req.body.event;
-  if (event === 'payment.captured') {
-    const paymentEntity = req.body.payload.payment.entity;
-    const orderId = paymentEntity.notes?.orderId;
-    if (orderId) {
-      await db.collection('orders').doc(orderId).update({
-        paymentStatus: 'paid',
-        status: 'confirmed',
-        gatewayPaymentId: paymentEntity.id,
-        updatedAt: admin.firestore.Timestamp.now(),
-      }).catch(() => {});
-    }
-  }
+  const eventPayload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+  const eventId = eventPayload.id || `evt_${crypto.randomBytes(8).toString('hex')}`;
+  const eventType = eventPayload.event;
 
-  res.status(200).json({ received: true });
+  // Webhook Idempotency: processedGatewayEvents collection
+  const eventProcessedRef = db.collection('processedGatewayEvents').doc(eventId);
+  const now = admin.firestore.Timestamp.now();
+
+  try {
+    const isAlreadyProcessed = await db.runTransaction(async (transaction) => {
+      const eventSnap = await transaction.get(eventProcessedRef);
+      if (eventSnap.exists) {
+        return true;
+      }
+
+      transaction.set(eventProcessedRef, {
+        eventId,
+        eventType,
+        receivedAt: now,
+      });
+      return false;
+    });
+
+    if (isAlreadyProcessed) {
+      res.status(200).json({ received: true, alreadyProcessed: true });
+      return;
+    }
+
+    if (eventType === 'payment.captured') {
+      const paymentEntity = eventPayload.payload?.payment?.entity;
+      if (!paymentEntity) {
+        res.status(400).send('Invalid payment payload.');
+        return;
+      }
+
+      const orderId = paymentEntity.notes?.orderId;
+      const gatewayPaymentAmountPaise = Number(paymentEntity.amount || 0);
+      const gatewayCurrency = paymentEntity.currency || 'INR';
+      const gatewayOrderId = paymentEntity.order_id;
+      const gatewayPaymentId = paymentEntity.id;
+
+      if (!orderId) {
+        res.status(400).send('Missing orderId in payment notes.');
+        return;
+      }
+
+      const orderRef = db.collection('orders').doc(orderId);
+
+      await db.runTransaction(async (transaction) => {
+        const orderSnap = await transaction.get(orderRef);
+        if (!orderSnap.exists) {
+          throw new Error(`Order ${orderId} not found.`);
+        }
+
+        const orderData = orderSnap.data()!;
+        const expectedPaise = Math.round(Number(orderData.totalAmount || 0) * 100);
+
+        // Strict Amount & Currency Cross-Verification
+        if (gatewayPaymentAmountPaise !== expectedPaise || gatewayCurrency !== (orderData.currency || 'INR')) {
+          const secRef = db.collection('securityEvents').doc();
+          transaction.set(secRef, {
+            eventType: 'PAYMENT_AMOUNT_TAMPERING_FLAGGED',
+            orderId,
+            expectedPaise,
+            receivedPaise: gatewayPaymentAmountPaise,
+            expectedCurrency: orderData.currency || 'INR',
+            receivedCurrency: gatewayCurrency,
+            severity: 'critical',
+            timestamp: now,
+          });
+          throw new Error('Payment amount mismatch between gateway and database snapshot.');
+        }
+
+        if (orderData.paymentStatus !== 'paid') {
+          // 1. Create payment record
+          const paymentId = `pay_${gatewayPaymentId}`;
+          const paymentRef = db.collection('payments').doc(paymentId);
+          transaction.set(paymentRef, {
+            paymentId,
+            orderId,
+            studentId: orderData.studentId,
+            gateway: 'razorpay_webhook',
+            gatewayOrderId,
+            gatewayPaymentId,
+            amount: orderData.totalAmount,
+            currency: gatewayCurrency,
+            status: 'captured',
+            verifiedAt: now,
+            auditSignature: webhookSignature,
+          });
+
+          // 2. Double-entry financial transaction
+          const finTxRef = db.collection('financialTransactions').doc();
+          transaction.set(finTxRef, {
+            transactionId: finTxRef.id,
+            orderId,
+            type: 'PAYMENT_CAPTURE',
+            amount: orderData.totalAmount,
+            currency: gatewayCurrency,
+            gatewayTransactionId: gatewayPaymentId,
+            gatewayOrderId,
+            actorId: 'system_webhook',
+            timestamp: now,
+            status: 'settled',
+          });
+
+          // 3. Update order state: payment_pending -> confirmed
+          transaction.update(orderRef, {
+            paymentStatus: 'paid',
+            status: 'confirmed',
+            gatewayPaymentId,
+            paidAt: now,
+            updatedAt: now,
+          });
+
+          // 4. Immutable orderEvent
+          const eventRef = db.collection('orderEvents').doc();
+          transaction.set(eventRef, {
+            orderId,
+            fromStatus: 'payment_pending',
+            toStatus: 'confirmed',
+            actorId: 'system_webhook',
+            actorRole: 'system',
+            timestamp: now,
+            reason: 'WEBHOOK_PAYMENT_CAPTURED',
+          });
+        }
+      });
+    }
+
+    res.status(200).json({ received: true, processed: true });
+  } catch (err: any) {
+    console.error('Webhook processing error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /**

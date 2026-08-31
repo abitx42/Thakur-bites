@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { CheckoutRequest, OrderDocument, OrderItemSnapshot } from './types';
 import { enforceRateLimit } from './rate_limiter';
+import { getRequiredSecret } from './secrets';
 
 const db = admin.firestore();
 
@@ -152,7 +153,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       // Signed QR Token (valid for 2 hours)
       const qrNonce = crypto.randomBytes(8).toString('hex');
       const qrExpiresAt = Math.floor(Date.now() / 1000) + 7200;
-      const qrSigningSecret = process.env.QR_SIGNING_SECRET || 'tcet_campus_qr_hmac_2026';
+      const qrSigningSecret = getRequiredSecret('QR_SIGNING_SECRET');
       const qrSignature = crypto.createHmac('sha256', qrSigningSecret)
         .update(`${newOrderRef.id}:${studentId}:${qrNonce}:${qrExpiresAt}`)
         .digest('hex');

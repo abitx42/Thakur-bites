@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { UserRole } from './types';
 import { enforceRateLimit } from './rate_limiter';
+import { getRequiredSecret } from './secrets';
 
 const db = admin.firestore();
 
@@ -63,7 +64,7 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
         const currentUnix = Math.floor(Date.now() / 1000);
 
         if (tOrderId === orderId && expiresAt > currentUnix) {
-          const qrSigningSecret = process.env.QR_SIGNING_SECRET || 'tcet_campus_qr_hmac_2026';
+          const qrSigningSecret = getRequiredSecret('QR_SIGNING_SECRET');
           const expectedSig = crypto.createHmac('sha256', qrSigningSecret)
             .update(`${tOrderId}:${tStudentId}:${tNonce}:${tExpiresAtStr}`)
             .digest('hex');
