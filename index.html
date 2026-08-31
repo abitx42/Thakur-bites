@@ -18,5 +18,12 @@
 
   <!-- Application Module Script -->
   <script type="module" src="js/app.js?v=4"></script>
+  <script>
+    if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
+      navigator.serviceWorker.register('./sw.js').catch((err) => {
+        console.warn('SW registration notice:', err);
+      });
+    }
+  </script>
 </body>
 </html>

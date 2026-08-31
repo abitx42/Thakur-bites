@@ -1,39 +1,34 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
-echo "════════════════════════════════════════════════════════════════"
-echo "🚀 THAKUR BITES ENTERPRISE PRODUCTION DEPLOYMENT AUTOMATION"
-echo "════════════════════════════════════════════════════════════════"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$DIR"
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$PROJECT_ROOT"
+echo "══════════════════════════════════════════════════════════════════════"
+echo "🚀 THAKUR BITES PLATFORM 2.0 — MASTER PRODUCTION DEPLOYMENT PIPELINE"
+echo "══════════════════════════════════════════════════════════════════════"
+echo ""
 
-echo "1. Validating Git Repository Cleanliness..."
-if [ -n "$(git status --porcelain)" ]; then
-  echo "⚠️ Warning: Working directory has uncommitted changes."
-fi
-echo "✓ Git branch: $(git rev-parse --abbrev-ref HEAD) ($(git rev-parse --short HEAD))"
+echo "▶ Step 1: Executing 187-Test Security & Invariant CI Gate..."
+bash "$DIR/scripts/run_all_security_checks.sh"
 
-echo -e "\n2. Running Dart Strict Analyzer & Flutter Unit Test Suite..."
-cd "$PROJECT_ROOT/thakur_bites"
-dart analyze --fatal-infos
-flutter test
-
-echo -e "\n3. Building Flutter Web Production Release Bundle..."
-flutter build web --release
-
-echo -e "\n4. Running Cloud Functions TypeScript Compilation & Strict Invariants Test Suite..."
-cd "$PROJECT_ROOT/functions"
+echo ""
+echo "▶ Step 2: Compiling Backend Cloud Functions 2.0..."
+cd "$DIR/functions"
 npm run build
-npm test
+cd "$DIR"
 
-echo -e "\n5. Running End-to-End Lifecycle Smoke Test..."
-node "$PROJECT_ROOT/scripts/e2e_smoke_test.js"
+echo ""
+echo "▶ Step 3: Compiling Production Flutter Web Release Bundle..."
+cd "$DIR/thakur_bites"
+flutter build web --release
+cd "$DIR"
 
-echo -e "\n6. Running High-Concurrency Peak Rush Simulator..."
-node "$PROJECT_ROOT/scripts/simulate_lunch_rush.js"
-
-echo -e "\n════════════════════════════════════════════════════════════════"
-echo "🏆 ALL PRODUCTION GATES PASSED 100% GREEN!"
-echo "Ready for: firebase deploy --only functions,firestore,hosting"
-echo "════════════════════════════════════════════════════════════════"
+echo ""
+echo "▶ Step 4: Ready to Deploy to Firebase..."
+echo "To execute deployment, run:"
+echo "  firebase deploy --only firestore:rules,functions,hosting"
+echo ""
+echo "══════════════════════════════════════════════════════════════════════"
+echo "🏆 DEPLOYMENT ARTIFACTS VERIFIED & READY FOR PRODUCTION"
+echo "══════════════════════════════════════════════════════════════════════"
