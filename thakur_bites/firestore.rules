@@ -164,9 +164,16 @@ service cloud.firestore {
     }
 
     // ─── Global System Config & Operational Kill Switch ─────────
+    // Private System Configuration (Preserves internal staff UID and private incident reasons)
     match /systemConfig/{configId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Cloud Functions only
+    }
+
+    // Public Sanitized Operational Status (Zero PII or internal note leakage)
+    match /publicSystemStatus/{statusId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if false; // Cloud Functions only
     }
   }
 }

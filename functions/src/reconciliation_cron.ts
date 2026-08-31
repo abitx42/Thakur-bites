@@ -43,6 +43,8 @@ export const scheduledDailyReconciliation = onSchedule(
         actorUid: 'system_cron',
         details: { date: today, errorMessage: err.message },
       });
+      // Rethrow so Cloud Scheduler triggers configured retry attempts (retryCount: 3)
+      throw err;
     }
   }
 );

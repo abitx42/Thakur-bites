@@ -18,6 +18,12 @@ export interface SystemConfigDoc {
   updatedAt: admin.firestore.Timestamp;
 }
 
+export interface PublicSystemStatusDoc {
+  mode: SystemOperationalMode;
+  orderingAvailable: boolean;
+  updatedAt: admin.firestore.Timestamp;
+}
+
 /**
  * Asserts that the system operational status permits the given operation category.
  */
@@ -57,7 +63,9 @@ export async function assertOperationalMode(category: 'checkout' | 'payment' | '
 
 /**
  * Authoritative Emergency Kill Switch and Operational Mode Controller.
- * Restricted strictly to Manager, Admin, and Security Admin roles.
+ * Hardened Separation of Duties:
+ * - Manager: Can trigger DEGRADED and FINANCIAL_FROZEN. Cannot trigger EMERGENCY_HALT or restore from freeze/halt.
+ * - Security Admin & Admin: Full authority over all mode transitions and restorations.
  */
 export const setSystemOperationalMode = onCall<{ mode: SystemOperationalMode; reason?: string }>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -72,27 +80,60 @@ export const setSystemOperationalMode = onCall<{ mode: SystemOperationalMode; re
     );
   }
 
-  const { mode, reason = 'Administrative update' } = request.data;
+  const { mode, reason } = request.data;
   const validModes: SystemOperationalMode[] = ['NORMAL', 'DEGRADED', 'FINANCIAL_FROZEN', 'EMERGENCY_HALT'];
   if (!mode || !validModes.includes(mode)) {
     throw new HttpsError('invalid-argument', `Invalid mode. Must be one of: ${validModes.join(', ')}.`);
   }
 
-  const now = admin.firestore.Timestamp.now();
-  const configRef = db.collection('systemConfig').doc('global');
+  // Strict String & Type Validation (P1: Reject non-string / empty reason objects)
+  if (reason !== undefined && (typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 200)) {
+    throw new HttpsError('invalid-argument', 'Reason must be a valid string between 1 and 200 characters.');
+  }
+  const safeReason = typeof reason === 'string' ? reason.trim() : 'Administrative update';
 
-  await configRef.set({
+  // Separation of Duties Matrix Validation
+  const currentSnap = await db.collection('systemConfig').doc('global').get();
+  const currentMode = (currentSnap.data()?.mode as SystemOperationalMode) || 'NORMAL';
+
+  if (mode === 'EMERGENCY_HALT' && actorRole === 'manager') {
+    throw new HttpsError(
+      'permission-denied',
+      'Permission denied. Only Security Administrators and Admins are authorized to initiate an EMERGENCY_HALT.'
+    );
+  }
+
+  if (mode === 'NORMAL' && (currentMode === 'FINANCIAL_FROZEN' || currentMode === 'EMERGENCY_HALT') && actorRole === 'manager') {
+    throw new HttpsError(
+      'permission-denied',
+      'Permission denied. Restoring NORMAL operations from FINANCIAL_FROZEN or EMERGENCY_HALT requires Security Administrator or Admin authorization.'
+    );
+  }
+
+  const now = admin.firestore.Timestamp.now();
+  
+  // 1. Private Audit Configuration Document (Internal staff UID & reason preserved privately)
+  const privateConfigRef = db.collection('systemConfig').doc('global');
+  await privateConfigRef.set({
     mode,
-    reason: String(reason).trim().slice(0, 200),
+    reason: safeReason,
     updatedBy: request.auth.uid,
     updatedAt: now,
-  }, { merge: true });
+  });
+
+  // 2. Public Sanitized Document (Zero PII or internal reason leakage)
+  const publicStatusRef = db.collection('publicSystemStatus').doc('global');
+  await publicStatusRef.set({
+    mode,
+    orderingAvailable: mode === 'NORMAL',
+    updatedAt: now,
+  });
 
   await logSecurityEvent({
     eventType: 'OPERATIONAL_MODE_CHANGED',
     severity: mode === 'NORMAL' ? 'INFO' : 'CRITICAL',
     actorUid: request.auth.uid,
-    details: { mode, reason },
+    details: { previousMode: currentMode, newMode: mode, reason: safeReason, actorRole },
   });
 
   return {

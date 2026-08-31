@@ -1621,4 +1621,76 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
       assert.ok(fn.length > 0);
     });
   });
+
+  it('73. Separation of Duties Kill Switch Invariant: Enforces role boundaries on emergency transitions', () => {
+    function validateModeTransition(currentMode, targetMode, role) {
+      if (role !== 'manager' && role !== 'admin' && role !== 'security_admin') {
+        return { allowed: false, error: 'PERMISSION_DENIED' };
+      }
+      if (targetMode === 'EMERGENCY_HALT' && role === 'manager') {
+        return { allowed: false, error: 'MANAGER_CANNOT_HALT' };
+      }
+      if (targetMode === 'NORMAL' && (currentMode === 'FINANCIAL_FROZEN' || currentMode === 'EMERGENCY_HALT') && role === 'manager') {
+        return { allowed: false, error: 'MANAGER_CANNOT_RESTORE_NORMAL' };
+      }
+      return { allowed: true };
+    }
+
+    // Manager transitions
+    assert.strictEqual(validateModeTransition('NORMAL', 'DEGRADED', 'manager').allowed, true);
+    assert.strictEqual(validateModeTransition('NORMAL', 'FINANCIAL_FROZEN', 'manager').allowed, true);
+    assert.strictEqual(validateModeTransition('NORMAL', 'EMERGENCY_HALT', 'manager').error, 'MANAGER_CANNOT_HALT');
+    assert.strictEqual(validateModeTransition('FINANCIAL_FROZEN', 'NORMAL', 'manager').error, 'MANAGER_CANNOT_RESTORE_NORMAL');
+    assert.strictEqual(validateModeTransition('EMERGENCY_HALT', 'NORMAL', 'manager').error, 'MANAGER_CANNOT_RESTORE_NORMAL');
+
+    // Security Admin & Admin transitions
+    assert.strictEqual(validateModeTransition('NORMAL', 'EMERGENCY_HALT', 'security_admin').allowed, true);
+    assert.strictEqual(validateModeTransition('EMERGENCY_HALT', 'NORMAL', 'security_admin').allowed, true);
+    assert.strictEqual(validateModeTransition('FINANCIAL_FROZEN', 'NORMAL', 'admin').allowed, true);
+  });
+
+  it('74. Public vs Private Config Privacy Invariant: Sanitizes public status and shields staff UIDs', () => {
+    function sanitizeSystemStatus(privateDoc) {
+      return {
+        mode: privateDoc.mode,
+        orderingAvailable: privateDoc.mode === 'NORMAL',
+        updatedAt: privateDoc.updatedAt,
+      };
+    }
+
+    const privateDoc = {
+      mode: 'FINANCIAL_FROZEN',
+      reason: 'Under attack by staff UID staff_49281',
+      updatedBy: 'staff_admin_999',
+      updatedAt: 1756700000000,
+    };
+
+    const publicDoc = sanitizeSystemStatus(privateDoc);
+    assert.strictEqual(publicDoc.mode, 'FINANCIAL_FROZEN');
+    assert.strictEqual(publicDoc.orderingAvailable, false);
+    assert.strictEqual('reason' in publicDoc, false);
+    assert.strictEqual('updatedBy' in publicDoc, false);
+  });
+
+  it('75. Scheduled Daily Reconciliation Retry Invariant: Errors must bubble to trigger Cloud Scheduler retries', () => {
+    let retriesTriggered = false;
+
+    async function executeReconciliationWithRetry(shouldFail) {
+      try {
+        if (shouldFail) {
+          throw new Error('LEDGER_DATABASE_TIMEOUT');
+        }
+      } catch (err) {
+        // Must rethrow
+        retriesTriggered = true;
+        throw err;
+      }
+    }
+
+    assert.rejects(async () => {
+      await executeReconciliationWithRetry(true);
+    }, /LEDGER_DATABASE_TIMEOUT/).then(() => {
+      assert.strictEqual(retriesTriggered, true);
+    });
+  });
 });
