@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/menu_item.dart';
 import '../models/order.dart' as app;
+import '../models/user_profile.dart';
 import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
 import '../screens/cart_screen.dart';
@@ -460,7 +461,7 @@ class _MenuScreenState extends State<MenuScreen> {
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
-                    student.rollNo,
+                    student.safeRollNo,
                     style: AppFonts.mono(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.inkSoft),
                   ),
                 ),
@@ -591,14 +592,38 @@ class _MenuScreenState extends State<MenuScreen> {
           );
         }
 
-        // Authenticated Student Profile Dashboard
+        // Authenticated Multi-Role Profile Dashboard (Platform 2.0)
         return SingleChildScrollView(
           padding: const EdgeInsets.all(18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Header
-              Text('Student Profile', style: AppFonts.display(fontSize: 24)),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Campus Profile', style: AppFonts.display(fontSize: 24)),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: student.isVerified ? AppColors.green.withAlpha(25) : AppColors.mustardSoft,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: student.isVerified ? AppColors.green : AppColors.mustardInk,
+                        width: 1,
+                      ),
+                    ),
+                    child: Text(
+                      student.isVerified ? 'VERIFIED 🟢' : 'PENDING 🟡',
+                      style: AppFonts.mono(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: student.isVerified ? AppColors.green : AppColors.mustardInk,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 16),
 
               // Profile Card
@@ -611,26 +636,19 @@ class _MenuScreenState extends State<MenuScreen> {
                 ),
                 child: Row(
                   children: [
-                    // Avatar Initials
-                    Container(
-                      width: 58,
-                      height: 58,
-                      decoration: BoxDecoration(
-                        color: AppColors.mustardSoft,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: AppColors.mustardInk.withAlpha(76), width: 1.5),
-                      ),
-                      child: Center(
-                        child: Text(
-                          student.initials,
-                          style: AppFonts.mono(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.mustardInk,
-                          ),
+                    // Avatar Image or Initials
+                    if (student.photoURL != null && student.photoURL!.isNotEmpty)
+                      ClipOval(
+                        child: Image.network(
+                          student.photoURL!,
+                          width: 58,
+                          height: 58,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => _buildAvatarFallback(student),
                         ),
-                      ),
-                    ),
+                      )
+                    else
+                      _buildAvatarFallback(student),
                     const SizedBox(width: 14),
 
                     // Info
@@ -639,7 +657,7 @@ class _MenuScreenState extends State<MenuScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            student.name,
+                            student.displayName,
                             style: AppFonts.body(
                               fontSize: 17,
                               fontWeight: FontWeight.w700,
@@ -657,18 +675,21 @@ class _MenuScreenState extends State<MenuScreen> {
                                   border: Border.all(color: AppColors.line, width: 1),
                                 ),
                                 child: Text(
-                                  student.rollNo,
+                                  student.accountType.label,
                                   style: AppFonts.mono(
                                     fontSize: 11.5,
                                     fontWeight: FontWeight.w600,
-                                    color: AppColors.ink,
+                                    color: AppColors.red,
                                   ),
                                 ),
                               ),
                               const SizedBox(width: 8),
-                              Text(
-                                student.phone,
-                                style: AppFonts.mono(fontSize: 12, color: AppColors.inkSoft),
+                              Expanded(
+                                child: Text(
+                                  student.email.isNotEmpty ? student.email : student.safePhone,
+                                  style: AppFonts.mono(fontSize: 11.5, color: AppColors.inkSoft),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                             ],
                           ),
@@ -680,7 +701,7 @@ class _MenuScreenState extends State<MenuScreen> {
               ),
               const SizedBox(height: 16),
 
-              // 3-Column Stats
+              // 3-Column Stats (Orders, Total Spent, Priority Tier)
               Row(
                 children: [
                   _buildStatCard(
@@ -690,19 +711,52 @@ class _MenuScreenState extends State<MenuScreen> {
                   ),
                   const SizedBox(width: 10),
                   _buildStatCard(
-                    title: 'College',
-                    value: 'TCET',
+                    title: 'Total Spent',
+                    value: '₹${student.totalSpentRupees.toStringAsFixed(0)}',
                     color: AppColors.ink,
                   ),
                   const SizedBox(width: 10),
                   _buildStatCard(
-                    title: 'Account',
-                    value: 'Active ⚡️',
-                    color: AppColors.green,
+                    title: 'Priority',
+                    value: student.hasPriorityAccess ? 'Priority ⭐️' : 'Standard ⚡️',
+                    color: student.hasPriorityAccess ? AppColors.mustardInk : AppColors.green,
                   ),
                 ],
               ),
               const SizedBox(height: 20),
+
+              // Faculty & Staff Notice
+              if (student.accountType == AccountType.student || student.accountType == AccountType.visitor)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 20),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.mustardSoft.withAlpha(128),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.mustardInk.withAlpha(50)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Text('👨‍🏫', style: TextStyle(fontSize: 22)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Are you TCET Faculty or Staff?',
+                              style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.mustardInk),
+                            ),
+                            Text(
+                              'Submit faculty ID in Phase 3 for priority kitchen queue access.',
+                              style: AppFonts.body(fontSize: 11.5, color: AppColors.inkSoft),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
 
               // Canteen Info
               Container(
@@ -752,6 +806,28 @@ class _MenuScreenState extends State<MenuScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildAvatarFallback(UserProfile student) {
+    return Container(
+      width: 58,
+      height: 58,
+      decoration: BoxDecoration(
+        color: AppColors.mustardSoft,
+        shape: BoxShape.circle,
+        border: Border.all(color: AppColors.mustardInk.withAlpha(76), width: 1.5),
+      ),
+      child: Center(
+        child: Text(
+          student.initials,
+          style: AppFonts.mono(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            color: AppColors.mustardInk,
+          ),
+        ),
+      ),
     );
   }
 

@@ -2,7 +2,6 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/order.dart';
-import '../models/student.dart';
 import '../providers/cart_provider.dart';
 import 'firestore_service.dart';
 
@@ -23,7 +22,7 @@ class CheckoutService {
   Future<Order> createCheckout({
     required String idempotencyKey,
     required List<CartEntry> entries,
-    Student? student,
+    dynamic student,
   }) async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -50,6 +49,7 @@ class CheckoutService {
         '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     final sequenceDocRef = _db.collection('counters').doc('orders_$dateStr');
     final newOrderRef = _db.collection('orders').doc();
+    final userDocRef = _db.collection('users').doc(studentId);
     final studentDocRef = _db.collection('students').doc(studentId);
 
     // Collect unique menu item references
@@ -69,6 +69,7 @@ class CheckoutService {
       }
 
       final seqSnap = await transaction.get(sequenceDocRef);
+      final userSnap = await transaction.get(userDocRef);
       final studentSnap = await transaction.get(studentDocRef);
 
       // ═════════════════════════════════════════════════════════════
@@ -136,10 +137,15 @@ class CheckoutService {
       final pin = 1000 + rng.nextInt(9000);
       final pinCode = '$pin';
 
-      final studentName =
-          student?.name ?? studentSnap.data()?['name'] ?? 'Student';
-      final studentRoll =
-          student?.rollNo ?? studentSnap.data()?['rollNo'] ?? 'TCET';
+      final studentName = student?.displayName ??
+          student?.name ??
+          userSnap.data()?['displayName'] ??
+          studentSnap.data()?['name'] ??
+          'Customer';
+      final studentRoll = student?.rollNo ??
+          userSnap.data()?['rollNo'] ??
+          studentSnap.data()?['rollNo'] ??
+          (userSnap.data()?['accountType'] == 'TEACHER' ? 'FACULTY' : 'TCET');
 
       final order = Order(
         id: newOrderRef.id,
@@ -222,8 +228,22 @@ class CheckoutService {
         },
       });
 
-      // e. Increment student order count
-      if (studentSnap.exists) {
+      // e. Increment user / student order count
+      if (userSnap.exists) {
+        final currentTotal =
+            (userSnap.data()?['totalOrders'] as num?)?.toInt() ?? 0;
+        final currentSpent =
+            (userSnap.data()?['totalSpentPaise'] as num?)?.toInt() ?? 0;
+        final newSpent = currentSpent + (authoritativeTotal * 100).round();
+        final newTotal = currentTotal + 1;
+        transaction.update(userDocRef, {
+          'totalOrders': newTotal,
+          'totalSpentPaise': newSpent,
+          'averageOrderPaise': (newSpent / newTotal).round(),
+          'lastOrderAt': Timestamp.fromDate(now),
+          'updatedAt': Timestamp.fromDate(now),
+        });
+      } else if (studentSnap.exists) {
         final currentTotal =
             (studentSnap.data()?['totalOrders'] as num?)?.toInt() ?? 0;
         transaction.update(studentDocRef, {

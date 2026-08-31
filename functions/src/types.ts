@@ -198,3 +198,66 @@ export interface MenuItemDoc {
   updatedAt?: Timestamp;
 }
 
+// ─── Platform 2.0: Universal Identity & Account System ───────────────
+
+export type AccountType = 'VISITOR' | 'STUDENT' | 'TEACHER' | 'COLLEGE_STAFF';
+
+export type VerificationStatus =
+  | 'NOT_REQUIRED'
+  | 'PENDING'
+  | 'UNDER_REVIEW'
+  | 'VERIFIED'
+  | 'REJECTED'
+  | 'EXPIRED';
+
+export type PriorityLevel = 0 | 1 | 2 | 3;
+// 0 = Visitor, 1 = Student, 2 = Teacher, 3 = Authorized Staff
+
+export interface UserDocument {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL?: string;
+  accountType: AccountType;
+  verificationStatus: VerificationStatus;
+  priorityLevel: PriorityLevel;
+  department?: string;
+  designation?: string;
+  year?: string;
+  rollNo?: string;
+  phone?: string;
+  isVerified: boolean;
+  accountDisabled: boolean;
+  totalOrders: number;
+  totalSpentPaise: number;
+  averageOrderPaise: number;
+  favouriteItemId?: string;
+  firstOrderAt?: Timestamp;
+  lastOrderAt?: Timestamp;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface VerificationApplication {
+  applicationId: string;
+  userId: string;
+  applicationType: 'TEACHER' | 'COLLEGE_STAFF';
+  employeeId: string;
+  department: string;
+  designation: string;
+  idProofStoragePath?: string;
+  officialEmail?: string;
+  status: 'SUBMITTED' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED';
+  submittedAt: Timestamp;
+  reviewedAt?: Timestamp;
+  reviewerId?: string;
+  reviewNotes?: string;
+}
+
+export interface PriorityConfig {
+  enabled: boolean;
+  levels: Record<AccountType, PriorityLevel>;
+  maxActivePriorityOrders: number;
+  priorityCooldownMinutes: number;
+  maxPriorityQueueSize: number;
+}

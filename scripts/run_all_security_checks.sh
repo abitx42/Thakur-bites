@@ -9,14 +9,14 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
 
 echo ""
-echo "▶ Step 1: Compiling & Testing Backend Cloud Functions (124 Invariant Tests)..."
+echo "▶ Step 1: Compiling & Testing Backend Cloud Functions (128 Invariant Tests)..."
 cd functions
 npm run build
 npm test
 cd ..
 
 echo ""
-echo "▶ Step 2: Running Flutter Static Analysis & Client Test Suite (25 Tests)..."
+echo "▶ Step 2: Running Flutter Static Analysis & Client Test Suite (28 Tests)..."
 cd thakur_bites
 dart analyze --fatal-infos
 flutter test
@@ -36,5 +36,5 @@ node scripts/simulate_lunch_rush.js
 
 echo ""
 echo "══════════════════════════════════════════════════════════════════════"
-echo "🏆 ALL 5 SECURITY & INVARIANT GATES PASSED (149 TOTAL TESTS 100% GREEN)"
+echo "🏆 ALL 5 SECURITY & INVARIANT GATES PASSED (156 TOTAL TESTS 100% GREEN)"
 echo "══════════════════════════════════════════════════════════════════════"

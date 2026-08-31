@@ -43,6 +43,10 @@ service cloud.firestore {
       return isKitchen() || isPickup() || isCashier() || isManager() || isAdmin() || isSecurityAdmin();
     }
 
+    function isTeacher() {
+      return isAuthenticated() && request.auth.token.accountType == 'TEACHER';
+    }
+
     // ─── Menu Items ─────────────────────────────────────────────
     // Public read for live canteen catalog. Direct writes restricted to Managers/Admins only.
     match /menuItems/{itemId} {
@@ -174,6 +178,52 @@ service cloud.firestore {
     match /publicSystemStatus/{statusId} {
       allow read: if true;
       allow write: if false; // Cloud Functions only
+    }
+
+    // ─── Universal Users (Platform 2.0) ──────────────────────────
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isOperationalStaff();
+      allow create: if false; // Backend Cloud Function ONLY
+      allow update: if isOwner(userId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phone', 'department', 'year', 'photoURL', 'preferences', 'updatedAt'])
+        && request.resource.data.displayName is string && request.resource.data.displayName.size() >= 2 && request.resource.data.displayName.size() <= 100;
+      allow delete: if false;
+    }
+
+    // ─── User Preferences ────────────────────────────────────────
+    match /userPreferences/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId)
+        && request.resource.data.keys().hasOnly(['notifications', 'dietary', 'updatedAt']);
+    }
+
+    // ─── User Favourites ─────────────────────────────────────────
+    match /userFavourites/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId)
+        && request.resource.data.keys().hasOnly(['items', 'updatedAt'])
+        && request.resource.data.items is list
+        && request.resource.data.items.size() <= 50;
+    }
+
+    // ─── Verification Applications ───────────────────────────────
+    match /verificationApplications/{appId} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || isManagerOrAdmin()
+      );
+      allow write: if false; // Backend Cloud Function ONLY
+    }
+
+    // ─── Priority Configuration ──────────────────────────────────
+    match /priorityConfig/{configId} {
+      allow read: if true; // Public — clients need to know priority rules
+      allow write: if false; // Backend Cloud Function ONLY
+    }
+
+    // ─── Feature Flags ───────────────────────────────────────────
+    match /featureFlags/{flagId} {
+      allow read: if true;
+      allow write: if false; // Backend Cloud Function ONLY
     }
   }
 }

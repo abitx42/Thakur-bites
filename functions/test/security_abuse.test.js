@@ -2240,4 +2240,44 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(invariants.length, 15);
     invariants.forEach(inv => assert.strictEqual(typeof inv, 'string'));
   });
+
+  it('101. Identity classifier correctly identifies TCET student email (numeric prefix)', () => {
+    const { classifyIdentity } = require('../lib/identity_classifier');
+    const result = classifyIdentity('12345678@tcetmumbai.in');
+    assert.strictEqual(result.accountType, 'STUDENT');
+    assert.strictEqual(result.verificationStatus, 'VERIFIED');
+    assert.strictEqual(result.priorityLevel, 1);
+    assert.strictEqual(result.identityHints.isInstitutionalEmail, true);
+    assert.strictEqual(result.identityHints.possibleStudentId, true);
+  });
+
+  it('102. Identity classifier correctly identifies visitor email (@gmail.com)', () => {
+    const { classifyIdentity } = require('../lib/identity_classifier');
+    const result = classifyIdentity('visitor@gmail.com');
+    assert.strictEqual(result.accountType, 'VISITOR');
+    assert.strictEqual(result.verificationStatus, 'NOT_REQUIRED');
+    assert.strictEqual(result.priorityLevel, 0);
+    assert.strictEqual(result.identityHints.isInstitutionalEmail, false);
+    assert.strictEqual(result.identityHints.possibleStudentId, false);
+  });
+
+  it('103. Identity classifier correctly identifies thakureducation.org as COLLEGE_STAFF/PENDING', () => {
+    const { classifyIdentity } = require('../lib/identity_classifier');
+    const result = classifyIdentity('staff@thakureducation.org');
+    assert.strictEqual(result.accountType, 'COLLEGE_STAFF');
+    assert.strictEqual(result.verificationStatus, 'PENDING');
+    assert.strictEqual(result.priorityLevel, 1);
+    assert.strictEqual(result.identityHints.isInstitutionalEmail, true);
+    assert.strictEqual(result.identityHints.possibleStudentId, false);
+  });
+
+  it('104. Identity classifier correctly identifies non-numeric @tcetmumbai.in as STUDENT/PENDING', () => {
+    const { classifyIdentity } = require('../lib/identity_classifier');
+    const result = classifyIdentity('teacher@tcetmumbai.in');
+    assert.strictEqual(result.accountType, 'STUDENT');
+    assert.strictEqual(result.verificationStatus, 'PENDING');
+    assert.strictEqual(result.priorityLevel, 1);
+    assert.strictEqual(result.identityHints.isInstitutionalEmail, true);
+    assert.strictEqual(result.identityHints.possibleStudentId, false);
+  });
 });

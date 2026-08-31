@@ -80,11 +80,27 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   const idempotencyHash = crypto.createHash('sha256').update(`${studentId}_${idempotencyKey.trim()}`).digest('hex');
   const idempotencyLockRef = db.collection('checkoutRequests').doc(idempotencyHash);
 
-  // 2. Fetch student profile details
-  const studentDoc = await db.collection('students').doc(studentId).get();
-  const studentData = studentDoc.data() || {};
-  const studentName = studentData.name || 'Student';
-  const studentRoll = studentData.rollNo || 'TCET';
+  // 2. Fetch user profile details (checks users collection first, fallback to students)
+  let studentName = 'Student';
+  let studentRoll = 'TCET';
+
+  const userDoc = await db.collection('users').doc(studentId).get();
+  if (userDoc.exists) {
+    const userData = userDoc.data() || {};
+    if (userData.accountDisabled === true) {
+      throw new HttpsError('permission-denied', 'Account has been deactivated.');
+    }
+    studentName = userData.displayName || 'Customer';
+    studentRoll = userData.rollNo || (userData.accountType === 'TEACHER' ? 'FACULTY' : 'TCET');
+  } else {
+    const studentDoc = await db.collection('students').doc(studentId).get();
+    const studentData = studentDoc.data() || {};
+    if (studentData.accountDisabled === true) {
+      throw new HttpsError('permission-denied', 'Account has been deactivated.');
+    }
+    studentName = studentData.name || 'Student';
+    studentRoll = studentData.rollNo || 'TCET';
+  }
 
   const now = admin.firestore.Timestamp.now();
   const nowDate = new Date();

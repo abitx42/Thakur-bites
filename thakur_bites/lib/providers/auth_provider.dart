@@ -1,20 +1,35 @@
 import 'package:flutter/foundation.dart';
-import '../models/student.dart';
+import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 
-/// Reactive authentication & student profile provider using ChangeNotifier.
+/// Reactive authentication & identity provider using ChangeNotifier.
+/// Backed by Platform 2.0 Universal Identity Model.
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService;
 
-  Student? _currentStudent;
+  UserProfile? _currentUserProfile;
   bool _isLoading = true;
+  String? _errorMessage;
 
-  Student? get currentStudent => _currentStudent;
-  bool get isLoggedIn => _currentStudent != null;
-  bool get isVerified => _currentStudent?.isVerified ?? false;
+  UserProfile? get currentProfile => _currentUserProfile;
+  /// Backward-compatibility alias for currentProfile
+  UserProfile? get currentStudent => _currentUserProfile;
+
+  bool get isLoggedIn => _currentUserProfile != null && !isGuest;
+  bool get isGuest => _authService.currentUser?.isAnonymous ?? false;
+  bool get isVerified => _currentUserProfile?.isVerified ?? false;
   bool get isLoading => _isLoading;
+  String? get errorMessage => _errorMessage;
 
-  AuthProvider({AuthService? authService}) : _authService = authService ?? AuthService() {
+  AccountType get accountType =>
+      _currentUserProfile?.accountType ?? AccountType.visitor;
+  VerificationStatus get verificationStatus =>
+      _currentUserProfile?.verificationStatus ?? VerificationStatus.notRequired;
+  bool get hasPriorityAccess =>
+      _currentUserProfile?.hasPriorityAccess ?? false;
+
+  AuthProvider({AuthService? authService})
+      : _authService = authService ?? AuthService() {
     _init();
   }
 
@@ -24,8 +39,8 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       final user = _authService.currentUser;
-      if (user != null) {
-        _currentStudent = await _authService.getStudentProfile(user.uid);
+      if (user != null && !user.isAnonymous) {
+        _currentUserProfile = await _authService.getUserProfile(user.uid);
       }
     } catch (e) {
       debugPrint('Error initializing auth state: $e');
@@ -35,14 +50,49 @@ class AuthProvider extends ChangeNotifier {
     }
 
     _authService.authStateChanges.listen((user) async {
-      if (user == null) {
-        _currentStudent = null;
+      if (user == null || user.isAnonymous) {
+        _currentUserProfile = null;
         notifyListeners();
       } else {
-        _currentStudent = await _authService.getStudentProfile(user.uid);
+        _currentUserProfile = await _authService.getUserProfile(user.uid);
         notifyListeners();
       }
     });
+  }
+
+  /// Sign In with Google
+  Future<void> signInWithGoogle() async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      _currentUserProfile = await _authService.signInWithGoogle();
+    } catch (e) {
+      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Sign in as Guest for casual browsing
+  Future<void> signInAsGuest() async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _authService.signInAsGuest();
+      _currentUserProfile = null; // Guest is unauthenticated
+    } catch (e) {
+      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 
   /// Sign up with College Email and Password
@@ -55,10 +105,11 @@ class AuthProvider extends ChangeNotifier {
     String? department,
   }) async {
     _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
 
     try {
-      _currentStudent = await _authService.signUpWithEmail(
+      _currentUserProfile = await _authService.signUpWithEmail(
         email: email,
         password: password,
         name: name,
@@ -66,6 +117,9 @@ class AuthProvider extends ChangeNotifier {
         rollNo: rollNo,
         department: department,
       );
+    } catch (e) {
+      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -78,13 +132,17 @@ class AuthProvider extends ChangeNotifier {
     required String password,
   }) async {
     _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
 
     try {
-      _currentStudent = await _authService.signInWithEmail(
+      _currentUserProfile = await _authService.signInWithEmail(
         email: email,
         password: password,
       );
+    } catch (e) {
+      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -99,15 +157,19 @@ class AuthProvider extends ChangeNotifier {
     String? email,
   }) async {
     _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
 
     try {
-      _currentStudent = await _authService.signInStudent(
+      _currentUserProfile = await _authService.signInStudent(
         name: name,
         phone: phone,
         rollNo: rollNo,
         email: email,
       );
+    } catch (e) {
+      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -119,14 +181,14 @@ class AuthProvider extends ChangeNotifier {
     await _authService.sendPasswordReset(email);
   }
 
-  /// Sign out current student
+  /// Sign out current user
   Future<void> signOut() async {
     _isLoading = true;
     notifyListeners();
 
     try {
       await _authService.signOut();
-      _currentStudent = null;
+      _currentUserProfile = null;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -135,11 +197,18 @@ class AuthProvider extends ChangeNotifier {
 
   /// Increment order count in local state
   void incrementOrderCount() {
-    if (_currentStudent != null) {
-      _currentStudent = _currentStudent!.copyWith(
-        totalOrders: _currentStudent!.totalOrders + 1,
+    if (_currentUserProfile != null) {
+      _currentUserProfile = _currentUserProfile!.copyWith(
+        totalOrders: _currentUserProfile!.totalOrders + 1,
       );
       notifyListeners();
     }
+  }
+
+  /// Update user profile details
+  Future<void> updateProfile(UserProfile updated) async {
+    await _authService.updateUserProfile(updated);
+    _currentUserProfile = updated;
+    notifyListeners();
   }
 }
