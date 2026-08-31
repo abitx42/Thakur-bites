@@ -20,10 +20,11 @@ echo "Select an option to launch:"
 echo "  [A] Run Master Security CI Verification Suite (187 Tests)"
 echo "  [B] Start Staff Hub & TV Display HTTP Server (Port 3000)"
 echo "  [C] Launch Flutter Web Client (Port 8080)"
-echo "  [D] Exit"
+echo "  [D] Seed Realistic Demo Data into Firestore (Menu, Orders, Shift PIN 123456)"
+echo "  [E] Exit"
 echo ""
 
-read -p "Enter choice [A/B/C/D]: " choice
+read -p "Enter choice [A/B/C/D/E]: " choice
 
 case "$choice" in
   [aA])
@@ -37,6 +38,10 @@ case "$choice" in
     echo "Launching Flutter web app on port 8080..."
     cd "$DIR/thakur_bites"
     flutter run -d chrome --web-port 8080
+    ;;
+  [dD])
+    echo "Seeding demo campus data into Firestore..."
+    node "$DIR/scripts/seed_demo_data.js"
     ;;
   *)
     echo "Exiting launcher."
