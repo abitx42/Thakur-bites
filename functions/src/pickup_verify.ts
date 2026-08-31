@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { UserRole } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
+import { logSecurityEvent } from './security_logger';
 
 const db = admin.firestore();
 
@@ -145,17 +146,14 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
         });
       }
 
-      // Record security event
-      const secRef = db.collection('securityEvents').doc();
-      transaction.set(secRef, {
+      // Record centralized security event
+      logSecurityEvent({
         eventType: shouldLock ? 'ORDER_PICKUP_BRUTEFORCE_LOCKOUT' : 'FAILED_PICKUP_VERIFICATION',
         orderId,
-        verificationMethod,
         actorUid: request.auth!.uid,
-        attemptNumber: attempts,
-        severity: shouldLock ? 'critical' : 'warn',
-        timestamp: now,
-      });
+        severity: shouldLock ? 'CRITICAL' : 'LOW',
+        details: { verificationMethod, attemptNumber: attempts },
+      }).catch(() => {});
 
       throw new HttpsError(
         'permission-denied',

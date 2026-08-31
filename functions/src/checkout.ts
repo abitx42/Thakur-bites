@@ -6,6 +6,7 @@ import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
 import { reserveInventoryInTransaction, commitInventoryInTransaction } from './inventory_reservation';
 import { assertOperationalMode } from './kill_switch';
+import { logSecurityEvent } from './security_logger';
 
 const db = admin.firestore();
 
@@ -310,11 +311,10 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
     });
   } catch (error: any) {
     if (error.code === 'resource-exhausted') {
-      await db.collection('securityEvents').doc().set({
+      await logSecurityEvent({
         eventType: 'INVENTORY_CONTENTION_SPIKE',
         actorUid: studentId,
-        severity: 'warn',
-        timestamp: now,
+        severity: 'LOW',
         details: { message: error.message },
       }).catch(() => {});
     }

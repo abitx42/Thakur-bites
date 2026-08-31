@@ -14,7 +14,6 @@ export interface SecurityEventParams {
 
 export interface SecurityEventDoc {
   incidentId: string;
-  eventId: string;
   eventType: string;
   severity: SecuritySeverity;
   actorUid: string;
@@ -26,64 +25,64 @@ export interface SecurityEventDoc {
   details: Record<string, any>;
 }
 
-// In-memory sliding deduplication window (5 minutes)
-const DEDUPLICATION_WINDOW_MS = 5 * 60 * 1000;
-const incidentCache = new Map<string, { count: number; firstSeen: number; incidentId: string }>();
-
 /**
- * Logs structured, correlation-tracked security events with automatic incident grouping and deduplication.
- * Prevents denial-of-wallet / alert flooding attacks by aggregating rapid repeated failures into incidents.
+ * Logs structured, correlation-tracked security events with multi-instance deterministic deduplication.
+ * Calculates deterministic SHA-256 time-bucketed (5-min) incident IDs (INCIDENT-SEC-<HEX>) with atomic Firestore increments.
+ * Prevents denial-of-wallet / alert flooding attacks across ALL distributed Cloud Function instances.
  */
 export async function logSecurityEvent(params: SecurityEventParams): Promise<string> {
   const db = admin.firestore();
-  const nowMs = Date.now();
   const { eventType, severity, actorUid = 'anonymous', orderId, requestId, details = {} } = params;
 
-  const fingerprint = `${eventType}:${actorUid}:${orderId || 'global'}`;
-  const cached = incidentCache.get(fingerprint);
-
-  if (cached && (nowMs - cached.firstSeen) < DEDUPLICATION_WINDOW_MS) {
-    cached.count++;
-    // Throttle Firestore updates to log 10, 20, 50, 100, 200, ... to minimize cost
-    if (cached.count % 10 === 0 || cached.count <= 5) {
-      db.collection('securityEvents').doc(cached.incidentId).update({
-        suppressedOccurrences: cached.count,
-        lastSeen: admin.firestore.Timestamp.now(),
-      }).catch(() => {});
-    }
-    return cached.incidentId;
-  }
-
-  const incidentHex = crypto.randomBytes(4).toString('hex').toUpperCase();
-  const incidentId = `INCIDENT-SEC-${incidentHex}`;
-  const eventId = `sec_${crypto.randomBytes(8).toString('hex')}`;
-  incidentCache.set(fingerprint, { count: 1, firstSeen: nowMs, incidentId });
-
-  // Evict expired entries if cache grows
-  if (incidentCache.size > 2000) {
-    const cutoff = nowMs - DEDUPLICATION_WINDOW_MS;
-    for (const [key, val] of incidentCache.entries()) {
-      if (val.firstSeen < cutoff) {
-        incidentCache.delete(key);
-      }
-    }
-  }
+  // Multi-Instance Global Deterministic 5-Minute Time Bucket Key
+  const bucketMinutes = 5;
+  const timeBucket = Math.floor(Date.now() / (bucketMinutes * 60 * 1000));
+  const rawFingerprint = `${eventType}:${actorUid}:${orderId || 'global'}:${timeBucket}`;
+  const incidentDigest = crypto.createHash('sha256').update(rawFingerprint).digest('hex').slice(0, 10).toUpperCase();
+  const incidentId = `INCIDENT-SEC-${incidentDigest}`;
+  const incidentRef = db.collection('securityEvents').doc(incidentId);
 
   const now = admin.firestore.Timestamp.now();
-  const eventDoc: SecurityEventDoc = {
-    incidentId,
-    eventId,
-    eventType,
-    severity,
-    actorUid,
-    orderId: orderId || null,
-    requestId: requestId || `req_${crypto.randomBytes(6).toString('hex')}`,
-    firstSeen: now,
-    lastSeen: now,
-    suppressedOccurrences: 1,
-    details,
-  };
 
-  await db.collection('securityEvents').doc(incidentId).set(eventDoc);
+  try {
+    await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(incidentRef);
+      if (snap.exists) {
+        transaction.update(incidentRef, {
+          suppressedOccurrences: admin.firestore.FieldValue.increment(1),
+          lastSeen: now,
+          severity, // Update to highest severity if escalated
+          details: { ...(snap.data()?.details || {}), ...details },
+        });
+      } else {
+        const eventDoc: SecurityEventDoc = {
+          incidentId,
+          eventType,
+          severity,
+          actorUid,
+          orderId: orderId || null,
+          requestId: requestId || `req_${crypto.randomBytes(6).toString('hex')}`,
+          firstSeen: now,
+          lastSeen: now,
+          suppressedOccurrences: 1,
+          details,
+        };
+        transaction.set(incidentRef, eventDoc);
+      }
+    });
+  } catch (err) {
+    // Non-blocking fallback to set with merge
+    await incidentRef.set({
+      incidentId,
+      eventType,
+      severity,
+      actorUid,
+      orderId: orderId || null,
+      lastSeen: now,
+      suppressedOccurrences: admin.firestore.FieldValue.increment(1),
+      details,
+    }, { merge: true }).catch(() => {});
+  }
+
   return incidentId;
 }

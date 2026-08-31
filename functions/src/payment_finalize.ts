@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { PaymentRecord, FinancialTransactionRecord } from './types';
 import { commitInventoryInTransaction } from './inventory_reservation';
+import { logSecurityEvent } from './security_logger';
 
 const db = admin.firestore();
 
@@ -59,43 +60,36 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
 
     // 1. Strict Payment Method Cross-Validation (Phase 1 Fix: Cash cannot settle online orders)
     if (source === 'cashier_counter' && orderData.paymentMethod !== 'counter_cash') {
-      const secRef = db.collection('securityEvents').doc();
-      transaction.set(secRef, {
+      logSecurityEvent({
         eventType: 'CASH_SETTLEMENT_ATTEMPTED_ON_ONLINE_ORDER',
         orderId,
         actorUid: actorId,
-        source,
-        severity: 'critical',
-        timestamp: now,
-      });
+        severity: 'CRITICAL',
+        details: { source },
+      }).catch(() => {});
       throw new Error(`Invalid payment flow: Order ${orderId} was placed as an online payment order and cannot be settled as counter-cash.`);
     }
 
     if (source !== 'cashier_counter' && orderData.paymentMethod === 'counter_cash') {
-      const secRef = db.collection('securityEvents').doc();
-      transaction.set(secRef, {
+      logSecurityEvent({
         eventType: 'GATEWAY_PAYMENT_ATTEMPTED_ON_CASH_ORDER',
         orderId,
         actorUid: actorId,
-        source,
-        severity: 'critical',
-        timestamp: now,
-      });
+        severity: 'CRITICAL',
+        details: { source },
+      }).catch(() => {});
       throw new Error(`Invalid payment flow: Order ${orderId} is a counter-cash order and cannot be verified via digital gateway.`);
     }
 
     // 2. Strict Gateway Order ID Validation
     if (orderData.gatewayOrderId && orderData.gatewayOrderId !== gatewayOrderId) {
-      const secRef = db.collection('securityEvents').doc();
-      transaction.set(secRef, {
+      logSecurityEvent({
         eventType: 'GATEWAY_ORDER_MISMATCH',
         orderId,
-        expectedGatewayOrderId: orderData.gatewayOrderId,
-        receivedGatewayOrderId: gatewayOrderId,
         actorUid: actorId,
-        severity: 'critical',
-        timestamp: now,
-      });
+        severity: 'CRITICAL',
+        details: { expectedGatewayOrderId: orderData.gatewayOrderId, receivedGatewayOrderId: gatewayOrderId },
+      }).catch(() => {});
       throw new Error(`Gateway Order ID mismatch. Expected ${orderData.gatewayOrderId}, received ${gatewayOrderId}.`);
     }
 
@@ -107,18 +101,13 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     const expectedCurrency = orderData.currency || 'INR';
 
     if (amountPaise !== expectedPaise || currency !== expectedCurrency) {
-      const secRef = db.collection('securityEvents').doc();
-      transaction.set(secRef, {
+      logSecurityEvent({
         eventType: 'PAYMENT_AMOUNT_TAMPERING_FLAGGED',
         orderId,
-        expectedPaise,
-        receivedPaise: amountPaise,
-        expectedCurrency,
-        receivedCurrency: currency,
-        source,
-        severity: 'critical',
-        timestamp: now,
-      });
+        actorUid: actorId,
+        severity: 'CRITICAL',
+        details: { expectedPaise, receivedPaise: amountPaise, expectedCurrency, receivedCurrency: currency, source },
+      }).catch(() => {});
       throw new Error(`Payment amount or currency mismatch. Expected ${expectedPaise} ${expectedCurrency}, received ${amountPaise} ${currency}.`);
     }
 

@@ -13,6 +13,7 @@ import { getRequiredSecret } from './secrets';
 import { finalizeSuccessfulPayment } from './payment_finalize';
 import { releaseInventoryInTransaction } from './inventory_reservation';
 import { assertOperationalMode } from './kill_switch';
+import { logSecurityEvent } from './security_logger';
 
 const db = admin.firestore();
 
@@ -193,14 +194,12 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
   const isValid = adapter.verifyPaymentSignature(gatewayOrderId, gatewayPaymentId, gatewaySignature);
 
   if (!isValid) {
-    await db.collection('securityEvents').doc().set({
+    await logSecurityEvent({
       eventType: 'PAYMENT_SIGNATURE_MISMATCH',
-      orderId,
-      gatewayOrderId,
-      gatewayPaymentId,
+      severity: 'CRITICAL',
       actorUid: request.auth.uid,
-      severity: 'critical',
-      timestamp: admin.firestore.Timestamp.now(),
+      orderId,
+      details: { gatewayOrderId, gatewayPaymentId },
     });
 
     throw new HttpsError('permission-denied', 'Payment verification failed: Invalid cryptographic signature.');
@@ -253,10 +252,11 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
   const isSignatureValid = adapter.verifyWebhookSignature(rawBody, webhookSignature);
 
   if (!isSignatureValid) {
-    await db.collection('securityEvents').doc().set({
+    await logSecurityEvent({
       eventType: 'INVALID_WEBHOOK_SIGNATURE',
-      severity: 'critical',
-      timestamp: admin.firestore.Timestamp.now(),
+      severity: 'CRITICAL',
+      actorUid: 'external_webhook',
+      details: { signatureLength: webhookSignature.length },
     });
     res.status(400).send('Invalid webhook signature.');
     return;

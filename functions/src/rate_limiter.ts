@@ -1,5 +1,6 @@
 import * as admin from 'firebase-admin';
 import { HttpsError } from 'firebase-functions/v2/https';
+import { logSecurityEvent } from './security_logger';
 
 const db = admin.firestore();
 
@@ -61,14 +62,12 @@ export async function enforceRateLimit(actorId: string, endpoint: string): Promi
   });
 
   if (!isAllowed) {
-    // Record security alert
-    await db.collection('securityEvents').doc().set({
+    // Record centralized deterministic security alert
+    await logSecurityEvent({
       eventType: 'RATE_LIMIT_EXCEEDED',
+      severity: 'LOW',
       actorUid: actorId,
-      endpoint,
-      severity: 'warn',
-      timestamp: admin.firestore.Timestamp.now(),
-      details: { maxRequests: config.maxRequests, windowSeconds: config.windowSeconds },
+      details: { endpoint, maxRequests: config.maxRequests, windowSeconds: config.windowSeconds },
     });
 
     throw new HttpsError('resource-exhausted', 'Request blocked. Please try again in a few moments.');
