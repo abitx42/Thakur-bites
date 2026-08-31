@@ -2696,4 +2696,96 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     onOrdersUpdate([{ tokenNumber: 'TB-003', status: 'ready' }], false);
     assert.strictEqual(chimePlayed, true);
   });
+
+  it('125. Owner Metrics Aggregator: Financial ledger totals balance (Gross = Digital + Cash)', () => {
+    function computeBusinessMetrics(orders) {
+      let gross = 0;
+      let digital = 0;
+      let cash = 0;
+      let refunded = 0;
+
+      orders.forEach(o => {
+        if (o.status !== 'cancelled') {
+          gross += o.amount;
+          if (o.paymentMethod === 'cash') cash += o.amount;
+          else digital += o.amount;
+        } else {
+          refunded += o.amount;
+        }
+      });
+
+      return { gross, digital, cash, refunded };
+    }
+
+    const testOrders = [
+      { id: '1', amount: 15000, paymentMethod: 'upi', status: 'collected' },
+      { id: '2', amount: 8000, paymentMethod: 'cash', status: 'collected' },
+      { id: '3', amount: 5000, paymentMethod: 'razorpay', status: 'preparing' },
+      { id: '4', amount: 4000, paymentMethod: 'upi', status: 'cancelled' },
+    ];
+
+    const metrics = computeBusinessMetrics(testOrders);
+    assert.strictEqual(metrics.gross, 28000);
+    assert.strictEqual(metrics.digital, 20000);
+    assert.strictEqual(metrics.cash, 8000);
+    assert.strictEqual(metrics.gross, metrics.digital + metrics.cash, 'Gross revenue must equal sum of payment channels');
+    assert.strictEqual(metrics.refunded, 4000);
+  });
+
+  it('126. Predictive Stockout Run-Rate Forecast: Flags items depleting within 1.5 hours', () => {
+    function computeStockoutForecast(unitsSold, hoursElapsed, availableStock) {
+      const burnRatePerHour = unitsSold / hoursElapsed;
+      const hoursRemaining = burnRatePerHour > 0 ? availableStock / burnRatePerHour : null;
+      const isWarning = hoursRemaining !== null && hoursRemaining < 1.5 && availableStock > 0;
+      return { burnRatePerHour, hoursRemaining, isWarning };
+    }
+
+    // High velocity Samosa (30 sold in 2 hours = 15/hr, 10 units left -> 0.67 hrs remaining)
+    const urgentItem = computeStockoutForecast(30, 2, 10);
+    assert.strictEqual(urgentItem.burnRatePerHour, 15);
+    assert.strictEqual(urgentItem.isWarning, true, 'Depleting in under 1.5h must trigger urgent restock warning');
+
+    // Safe Cold Coffee (10 sold in 2 hours = 5/hr, 50 units left -> 10 hrs remaining)
+    const safeItem = computeStockoutForecast(10, 2, 50);
+    assert.strictEqual(safeItem.burnRatePerHour, 5);
+    assert.strictEqual(safeItem.isWarning, false);
+  });
+
+  it('127. Campus Feature Flags Boundary: Blocks unauthorized roles from modifying platform flags', () => {
+    function authorizeFlagUpdate(callerRole) {
+      const allowed = ['manager', 'admin', 'security_admin'];
+      return allowed.includes(callerRole);
+    }
+
+    assert.strictEqual(authorizeFlagUpdate('admin'), true);
+    assert.strictEqual(authorizeFlagUpdate('manager'), true);
+    assert.strictEqual(authorizeFlagUpdate('student'), false);
+    assert.strictEqual(authorizeFlagUpdate('visitor'), false);
+    assert.strictEqual(authorizeFlagUpdate('kitchen'), false);
+  });
+
+  it('128. Feature Flag Parameter Bounds Safety: Clamps rush multiplier & active priority quotas safely', () => {
+    function sanitizeFeatureFlags(input) {
+      return {
+        rushMultiplier: Math.max(1.0, Math.min(2.5, Number(input.rushMultiplier || 1.0))),
+        maxActivePriorityOrdersPerFaculty: Math.max(1, Math.min(5, Math.floor(Number(input.maxActivePriorityOrdersPerFaculty || 1)))),
+        onlineOrderingEnabled: Boolean(input.onlineOrderingEnabled),
+      };
+    }
+
+    // Normal values
+    const normal = sanitizeFeatureFlags({ rushMultiplier: 1.5, maxActivePriorityOrdersPerFaculty: 2, onlineOrderingEnabled: true });
+    assert.strictEqual(normal.rushMultiplier, 1.5);
+    assert.strictEqual(normal.maxActivePriorityOrdersPerFaculty, 2);
+
+    // Extreme/adversarial values clamped safely
+    const extreme = sanitizeFeatureFlags({ rushMultiplier: 99.9, maxActivePriorityOrdersPerFaculty: 100, onlineOrderingEnabled: true });
+    assert.strictEqual(extreme.rushMultiplier, 2.5, 'Rush multiplier clamped to 2.5 max');
+    assert.strictEqual(extreme.maxActivePriorityOrdersPerFaculty, 5, 'Priority quota clamped to 5 max');
+
+    // Negative/corrupt values
+    const negative = sanitizeFeatureFlags({ rushMultiplier: -5, maxActivePriorityOrdersPerFaculty: 0, onlineOrderingEnabled: false });
+    assert.strictEqual(negative.rushMultiplier, 1.0, 'Rush multiplier lower bounded to 1.0');
+    assert.strictEqual(negative.maxActivePriorityOrdersPerFaculty, 1, 'Priority quota lower bounded to 1');
+  });
 });

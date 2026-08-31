@@ -38,6 +38,11 @@ export {
   listActiveShiftPins,
   revokeShiftPin,
 } from './shift_pins';
+export {
+  getOwnerBusinessMetrics,
+  updateOwnerFeatureFlags,
+} from './owner_console';
+
 
 
 
