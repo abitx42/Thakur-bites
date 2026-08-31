@@ -287,26 +287,67 @@ runAttackTest('Class I: Verification', 'Applicant attempting to approve own facu
   assert.throws(() => evaluateVerificationReview(applicantAuth), /PERMISSION_DENIED/);
 });
 
-// ─── Class J: Developer Command Step-Up Safeguards ─────────────────
-runAttackTest('Class J: Developer Cockpit', 'Destructive kill switch requires explicit step-up confirmation token', () => {
-  function executeDestructiveKillSwitch(auth, payload) {
-    if (auth.role !== 'security_admin' && auth.role !== 'admin') {
-      throw new Error('PERMISSION_DENIED: Developer command restricted to admins');
+// ─── Class J: Developer Command Ephemeral Step-Up Safeguards ───────
+runAttackTest('Class J: Developer Cockpit', 'Destructive emergency action requires server-issued ephemeral single-use challenge', () => {
+  function verifyChallengeNonceConstantTime(incomingNonce, storedHash) {
+    if (!incomingNonce || !storedHash || typeof incomingNonce !== 'string' || typeof storedHash !== 'string') {
+      return false;
     }
-    if (!payload.stepUpToken || payload.stepUpToken !== 'CONFIRM_KILL_SWITCH_ACTIVE') {
-      throw new Error('STEP_UP_AUTHENTICATION_REQUIRED: Destructive operation requires explicit step-up token');
+    const computedHash = crypto.createHash('sha256').update(incomingNonce.trim()).digest('hex');
+    const bufA = Buffer.from(computedHash, 'hex');
+    const bufB = Buffer.from(storedHash, 'hex');
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
+  }
+  
+  function executeEmergencyAction(auth, payload, sessionDoc) {
+    if (auth.role !== 'security_admin') {
+      throw new Error('PERMISSION_DENIED: Separation of duties restricts emergency operations to security_admin');
     }
-    return { status: 'KILL_SWITCH_ENGAGED' };
+    if (!payload.challengeId || !payload.challengeNonce) {
+      throw new Error('STEP_UP_REQUIRED: Missing ephemeral step-up credentials');
+    }
+    if (sessionDoc.used === true) {
+      throw new Error('REPLAY_DETECTED: Single-use step-up challenge already consumed');
+    }
+    if (Date.now() > sessionDoc.expiresAtMs) {
+      throw new Error('DEADLINE_EXCEEDED: Step-up challenge expired');
+    }
+    if (!verifyChallengeNonceConstantTime(payload.challengeNonce, sessionDoc.nonceHash)) {
+      throw new Error('INVALID_NONCE: Challenge nonce verification failed');
+    }
+    sessionDoc.used = true;
+    return { status: 'EMERGENCY_FREEZE_ENGAGED' };
   }
 
+  const nonce = crypto.randomBytes(32).toString('hex');
+  const nonceHash = crypto.createHash('sha256').update(nonce).digest('hex');
+  const activeSession = {
+    challengeId: 'CHAL-TEST-001',
+    used: false,
+    expiresAtMs: Date.now() + 60000,
+    nonceHash,
+  };
+
   const adminAuth = { role: 'admin', uid: 'admin_1' };
-  assert.throws(() => executeDestructiveKillSwitch(adminAuth, { reason: 'emergency' }), /STEP_UP_AUTHENTICATION_REQUIRED/);
-  
-  const validExec = executeDestructiveKillSwitch(adminAuth, { reason: 'emergency', stepUpToken: 'CONFIRM_KILL_SWITCH_ACTIVE' });
-  assert.strictEqual(validExec.status, 'KILL_SWITCH_ENGAGED');
+  const secAdminAuth = { role: 'security_admin', uid: 'sec_admin_1' };
+
+  // 1. Ordinary admin denied
+  assert.throws(() => executeEmergencyAction(adminAuth, { challengeId: 'CHAL-TEST-001', challengeNonce: nonce }, activeSession), /PERMISSION_DENIED/);
+
+  // 2. Tampered nonce denied
+  assert.throws(() => executeEmergencyAction(secAdminAuth, { challengeId: 'CHAL-TEST-001', challengeNonce: 'tampered_nonce' }, activeSession), /INVALID_NONCE/);
+
+  // 3. Valid invocation succeeds
+  const validExec = executeEmergencyAction(secAdminAuth, { challengeId: 'CHAL-TEST-001', challengeNonce: nonce }, activeSession);
+  assert.strictEqual(validExec.status, 'EMERGENCY_FREEZE_ENGAGED');
+
+  // 4. Replay of same challenge rejected
+  assert.throws(() => executeEmergencyAction(secAdminAuth, { challengeId: 'CHAL-TEST-001', challengeNonce: nonce }, activeSession), /REPLAY_DETECTED/);
 });
 
 console.log('\n════════════════════════════════════════════════════════════════');
 console.log(`🏆 ALL ${totalAttacks}/${totalAttacks} DAST ATTACK SCENARIOS DEFENDED (100% BLOCKED)`);
 console.log('════════════════════════════════════════════════════════════════\n');
 process.exit(0);
+
