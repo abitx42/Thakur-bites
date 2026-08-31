@@ -1,12 +1,13 @@
 // Thakur Bites Staff Operations Dashboard & Hub Entry Point
-import { staffAuth, renderPinPadModal } from './auth.js?v=4';
-import { renderKitchenView } from './views/kitchenView.js?v=4';
-import { renderPickupView } from './views/pickupView.js?v=4';
-import { renderAdminView } from './views/adminView.js?v=4';
-import { renderTvDisplayView } from './views/tvDisplayView.js?v=4';
-import { renderSecurityCenterView } from './views/securityCenterView.js?v=4';
+import { staffAuth, renderPinPadModal } from './auth.js?v=5';
+import { renderKitchenView } from './views/kitchenView.js?v=5';
+import { renderPickupView } from './views/pickupView.js?v=5';
+import { renderAdminView } from './views/adminView.js?v=5';
+import { renderTvDisplayView } from './views/tvDisplayView.js?v=5';
+import { renderSecurityCenterView } from './views/securityCenterView.js?v=5';
+import { renderAnalyticsView } from './views/analyticsView.js?v=5';
 
-let currentStaffView = 'kitchen'; // 'kitchen' | 'pickup' | 'admin' | 'tv' | 'security'
+let currentStaffView = 'kitchen'; // 'kitchen' | 'pickup' | 'admin' | 'analytics' | 'tv' | 'security'
 
 function initStaffDashboard() {
   const root = document.getElementById('app-root');
@@ -59,6 +60,9 @@ function initStaffDashboard() {
             <button class="staff-nav-btn ${currentStaffView === 'admin' ? 'active' : ''}" data-view="admin">
               📋 Menu & Stock
             </button>
+            <button class="staff-nav-btn ${currentStaffView === 'analytics' ? 'active' : ''}" data-view="analytics">
+              📊 Analytics & Load
+            </button>
             <button class="staff-nav-btn ${currentStaffView === 'tv' ? 'active' : ''}" data-view="tv">
               📺 Token TV
             </button>
@@ -106,6 +110,8 @@ function initStaffDashboard() {
       renderPickupView(viewTarget);
     } else if (currentStaffView === 'admin') {
       renderAdminView(viewTarget);
+    } else if (currentStaffView === 'analytics') {
+      renderAnalyticsView(viewTarget);
     } else if (currentStaffView === 'tv') {
       renderTvDisplayView(viewTarget);
     } else if (currentStaffView === 'security') {
