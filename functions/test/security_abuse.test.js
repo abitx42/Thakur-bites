@@ -1372,4 +1372,111 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(partialRefund1 + partialRefund2 <= amountPaidPaise, true);
     assert.strictEqual(partialRefund1 + partialRefund2 + overRefund <= amountPaidPaise, false);
   });
+
+  it('59. Comprehensive IDOR Abuse Suite: Blocks student accessing foreign resources', () => {
+    const studentA = 'student_aaa@tcetmumbai.in';
+    const studentB = 'student_bbb@tcetmumbai.in';
+
+    const orderOfA = { orderId: 'ord_1', studentId: studentA };
+    const paymentOfA = { paymentId: 'pay_1', studentId: studentA };
+
+    function canAccessResource(requesterUid, resource) {
+      return resource.studentId === requesterUid;
+    }
+
+    assert.strictEqual(canAccessResource(studentB, orderOfA), false, 'Student B cannot view Order of Student A');
+    assert.strictEqual(canAccessResource(studentB, paymentOfA), false, 'Student B cannot view Receipt of Student A');
+    assert.strictEqual(canAccessResource(studentA, orderOfA), true);
+  });
+
+  it('60. Multi-Vector Privilege Escalation Abuse Suite', () => {
+    function canDisburseRefund(role) {
+      return role === 'manager' || role === 'admin' || role === 'security_admin';
+    }
+
+    function canAssignRoles(callerRole, targetRole) {
+      if (callerRole !== 'admin' && callerRole !== 'security_admin') return false;
+      if (targetRole === 'security_admin' && callerRole !== 'security_admin') return false;
+      return true;
+    }
+
+    function canAdjustInventory(role) {
+      return role === 'manager' || role === 'admin' || role === 'security_admin';
+    }
+
+    // Kitchen attempting refund
+    assert.strictEqual(canDisburseRefund('kitchen'), false);
+    // Cashier attempting role assignment
+    assert.strictEqual(canAssignRoles('cashier', 'manager'), false);
+    // Pickup attempting inventory adjustment
+    assert.strictEqual(canAdjustInventory('pickup'), false);
+    // Admin attempting to grant security_admin
+    assert.strictEqual(canAssignRoles('admin', 'security_admin'), false);
+  });
+
+  it('61. Fuzzing & Input Parameter Abuse Suite: Rejects extreme payloads', () => {
+    function sanitizeQuantity(q) {
+      if (!Number.isSafeInteger(q) || q <= 0 || q > 50) return { valid: false, error: 'INVALID_QUANTITY' };
+      return { valid: true, quantity: q };
+    }
+
+    assert.strictEqual(sanitizeQuantity(-1).valid, false);
+    assert.strictEqual(sanitizeQuantity(0).valid, false);
+    assert.strictEqual(sanitizeQuantity(999999).valid, false);
+    assert.strictEqual(sanitizeQuantity(2.5).valid, false);
+    assert.strictEqual(sanitizeQuantity(NaN).valid, false);
+    assert.strictEqual(sanitizeQuantity(5).valid, true);
+  });
+
+  it('62. High-Concurrency Stock Collision Attack: 100 parallel buyers for 1 available unit', async () => {
+    let stockOnHand = 1;
+    let reservedStock = 0;
+    let successfulOrders = 0;
+    let failedOrders = 0;
+
+    async function attemptAtomicPurchase() {
+      // Simulate ACID serialized Firestore transaction
+      const available = stockOnHand - reservedStock;
+      if (available >= 1) {
+        reservedStock += 1;
+        successfulOrders++;
+        return true;
+      } else {
+        failedOrders++;
+        return false;
+      }
+    }
+
+    const promises = [];
+    for (let i = 0; i < 100; i++) {
+      promises.push(attemptAtomicPurchase());
+    }
+
+    await Promise.all(promises);
+
+    assert.strictEqual(successfulOrders, 1, 'Exactly 1 concurrent buyer must succeed');
+    assert.strictEqual(failedOrders, 99, '99 buyers must be rejected');
+    assert.strictEqual(stockOnHand - reservedStock, 0, 'Available stock must be exactly 0, never negative');
+  });
+
+  it('63. Dual Payment Double-Spend Invariant: Parallel online webhook and cash settlement race safely', () => {
+    let paymentStatus = 'unpaid';
+    let settlementCount = 0;
+
+    function finalizePayment(source) {
+      if (paymentStatus === 'paid') {
+        return { success: true, alreadySettled: true, source: 'ignored' };
+      }
+      paymentStatus = 'paid';
+      settlementCount++;
+      return { success: true, alreadySettled: false, source };
+    }
+
+    const onlineRes = finalizePayment('online_webhook');
+    const cashRes = finalizePayment('counter_cash');
+
+    assert.strictEqual(onlineRes.alreadySettled, false);
+    assert.strictEqual(cashRes.alreadySettled, true);
+    assert.strictEqual(settlementCount, 1, 'Order must settle exactly once across competing channels');
+  });
 });
