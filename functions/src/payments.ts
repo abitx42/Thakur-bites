@@ -14,6 +14,7 @@ import { finalizeSuccessfulPayment } from './payment_finalize';
 import { releaseInventoryInTransaction } from './inventory_reservation';
 import { assertOperationalMode } from './kill_switch';
 import { logSecurityEvent } from './security_logger';
+import { enforceAppCheck } from './app_check';
 
 const db = admin.firestore();
 
@@ -90,6 +91,7 @@ export function computeGatewaySignature(gatewayOrderId: string, gatewayPaymentId
  * 1. Creates an authoritative, idempotent payment session for checkout.
  */
 export const createPaymentSession = onCall<PaymentSessionRequest>(async (request) => {
+  enforceAppCheck(request);
   await assertOperationalMode('payment');
 
   if (!request.auth || !request.auth.uid) {
@@ -181,6 +183,7 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
  * 2. Cryptographically verifies payment signature and delegates to single authoritative payment finalizer.
  */
 export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) => {
+  enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Student must be authenticated.');
   }
@@ -362,6 +365,7 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
  * Restricted strictly to Cashier, Manager, and Admin roles.
  */
 export const recordCashPayment = onCall<{ orderId: string; idempotencyKey?: string }>(async (request) => {
+  enforceAppCheck(request);
   await assertOperationalMode('payment');
 
   if (!request.auth || !request.auth.uid) {
@@ -496,6 +500,7 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
  * 6. Cancel or Expire Payment Session & Automatically Release Inventory Reservation (Phase 2 Hardened)
  */
 export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: string }>(async (request) => {
+  enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }

@@ -281,6 +281,20 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
   // Create ephemeral staff UID and Auth session
   const workstationUid = `staff_${role}_${todayStr}_${hashedDeviceId}`;
 
+  // 1. Record active workstation session (TB-NEW-004 Remediation)
+  const sessionDocRef = db.collection('workstationSessions').doc(workstationUid);
+  await sessionDocRef.set({
+    sessionId: workstationUid,
+    pinId: candidateDoc.id,
+    role: finalRole!,
+    deviceId: cleanDeviceId,
+    deviceHash: hashedDeviceId,
+    shiftDate: todayStr,
+    status: 'ACTIVE',
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 8 * 60 * 60 * 1000), // 8 hours
+  });
+
   customToken = await admin.auth().createCustomToken(workstationUid, {
     role: finalRole!,
     isWorkstationSession: true,
@@ -313,6 +327,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
 
 /**
  * Platform 2.0 — Revoke Shift PIN
+ * Atomically revokes the shift PIN and immediately invalidates all active workstation sessions & tokens.
  */
 export const revokeShiftPin = onCall<RevokeShiftPinRequest>(async (request) => {
   enforceAppCheck(request);
@@ -345,19 +360,51 @@ export const revokeShiftPin = onCall<RevokeShiftPinRequest>(async (request) => {
     revocationReason: reason,
   });
 
+  // Invalidate all active workstation sessions and revoke Firebase Auth refresh tokens (TB-NEW-004)
+  const activeSessionsSnap = await db.collection('workstationSessions')
+    .where('pinId', '==', pinId)
+    .where('status', '==', 'ACTIVE')
+    .get();
+
+  for (const sessionDoc of activeSessionsSnap.docs) {
+    await sessionDoc.ref.update({
+      status: 'REVOKED',
+      revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+      revokedBy: request.auth.uid,
+      revocationReason: reason,
+    });
+
+    try {
+      await admin.auth().revokeRefreshTokens(sessionDoc.id);
+    } catch (_) {}
+  }
+
   await logSecurityEvent({
     eventType: 'STAFF_SHIFT_PIN_REVOKED',
     severity: 'MEDIUM',
     actorUid: request.auth.uid,
-    details: { pinId, reason },
+    details: { pinId, reason, revokedSessionsCount: activeSessionsSnap.docs.length },
   });
 
   return {
     success: true,
     pinId,
     status: 'REVOKED',
+    revokedSessionsCount: activeSessionsSnap.docs.length,
   };
 });
+
+/**
+ * Asserts that a workstation session is still active and has not been revoked (TB-NEW-004 & TB-NEW-005).
+ */
+export async function assertActiveWorkstationSession(uid: string, token: Record<string, any>): Promise<void> {
+  if (token.isWorkstationSession === true) {
+    const sessionSnap = await db.collection('workstationSessions').doc(uid).get();
+    if (!sessionSnap.exists || sessionSnap.data()?.status !== 'ACTIVE') {
+      throw new HttpsError('unauthenticated', 'Workstation session has been revoked or expired. Please re-authenticate with shift PIN.');
+    }
+  }
+}
 
 /**
  * Platform 2.0 — List Active Shift PINs for Today

@@ -43,29 +43,51 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     throw new HttpsError('permission-denied', 'Only security administrators can grant the security_admin role.');
   }
 
-  // 1. Fetch existing user claims to increment permissionsVersion
-  let nextVersion = 1;
+  // 1. Fetch target user record and verify existence
+  let existingRole: UserRole = 'student';
   try {
     const userRecord = await admin.auth().getUser(targetUid);
     const existingClaims = userRecord.customClaims || {};
-    nextVersion = (Number(existingClaims.permissionsVersion || 0)) + 1;
+    existingRole = (existingClaims.role as UserRole) || 'student';
   } catch (err: any) {
     throw new HttpsError('not-found', `Target user ${targetUid} does not exist in Firebase Auth.`);
   }
 
-  // 2. Set Custom User Claims atomically without overwriting accountType/priorityLevel
+  // Last Security Admin Protection (TB-NEW-024)
+  if (existingRole === 'security_admin' && newRole !== 'security_admin') {
+    if (callerRole !== 'security_admin') {
+      throw new HttpsError('permission-denied', 'Only security administrators can demote a security administrator.');
+    }
+    const securityAdminsSnap = await db.collection('staffUsers')
+      .where('role', '==', 'security_admin')
+      .get();
+    if (securityAdminsSnap.docs.length <= 1 && securityAdminsSnap.docs.some(d => d.id === targetUid)) {
+      throw new HttpsError('failed-precondition', 'Cannot demote the last remaining security administrator. System requires at least one active security_admin.');
+    }
+  }
+
+  const now = admin.firestore.Timestamp.now();
+
+  // 2. Monotonically Allocate Global Permissions Version (TB-NEW-023)
+  const authorityRef = db.collection('systemConfig').doc('permissions_authority');
+  const nextVersion = await db.runTransaction(async (t) => {
+    const snap = await t.get(authorityRef);
+    const cur = (snap.exists ? Number(snap.data()?.version || 0) : 0) + 1;
+    t.set(authorityRef, { version: cur, lastAssignedTo: targetUid, updatedAt: now }, { merge: true });
+    return cur;
+  });
+
+  // 3. Set Custom User Claims atomically without overwriting accountType/priorityLevel
   await syncUserCustomClaims(targetUid, {
     role: newRole,
     permissionsVersion: nextVersion,
     assignedAt: new Date().toISOString(),
   });
 
-  // 3. Force token refresh by revoking existing sessions
+  // 4. Force token refresh by revoking existing sessions
   await admin.auth().revokeRefreshTokens(targetUid);
 
-  const now = admin.firestore.Timestamp.now();
-
-  // 4. Update staff user record
+  // 5. Update staff user record
   await db.collection('staffUsers').doc(targetUid).set({
     uid: targetUid,
     role: newRole,
@@ -74,7 +96,7 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     updatedAt: now,
   }, { merge: true });
 
-  // 5. Record immutable security audit event
+  // 6. Record immutable security audit event
   await logSecurityEvent({
     eventType: 'ROLE_ASSIGNMENT',
     severity: newRole === 'admin' || newRole === 'security_admin' ? 'HIGH' : 'INFO',
@@ -82,6 +104,7 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     details: {
       targetUid,
       assignedRole: newRole,
+      previousRole: existingRole,
       permissionsVersion: nextVersion,
     },
   });
