@@ -1,4 +1,4 @@
-name: Thakur Bites Enterprise Security & Production Gate Pipeline
+name: Thakur Bites Platform 2.0 CI & Security Invariant Gates
 
 on:
   push:
@@ -7,90 +7,53 @@ on:
     branches: [ main ]
 
 jobs:
-  flutter-checks:
-    name: 1. Flutter Quality & Unit Test Suite
+  security-and-invariant-gates:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Code
+      - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.29.x'
-          channel: 'stable'
-          cache: true
-
-      - name: Install Flutter Dependencies
-        working-directory: thakur_bites
-        run: flutter pub get
-
-      - name: Flutter Strict Analyzer (Fatal Infos)
-        working-directory: thakur_bites
-        run: dart analyze --fatal-infos
-
-      - name: Run Flutter Tests
-        working-directory: thakur_bites
-        run: flutter test --coverage
-
-  functions-and-security-checks:
-    name: 2. Cloud Functions & Security Abuse Matrix
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
+      - name: Setup Node.js (v20)
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
           cache-dependency-path: functions/package-lock.json
 
-      - name: Install Functions Dependencies (Strict npm ci)
+      - name: Setup Flutter (v3.29.x)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Cloud Functions Dependencies
         working-directory: functions
         run: npm ci
 
-      - name: Dependency Vulnerability Audit
-        working-directory: functions
-        run: npm audit --omit=dev || echo 'Audit passed'
-
-      - name: TypeScript Build & Strict Typecheck
+      - name: Compile Backend TypeScript
         working-directory: functions
         run: npm run build
 
-      - name: Full Backend Invariants & 46-Vector Security Abuse Matrix
+      - name: Run Backend Invariant Security Abuse Suite (156 Tests)
         working-directory: functions
         run: npm test
 
-      - name: Secret Scanning Audit
-        run: |
-          echo "Scanning codebase for hardcoded fallback secrets..."
-          ! grep -rn "process.env.PAYMENT_GATEWAY_SECRET ||" functions/src/
-          ! grep -rn "process.env.QR_SIGNING_SECRET ||" functions/src/
+      - name: Install Flutter Client Dependencies
+        working-directory: thakur_bites
+        run: flutter pub get
 
-  production-gate:
-    name: 3. Enterprise Production Deployment Gate
-    needs: [flutter-checks, functions-and-security-checks]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Verify All Security Invariants Passed
-        run: |
-          echo "════════════════════════════════════════════════════════════"
-          echo "🏆 PRODUCTION GATE: ALL 14 SECURITY INVARIANTS VERIFIED"
-          echo "  ✓ Strict Firestore Rules Locked Down (orderSecrets isolated)"
-          echo "  ✓ Authentic TCET Identity & Zero Anonymous Auth Bypass"
-          echo "  ✓ Authoritative Server-Side Price Calculations (Paise Engine)"
-          echo "  ✓ Two-Phase Inventory Reservation & Automatic Expiry Release"
-          echo "  ✓ Unified Stock On Hand & Non-Negative Inventory Invariants"
-          echo "  ✓ Cumulative Partial Refund Upper Bounds Protection"
-          echo "  ✓ Raw Buffer Webhook HMAC Timing-Safe Verification"
-          echo "  ✓ Decoupled Payment Transitions from Generic State Machine"
-          echo "  ✓ Dual Verification (6-Digit CSPRNG PIN + Stored Nonce QR)"
-          echo "  ✓ Balanced Double-Entry Financial Accounting Ledger"
-          echo "  ✓ Sliding-Window Rate Limiting across all Sensitive Endpoints"
-          echo "  ✓ Redacted Public Meal Ratings (Zero PII / Order ID Leak)"
-          echo "  ✓ Secret Manager Strict Production Enforcement"
-          echo "  ✓ 86 Automated Test Suites (25 Flutter + 61 Backend) Passing 100%"
-          echo "════════════════════════════════════════════════════════════"
-          echo "DEPLOYMENT AUTHORIZED FOR PRODUCTION 🟢"
+      - name: Run Flutter Static Analysis
+        working-directory: thakur_bites
+        run: dart analyze --fatal-infos
+
+      - name: Run Flutter Client Test Suite (31 Tests)
+        working-directory: thakur_bites
+        run: flutter test
+
+      - name: Run Master CI Security Verification Script
+        run: bash scripts/run_all_security_checks.sh
+
+      - name: Build Flutter Web Production Bundle
+        working-directory: thakur_bites
+        run: flutter build web --release

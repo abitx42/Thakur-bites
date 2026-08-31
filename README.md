@@ -1,38 +1,43 @@
-# 🍛 Thakur Bites — Enterprise Canteen Operations & Security Architecture
+# 🍛 Thakur Bites Platform 2.0 — Smart Campus Canteen Operating System
 
-[![Tests](https://img.shields.io/badge/tests-149%20passing-brightgreen.svg)](scripts/run_all_security_checks.sh)
-[![Security Gate](https://img.shields.io/badge/security%20gate-100%20vectors%20passed-blue.svg)](functions/test/security_abuse.test.js)
-[![Flutter](https://img.shields.io/badge/flutter-3.x%20Web-02569B.svg)](thakur_bites/)
+[![Tests](https://img.shields.io/badge/tests-187%20passing-brightgreen.svg)](scripts/run_all_security_checks.sh)
+[![Security Gate](https://img.shields.io/badge/security%20invariants-132%20vectors%20passed-blue.svg)](functions/test/security_abuse.test.js)
+[![Flutter](https://img.shields.io/badge/flutter-3.29%20Web%20%26%20Mobile-02569B.svg)](thakur_bites/)
 [![Firebase](https://img.shields.io/badge/firebase-Cloud%20Functions%20v2-FFCA28.svg)](functions/)
 
-**Thakur Bites** is a high-concurrency, security-hardened smart canteen pre-ordering, kitchen dispatch (KDS), and counter pickup ecosystem built for Thakur College of Engineering & Technology (TCET). 
+**Thakur Bites Platform 2.0** is an enterprise-grade digital canteen pre-ordering, kitchen dispatch (KDS), and counter pickup operating system built specifically for Thakur College of Engineering & Technology (TCET).
 
-It combines a Flutter Web student application, a vanilla JS/CSS live staff operations hub, and Firebase Cloud Functions v2 backend hardened with zero-trust institutional authentication, double-entry financial ledgers, and automated circuit breakers.
+It synchronizes three distinct interfaces backed by a single authoritative cloud backend:
+1. **📱 Flutter Customer App**: For students, visitors, and verified teachers/faculty.
+2. **🍳 Staff Operations Hub**: Web workstation portal for Kitchen KDS, Pickup Dispatch, Menu & Inventory Control, Owner Executive Dashboard, and Developer Security Cockpit.
+3. **📺 Standalone 4K TV Board (`web_tv/`)**: Zero-authentication, high-contrast order dispatch monitor for cafeteria wall TVs.
 
 ---
 
-## 🏛️ System Architecture
+## 🏛️ Platform 2.0 Architecture
 
 ```mermaid
 flowchart TD
-    subgraph ClientLayer["Client & Staff Operations Layer"]
-        A["📱 Student Web App (Flutter Web)"] -->|HTTPS / App Check| Gateway["Firebase Cloud Functions v2"]
-        B["👨‍🍳 Kitchen KDS Display (Web Hub)"] -->|WebSocket Sync| Firestore[("Authoritative Firestore DB")]
+    subgraph ClientLayer["Client & Operations Layer"]
+        A["📱 Customer App (Flutter Web/Mobile)"] -->|HTTPS / App Check| Gateway["Firebase Cloud Functions v2"]
+        B["🍳 Kitchen KDS Display (Web Hub)"] -->|WebSocket Sync| Firestore[("Authoritative Firestore DB")]
         C["📦 Pickup Counter Station"] -->|verifyPickup (PIN / QR)| Gateway
-        D["💳 Cashier Counter Terminal"] -->|recordCashPayment| Gateway
-        E["🛡️ Security & Sentinel Center"] -->|runSecurityIntegrityScan| Gateway
+        D["📊 Owner Executive Console"] -->|getOwnerBusinessMetrics| Gateway
+        E["🛡️ Developer Security Cockpit"] -->|simulatePermissionCheck| Gateway
+        F["📺 Standalone TV Board (web_tv/)"] -->|Zero-Auth Read| Firestore
     end
 
-    subgraph SecurityLayer["Zero-Trust Security & Invariant Layer"]
-        Gateway --> AC["1. Firebase App Check Attestation"]
-        AC --> AU["2. Institutional Email Invariant (@tcetmumbai.in + verified)"]
-        AU --> RL["3. College NAT-Aware Rate Limiter (UID / Subnet)"]
-        RL --> IV["4. Inventory Invariants (available = onHand - reserved)"]
-        IV --> FL["5. Double-Entry Financial Ledger Invariants"]
+    subgraph SecurityLayer["Platform 2.0 Invariant Engines"]
+        Gateway --> AU["1. Universal Identity Classifier (Student/Visitor/Teacher)"]
+        Gateway --> PQ["2. Anti-Starvation Priority Queue Scheduler"]
+        Gateway --> SP["3. Salted Shift PINs & Hardware Device Binding"]
+        Gateway --> RE["4. Authoritative Live Reorder Engine"]
+        Gateway --> IV["5. Inventory Invariants (available = onHand - reserved)"]
+        Gateway --> FL["6. Double-Entry Integer Paise Financial Ledgers"]
     end
 
     subgraph DefenseLayer["Continuous Defense & Automation"]
-        IM["⏰ Hourly Continuous Integrity Monitor"] -->|Checks Invariants| Firestore
+        IM["⏰ Hourly Continuous Integrity Monitor"] -->|Checks 15 Invariants| Firestore
         IM -->|Critical Breach Detected| CB["🚨 Auto-Trip to FINANCIAL_FROZEN"]
         EOD["⏰ Daily 23:59 Reconciliation Cron"] -->|Rebalances Ledgers| Firestore
         BK["💾 Cryptographic Backup Restore Validator"] -->|SHA-256 Checksum| Firestore
@@ -41,110 +46,79 @@ flowchart TD
 
 ---
 
-## 🛡️ Core Security & Invariant Guarantees
+## 🌟 Core Platform 2.0 Innovations
 
-1. **📦 Inventory Single Source of Truth**:
-   - Physical available stock is computed strictly as:
-     $$\text{availableStock} \equiv \text{stockOnHand} - \text{reservedStock}$$
-   - Zero reliance on legacy duplicate counts; negative/corrupted numbers throw `INVENTORY_CORRUPTION` (no silent `Math.max(0, ...)` clamping).
-2. **🚫 Zero-Trust Institutional Identity**:
-   - Checkout strictly requires:
-     $$\text{email} \land \text{email\_verified} === \text{true} \land \text{email ends with } \texttt{@tcetmumbai.in}$$
-   - Zero test-environment bypasses in production authentication paths.
-3. **🛡️ Firebase App Check & Non-Oracle Defense**:
-   - Attests legitimate client instances on all sensitive callables (`createCheckout`, `createPaymentSession`, `recordCashPayment`, `processOrderRefund`, `assignStaffRole`, `setSystemOperationalMode`, `verifyPickup`, `unlockOrderPickupVerification`).
-   - Standardized non-oracle error responses (`"Nice try. Try harder. 😉"` with correlated `incidentId`) preventing detector threshold leakage.
-4. **💰 Double-Entry Ledger & Higher-Order Financial Invariants**:
-   - Total debits strictly equal total credits for every transaction posting.
-   - Cross-checks: $\text{Payment Captured} \equiv \text{Ledger Postings Total} \equiv \text{Order Total Amount Paise}$.
-5. **🚨 Continuous Integrity Monitor & Tiered Circuit Breaker**:
-   - Hourly full-cursor scanner across orders, inventory, and ledgers.
-   - High-confidence critical violations automatically transition the system to `FINANCIAL_FROZEN`.
-6. **🏎️ Cryptographic One-Time QR Nonce & CSPRNG PIN Verification**:
-   - Orders secrets (`pickupPinHash`, `qrNonce`) are isolated in `orderSecrets/{orderId}` and locked from client reads.
-   - 10-way concurrent verification races ensure exactly 1 succeeds and 9 fail with `REPLAY_DETECTED`.
+1. **🧑‍🎓 Universal Multi-Role Identity System**:
+   - Google account determines identity hint; backend determines role and priority level.
+   - TCET institutional student emails (`@tcetmumbai.in`) verified automatically. Visitors given safe guest accounts.
+   - In-place faculty verification elevates teachers to Priority Level 2 on the **same UID** without account duplication.
+
+2. **⚡️ Anti-Starvation Priority Queue Scheduling**:
+   - Dynamic Effective Priority formula: $P_{\text{eff}} = P_{\text{base}} + (\text{WaitMinutes} \times 5)$.
+   - Every minute a student ticket waits, it gains $+5$ points, catching up to faculty tickets after 20 minutes to prevent queue stagnation.
+   - Faculty throttled to max 1 concurrent active priority order; subsequent orders drop to standard queue.
+
+3. **🔑 Salted Shift PINs & Workstation Hardware Binding**:
+   - 6-digit CSPRNG shift PINs hashed with SHA-256 and unique per-PIN salts in `shiftPins/{pinId}`.
+   - Binds each PIN to designated counter hardware tablet UUIDs (`tb_workstation_device_id`), blocking unauthorized personal device access.
+   - 5-strike brute-force lockout locks workstation login for 15 minutes.
+
+4. **📺 Standalone 4K TV Display Web App (`web_tv/`)**:
+   - Zero-authentication web app with 3 resilient stream states: 🟢 **Live Stream**, 🟡 **Reconnecting**, and 🔴 **Off-Hours Standby**.
+   - Zero-PII security boundary (strips student names, roll numbers, and payment details).
+   - Synthesized Web Audio API two-tone counter bell chime when tokens enter `READY` state.
+
+5. **📊 Executive Owner Console & Predictive Stockout Forecaster**:
+   - Real-time gross revenue, Digital UPI vs Cash breakdown, AOV, and active ticket distribution.
+   - Run-rate stockout forecaster: $\text{burnRate} = \frac{\text{unitsSold}}{\text{hoursElapsed}}$ and $\text{hoursRemaining} = \frac{\text{availableStock}}{\text{burnRate}}$.
+   - Campus feature flags: Mobile Ordering, Faculty Priority, Cash Counter, and Rush Multiplier (1.0x to 2.5x).
+
+6. **🛡️ Developer Command Cockpit & RBAC Simulator**:
+   - Real-time security incident stream with deterministic SHA-256 deduplication.
+   - Interactive RBAC Permission Matrix simulator to test role boundaries in 1 click.
+   - 1-Click 15-point invariant integrity scanner.
 
 ---
 
-## 🧪 Master Test & Verification Suite
+## 🧪 Master Test & Verification Suite (187 Tests Total)
 
-To run all 5 enterprise security gates sequentially:
+Run all 5 enterprise security gates sequentially:
 
 ```bash
-./scripts/run_all_security_checks.sh
+bash scripts/run_all_security_checks.sh
 ```
 
-### 📊 Verification Suite Breakdown (149 Tests Total)
-
-| Test Suite | Total Tests | Status | Description |
+| Verification Gate | Test Count | Status | Description |
 | :--- | :---: | :---: | :--- |
-| **Backend Red Team & Security Abuse** | 100 | `100% PASS` | Adversarial vectors (Tests 1–100) covering IDOR, race conditions, parameter pollution, brute force lockout, and App Check. |
-| **Backend Core Invariants & Schemas** | 24 | `100% PASS` | Checkout calculation, two-phase reservations, HMAC webhooks, and state machine transitions. |
-| **Flutter Client Unit & Widget Suite** | 25 | `100% PASS` | Pricing invariants, CartProvider, dynamic wait ETAs, and ticket token sequences. |
-| **Flutter Static Analysis** | — | `0 Errors` | `dart analyze --fatal-infos` passing with zero warnings. |
+| **Backend Invariant & Security Abuse Suite** | 156 | `100% PASS` | Tests 1–132 covering identity classification, priority math, salted shift PINs, TV minimization, and RBAC simulator. |
+| **Flutter Client Unit & Widget Suite** | 31 | `100% PASS` | Pricing models, UserProfile parser, UserPreferences, ETA Rush scaling, and CartProvider. |
+| **Flutter Static Analysis** | — | `0 Errors` | `dart analyze --fatal-infos` passing cleanly. |
 | **Automated Backup & Restore Engine** | — | `VERIFIED` | Cryptographic SHA-256 checksum and balance verification. |
-| **E2E 14-Point Lifecycle Smoke Test** | 14 | `100% PASS` | Full student checkout $\to$ webhook $\to$ KDS $\to$ QR pickup $\to$ sanitized rating lifecycle. |
-| **100-Order Peak Lunch Rush Simulator**| 100 | `100% PASS` | 100 concurrent parallel checkout requests with 0 dropped orders and 0 oversold units. |
+| **Platform 2.0 E2E Lifecycle Smoke Test** | 12 | `100% PASS` | Full student checkout $\to$ webhook $\to$ priority KDS $\to$ QR pickup $\to$ shift PIN $\to$ TV projection. |
+| **100-Order Peak Lunch Rush Simulator** | 100 | `100% PASS` | 100 parallel checkout requests with 0 dropped orders and 0 oversold units. |
 
 ---
 
-## 🚀 Local Development & Execution
+## 🚀 Quick Start & Development Launcher
 
-### 1. Start the Student Web App (Flutter Web)
+### Interactive Multi-Service Launcher
 ```bash
-cd thakur_bites
-flutter build web --release
-python3 -m http.server 8080 --directory build/web
+./scripts/dev_runner.sh
 ```
-Access at: [`http://localhost:8080`](http://localhost:8080)
+- **`[A]`**: Run Master Security CI Verification Suite (187 Tests)
+- **`[B]`**: Start Staff Hub & TV Display HTTP Server (Port 3000)
+- **`[C]`**: Launch Flutter Web Client (Port 8080)
+- **`[D]`**: Seed Realistic Demo Campus Data into Firestore
 
-### 2. Start the Staff Operations Hub (KDS / Pickup / Admin / Security Center)
-```bash
-python3 server_no_cache.py
-```
-Access at: [`http://localhost:8081`](http://localhost:8081)
-
-### 3. Run Backend Unit & Security Tests
-```bash
-cd functions
-npm run build
-npm test
-```
+### Key Port Matrix
+| Interface | Local URL | Authentication |
+|:---|:---|:---|
+| **Flutter Customer Web App** | `http://localhost:8080` | Google Sign-In / Student Login |
+| **Staff Operations Hub** | `http://localhost:3000` | Workstation Shift PIN (`123456`) or Email |
+| **Cafeteria 4K TV Board** | `http://localhost:3000/web_tv` | Zero-Auth (Public Read-Only) |
 
 ---
 
-## 📂 Repository Structure
+## 📄 License & Compliance
 
-```
-.
-├── functions/                     # Firebase Cloud Functions v2 Backend
-│   ├── src/
-│   │   ├── checkout.ts            # Atomic Two-Phase Checkout & Reservation
-│   │   ├── inventory_reservation.ts# SSoT Inventory Engine
-│   │   ├── integrity_monitor.ts   # Continuous Integrity Scanner & Circuit Breaker
-│   │   ├── security_logger.ts     # Global Deterministic Telemetry & Budgeting
-│   │   ├── kill_switch.ts         # Operational Mode Controller & RBAC
-│   │   ├── pickup_verify.ts       # Cryptographic Nonce & PIN Pickup Engine
-│   │   ├── payments.ts            # Transactional Payment Sessions & Webhooks
-│   │   └── app_check.ts           # Firebase App Check Attestation Helper
-│   ├── test/
-│   │   └── security_abuse.test.js # 100 Red Team Adversarial Test Vectors
-│   └── scripts/
-│       └── verify_backup_restore.js# Backup Restore Integrity Validator
-├── thakur_bites/                  # Flutter Web Student Application
-│   ├── lib/                       # Screens, Providers & Services
-│   └── test/                      # Client-Side Invariant Test Suites
-├── js/                            # Staff Operations Hub (Vanilla JS / WebSocket)
-│   └── views/                     # KDS, Pickup, Admin, Security Center, TV Display
-├── scripts/
-│   ├── run_all_security_checks.sh # Master 5-Gate CI Verification Script
-│   ├── e2e_smoke_test.js          # Full 14-Point Lifecycle Smoke Test
-│   └── simulate_lunch_rush.js     # 100-Concurrent Order Load Simulator
-└── firestore/
-    └── firestore.rules            # Granular RBAC & PII-Minimized Security Rules
-```
-
----
-
-## 📜 License
-Internal TCET Campus Operational Software. Engineered for high-integrity, fail-closed student dining.
+Thakur Bites Platform 2.0 is licensed under the MIT License for Thakur College of Engineering & Technology (TCET).
