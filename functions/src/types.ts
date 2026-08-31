@@ -178,3 +178,23 @@ export interface DailyReconciliationRecord {
   status: 'BALANCED' | 'DISCREPANCY_FLAGGED';
   auditNotes: string[];
 }
+
+export interface MenuItemDoc {
+  itemId: string;
+  name: string;
+  price: number;
+  description?: string;
+  category: string;
+  image?: string;
+  type: 'cooked' | 'instant';
+  isPublished: boolean;
+  isOrderable: boolean;
+  prepMinutes?: number;
+  stockOnHand?: number;
+  reservedStock?: number;
+  reorderLevel?: number;
+  lastRestockedAt?: Timestamp;
+  available?: boolean;
+  updatedAt?: Timestamp;
+}
+
