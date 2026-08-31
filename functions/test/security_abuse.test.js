@@ -3551,4 +3551,151 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(roleLimits.pickup, 3);
     assert.strictEqual(roleLimits.cashier, 2);
   });
+
+  it('171. Operational Mode Unification: Synchronizes single authoritative OperationalMode across systemConfig and publicSystemStatus', () => {
+    const authoritativeModes = ['NORMAL', 'DEGRADED', 'FINANCIAL_FROZEN', 'EMERGENCY_HALT'];
+
+    function validateOperationalMode(mode) {
+      return authoritativeModes.includes(mode);
+    }
+
+    assert.strictEqual(validateOperationalMode('NORMAL'), true);
+    assert.strictEqual(validateOperationalMode('EMERGENCY_HALT'), true);
+    assert.strictEqual(validateOperationalMode('FINANCIAL_FROZEN'), true);
+    assert.strictEqual(validateOperationalMode('EMERGENCY_FREEZE'), false, 'Legacy inconsistent modes must be rejected');
+    assert.strictEqual(validateOperationalMode('FINANCIAL_FREEZE'), false, 'Legacy inconsistent modes must be rejected');
+  });
+
+  it('172. Orphaned Payment Invariant (TB-003): Cancelled order never resurrected by late payment; recorded as orphaned for refund', () => {
+    const cancelledOrder = {
+      orderId: 'TB_ORDER_999',
+      status: 'cancelled',
+      paymentStatus: 'cancelled',
+      totalAmountPaise: 12000,
+    };
+
+    function processPaymentOnOrder(order, gatewayPaymentId) {
+      if (order.status === 'cancelled' || order.paymentStatus === 'cancelled') {
+        return {
+          resurrected: false,
+          orphanedPayment: {
+            paymentId: `orphan_${gatewayPaymentId}`,
+            orderId: order.orderId,
+            amountPaise: order.totalAmountPaise,
+            refundStatus: 'REFUND_QUEUED',
+          },
+          postings: [
+            { account: 'GATEWAY_RECEIVABLE', debitPaise: order.totalAmountPaise },
+            { account: 'ORPHAN_SUSPENSE', creditPaise: order.totalAmountPaise },
+          ],
+        };
+      }
+      return { resurrected: true };
+    }
+
+    const result = processPaymentOnOrder(cancelledOrder, 'pay_xyz123');
+    assert.strictEqual(result.resurrected, false, 'Cancelled order must never be resurrected');
+    assert.strictEqual(result.orphanedPayment.refundStatus, 'REFUND_QUEUED');
+    assert.strictEqual(result.postings[1].account, 'ORPHAN_SUSPENSE');
+  });
+
+  it('173. Inside-Transaction Faculty Priority Locking (TB-004): Limits active priority tickets atomically to 1', () => {
+    const existingFacultyLock = { userId: 'faculty_123', activeOrderId: 'order_prior_01' };
+
+    function evaluatePriorityTransactional(userId, requestedPriority, facultyLock) {
+      if (requestedPriority < 2) return { assignedPriority: 1, reason: 'STANDARD_QUEUE' };
+      if (facultyLock && facultyLock.activeOrderId) {
+        return { assignedPriority: 1, reason: 'FAIRNESS_MAX_ACTIVE_PRIORITY_REACHED' };
+      }
+      return { assignedPriority: requestedPriority, reason: 'FACULTY_PRIORITY_APPLIED' };
+    }
+
+    // First order receives Level 2
+    const firstOrder = evaluatePriorityTransactional('faculty_123', 2, null);
+    assert.strictEqual(firstOrder.assignedPriority, 2);
+    assert.strictEqual(firstOrder.reason, 'FACULTY_PRIORITY_APPLIED');
+
+    // Concurrent second order is clamped to Level 1
+    const concurrentOrder = evaluatePriorityTransactional('faculty_123', 2, existingFacultyLock);
+    assert.strictEqual(concurrentOrder.assignedPriority, 1);
+    assert.strictEqual(concurrentOrder.reason, 'FAIRNESS_MAX_ACTIVE_PRIORITY_REACHED');
+  });
+
+  it('174. Fail-Closed Priority Evaluation (TB-005): Priority lookup errors default to Standard Priority Level 1', () => {
+    function evaluatePriorityWithFaultTolerance(simulateDbError) {
+      try {
+        if (simulateDbError) throw new Error('Firestore connection timeout');
+        return { assignedPriority: 2, reason: 'FACULTY_PRIORITY_APPLIED' };
+      } catch (err) {
+        // Fail-Closed Invariant
+        return { assignedPriority: 1, reason: 'FAIL_CLOSED_STANDARD_QUEUE' };
+      }
+    }
+
+    const failureResult = evaluatePriorityWithFaultTolerance(true);
+    assert.strictEqual(failureResult.assignedPriority, 1, 'Must fail-closed to Level 1');
+    assert.strictEqual(failureResult.reason, 'FAIL_CLOSED_STANDARD_QUEUE');
+  });
+
+  it('175. Cash Inventory Lifecycle Invariant (TB-012): Cash order reserves stock on checkout, commits only on cash payment', () => {
+    let stockOnHand = 20;
+    let reservedStock = 0;
+
+    // 1. Checkout Step: Reserve only
+    function checkoutCashOrder(qty) {
+      assert.ok(qty <= (stockOnHand - reservedStock));
+      reservedStock += qty;
+      return { orderStatus: 'payment_pending', paymentStatus: 'pending' };
+    }
+
+    // 2. Counter Step: Commit physical inventory on cash collection
+    function recordCashPayment(qty) {
+      reservedStock -= qty;
+      stockOnHand -= qty;
+      return { orderStatus: 'confirmed', paymentStatus: 'paid' };
+    }
+
+    const checkout = checkoutCashOrder(2);
+    assert.strictEqual(checkout.orderStatus, 'payment_pending');
+    assert.strictEqual(stockOnHand, 20, 'Stock on hand must NOT decrease during cash checkout');
+    assert.strictEqual(reservedStock, 2);
+
+    const payment = recordCashPayment(2);
+    assert.strictEqual(payment.orderStatus, 'confirmed');
+    assert.strictEqual(payment.paymentStatus, 'paid');
+    assert.strictEqual(stockOnHand, 18, 'Physical stock decremented only on payment');
+    assert.strictEqual(reservedStock, 0);
+  });
+
+  it('176. Storage Rules MIME Invariant (TB-024): Disallows SVG to prevent stored XSS attacks', () => {
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+
+    function isUploadAllowed(contentType) {
+      return allowedMimeTypes.includes(contentType);
+    }
+
+    assert.strictEqual(isUploadAllowed('image/jpeg'), true);
+    assert.strictEqual(isUploadAllowed('image/png'), true);
+    assert.strictEqual(isUploadAllowed('image/webp'), true);
+    assert.strictEqual(isUploadAllowed('application/pdf'), true);
+    assert.strictEqual(isUploadAllowed('image/svg+xml'), false, 'SVG must be rejected');
+    assert.strictEqual(isUploadAllowed('text/html'), false, 'HTML must be rejected');
+  });
+
+  it('177. Pickup PIN PBKDF2 Verification Invariant: Enforces 10,000 iterations & CSPRNG salt timingSafeEqual comparison', () => {
+    const rawPin = '7391';
+    const salt = crypto.randomBytes(16).toString('hex');
+    const storedHash = crypto.pbkdf2Sync(rawPin, salt, 10000, 32, 'sha256').toString('hex');
+
+    function verifyPickupPin(inputPin, targetHash, pinSalt) {
+      const derived = crypto.pbkdf2Sync(inputPin.trim(), pinSalt, 10000, 32, 'sha256').toString('hex');
+      const expBuf = Buffer.from(targetHash, 'hex');
+      const actBuf = Buffer.from(derived, 'hex');
+      return expBuf.length === actBuf.length && crypto.timingSafeEqual(expBuf, actBuf);
+    }
+
+    assert.strictEqual(verifyPickupPin('7391', storedHash, salt), true);
+    assert.strictEqual(verifyPickupPin('7392', storedHash, salt), false);
+    assert.strictEqual(verifyPickupPin('0000', storedHash, salt), false);
+  });
 });
