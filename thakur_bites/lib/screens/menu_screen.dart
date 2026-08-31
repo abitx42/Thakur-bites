@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/menu_item.dart';
+import '../models/order.dart' as app;
 import '../providers/cart_provider.dart';
 import '../screens/cart_screen.dart';
+import '../screens/order_status_screen.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/category_tabs.dart';
@@ -356,27 +358,51 @@ class _MenuScreenState extends State<MenuScreen> {
   // ═══════════════════════════════════════════════════════════════════
 
   Widget _buildOrdersTab() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.receipt_long_rounded,
-                size: 56, color: AppColors.inkSoft.withOpacity(0.4)),
-            const SizedBox(height: 16),
-            Text('No orders yet',
-                style: AppFonts.body(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.ink)),
-            const SizedBox(height: 6),
-            Text('Place one from the Menu tab.',
-                style: AppFonts.body(fontSize: 14, color: AppColors.inkSoft),
-                textAlign: TextAlign.center),
-          ],
-        ),
-      ),
+    return StreamBuilder<List<app.Order>>(
+      stream: _firestore.ordersStream(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: AppColors.red),
+          );
+        }
+
+        final orders = snapshot.data ?? [];
+        if (orders.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(40),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.receipt_long_rounded,
+                      size: 56, color: AppColors.inkSoft.withOpacity(0.4)),
+                  const SizedBox(height: 16),
+                  Text('No orders yet',
+                      style: AppFonts.body(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.ink)),
+                  const SizedBox(height: 6),
+                  Text('Place one from the Menu tab.',
+                      style:
+                          AppFonts.body(fontSize: 14, color: AppColors.inkSoft),
+                      textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          itemCount: orders.length,
+          itemBuilder: (context, index) {
+            final order = orders[index];
+            return _OrderCard(order: order);
+          },
+        );
+      },
     );
   }
 
@@ -536,3 +562,164 @@ class _NavItem extends StatelessWidget {
     );
   }
 }
+
+// ─── Order Card (in Orders Tab) ───────────────────────────────────
+
+class _OrderCard extends StatelessWidget {
+  final app.Order order;
+
+  const _OrderCard({required this.order});
+
+  @override
+  Widget build(BuildContext context) {
+    final isReady = order.status == 'ready';
+    final isCollected = order.status == 'collected';
+    final isPreparing = order.status == 'preparing';
+
+    Color statusColor;
+    Color statusBg;
+    if (isReady) {
+      statusColor = AppColors.green;
+      statusBg = AppColors.greenSoft;
+    } else if (isPreparing) {
+      statusColor = AppColors.mustardInk;
+      statusBg = AppColors.mustardSoft;
+    } else if (isCollected) {
+      statusColor = AppColors.inkSoft;
+      statusBg = AppColors.surface2;
+    } else {
+      statusColor = AppColors.red;
+      statusBg = AppColors.red.withOpacity(0.12);
+    }
+
+    final itemsSummary =
+        order.items.map((i) => '${i.quantity}x ${i.name}').join(', ');
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => OrderStatusScreen(orderId: order.id),
+          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.line, width: 1),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Top row: Token & Status Badge
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      order.tokenNumber,
+                      style: AppFonts.mono(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface2,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        'PIN: ${order.pinCode}',
+                        style: AppFonts.mono(
+                          fontSize: 11,
+                          color: AppColors.inkSoft,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: statusBg,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    order.statusLabel,
+                    style: AppFonts.body(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: statusColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // Items summary
+            Text(
+              itemsSummary,
+              style: AppFonts.body(
+                fontSize: 13.5,
+                color: AppColors.ink,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 10),
+
+            // Bottom row: Time & Total & Track CTA
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _formatTime(order.createdAt),
+                  style: AppFonts.body(
+                    fontSize: 12,
+                    color: AppColors.inkSoft,
+                  ),
+                ),
+                Row(
+                  children: [
+                    Text(
+                      '₹${order.totalAmount.toInt()}',
+                      style: AppFonts.mono(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 18,
+                      color: AppColors.inkSoft,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatTime(DateTime dt) {
+    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final m = dt.minute.toString().padLeft(2, '0');
+    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$h:$m $ampm';
+  }
+}
+

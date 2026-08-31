@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/order.dart' as app;
 import '../theme/app_theme.dart';
+import 'order_status_screen.dart';
 
 /// Phase 5 — Perforated ticket confirmation screen.
 /// Shows the token number, order items, total, ready time,
@@ -108,34 +109,68 @@ class _TicketScreenState extends State<TicketScreen>
               ),
             ),
 
-            // Track order button
+            // Action buttons
             Container(
               padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-              child: SizedBox(
-                width: double.infinity,
-                child: GestureDetector(
-                  onTap: () {
-                    // Pop back to menu — Phase 6 will navigate to status screen
-                    Navigator.of(context)
-                        .popUntil((route) => route.isFirst);
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    decoration: BoxDecoration(
-                      color: AppColors.ink,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      'Back to menu →',
-                      style: AppFonts.body(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: GestureDetector(
+                      onTap: () {
+                        Navigator.of(context).pushReplacement(
+                          MaterialPageRoute(
+                            builder: (_) => OrderStatusScreen(orderId: order.id),
+                          ),
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        decoration: BoxDecoration(
+                          color: AppColors.red,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          'Track order status →',
+                          style: AppFonts.body(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: GestureDetector(
+                      onTap: () {
+                        Navigator.of(context)
+                            .popUntil((route) => route.isFirst);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.transparent,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: AppColors.line, width: 1.5),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          'Back to menu',
+                          style: AppFonts.body(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
