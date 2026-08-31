@@ -20,6 +20,11 @@ export const ENDPOINT_LIMITS: Record<string, RateLimitConfig> = {
   rating: { maxRequests: 10, windowSeconds: 60 },
   order_status: { maxRequests: 30, windowSeconds: 60 },
   cash_payment: { maxRequests: 20, windowSeconds: 60 },
+  kitchen_view: { maxRequests: 60, windowSeconds: 60 },
+  pickup_view: { maxRequests: 60, windowSeconds: 60 },
+  cashier_view: { maxRequests: 60, windowSeconds: 60 },
+  developer_telemetry: { maxRequests: 20, windowSeconds: 60 },
+  permission_simulation: { maxRequests: 30, windowSeconds: 60 },
 };
 
 /**
@@ -57,7 +62,7 @@ export async function enforceRateLimit(
     }
 
     timestamps.push(now);
-    const expireAt = admin.firestore.Timestamp.fromMillis(now + baseConfig.windowSeconds * 2000);
+    const expireAt = admin.firestore.Timestamp.fromMillis(now + baseConfig.windowSeconds * 1000);
 
     transaction.set(rateLimitRef, {
       actorId,

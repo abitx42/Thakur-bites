@@ -2,13 +2,16 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { OrderStatus, UserRole } from './types';
 import { enforceRateLimit } from './rate_limiter';
+import { enforceAppCheck } from './app_check';
 import { updatePublicLiveQueueProjection } from './tv_projection';
 
 const db = admin.firestore();
 
 /**
  * Operational State Transitions Matrix (Decoupled from Payment States).
- * Payment states are strictly transitioned via PaymentFinalizer, CashSettlement, or RefundEngine.
+ * Invariant: 'ready' -> 'collected' is strictly executed via verifyPickup (QR/PIN)
+ * or unlockOrderPickupVerification (manager physical override with audit note).
+ * It is completely forbidden from generic updateOrderStatus to eliminate bypass vulnerabilities.
  */
 const ALLOWED_OPERATIONAL_TRANSITIONS: Record<OrderStatus, { next: OrderStatus[]; roles: UserRole[] }[]> = {
   draft: [],
@@ -16,15 +19,16 @@ const ALLOWED_OPERATIONAL_TRANSITIONS: Record<OrderStatus, { next: OrderStatus[]
   paid: [],
   confirmed: [{ next: ['preparing', 'cancelled'], roles: ['kitchen', 'manager', 'admin'] }],
   preparing: [{ next: ['ready', 'cancelled'], roles: ['kitchen', 'manager', 'admin'] }],
-  ready: [{ next: ['collected'], roles: ['pickup', 'manager', 'admin'] }],
+  ready: [{ next: ['cancelled'], roles: ['manager', 'admin'] }],
   collected: [],
   cancelled: [],
 };
 
 /**
- * Validates and executes an authoritative kitchen/pickup operational order status transition.
+ * Validates and executes an authoritative kitchen operational order status transition.
  */
 export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStatus }>(async (request) => {
+  enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
@@ -87,9 +91,6 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
 
     if (nextStatus === 'ready') {
       updates.readyAt = now;
-    } else if (nextStatus === 'collected') {
-      updates.collectedAt = now;
-      updates.collectedByStaffId = actorId;
     }
 
     transaction.update(orderRef, updates);

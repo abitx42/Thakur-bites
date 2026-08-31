@@ -4,6 +4,7 @@ import { UserRole } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
+import { syncUserCustomClaims } from './claims_manager';
 
 const db = admin.firestore();
 
@@ -11,7 +12,7 @@ const VALID_ROLES: UserRole[] = ['student', 'kitchen', 'pickup', 'cashier', 'man
 
 /**
  * Assigns a verified RBAC role to a staff member with session revocation and permissionsVersion tracking.
- * Strictly enforces separation of duties and rate limiting.
+ * Strictly enforces separation of duties, atomic claims merge, and rate limiting.
  */
 export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(async (request) => {
   enforceAppCheck(request);
@@ -52,11 +53,11 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     throw new HttpsError('not-found', `Target user ${targetUid} does not exist in Firebase Auth.`);
   }
 
-  // 2. Set Custom User Claims with incremented version
-  await admin.auth().setCustomUserClaims(targetUid, {
+  // 2. Set Custom User Claims atomically without overwriting accountType/priorityLevel
+  await syncUserCustomClaims(targetUid, {
     role: newRole,
     permissionsVersion: nextVersion,
-    assignedAt: Date.now(),
+    assignedAt: new Date().toISOString(),
   });
 
   // 3. Force token refresh by revoking existing sessions

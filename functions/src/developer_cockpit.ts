@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { enforceAppCheck } from './app_check';
+import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
 
 if (!admin.apps.length) {
@@ -100,6 +101,8 @@ export const getDeveloperTelemetry = onCall(async (request) => {
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
+  await enforceRateLimit(request.auth.uid, 'developer_telemetry');
+
   const callerRole = (request.auth.token.role as string | undefined) || '';
   if (!['admin', 'security_admin'].includes(callerRole)) {
     throw new HttpsError('permission-denied', 'Only security administrators can access developer telemetry.');
@@ -149,6 +152,8 @@ export const simulatePermissionCheck = onCall<SimulatePermissionRequest>(async (
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
+
+  await enforceRateLimit(request.auth.uid, 'permission_simulation');
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
   if (!['manager', 'admin', 'security_admin'].includes(callerRole)) {

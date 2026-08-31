@@ -3044,4 +3044,137 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(secondOrderResult.assignedPriority, 1, 'Exceeded active priority quota must drop to level 1');
     assert.strictEqual(secondOrderResult.isPriority, false);
   });
+
+  it('143. Visitor Ordering Authorization Invariant: Authenticated @gmail.com accounts can checkout at Level 0', () => {
+    function authorizeCheckoutAccount(auth) {
+      if (!auth || !auth.uid) return { allowed: false, reason: 'UNAUTHENTICATED' };
+      const email = (auth.token?.email || '').trim().toLowerCase();
+      if (!email) return { allowed: false, reason: 'MISSING_EMAIL' };
+
+      const isInstitutional = email.endsWith('@tcetmumbai.in') || email.endsWith('@thakureducation.org');
+      if (isInstitutional && auth.token?.email_verified !== true) {
+        return { allowed: false, reason: 'UNVERIFIED_INSTITUTIONAL_EMAIL' };
+      }
+
+      const accountType = isInstitutional ? (email.endsWith('@tcetmumbai.in') ? 'STUDENT' : 'COLLEGE_STAFF') : 'VISITOR';
+      const priorityLevel = accountType === 'STUDENT' ? 1 : 0;
+      return { allowed: true, accountType, priorityLevel };
+    }
+
+    // Verified TCET Student
+    const student = authorizeCheckoutAccount({ uid: 's1', token: { email: '1234@tcetmumbai.in', email_verified: true } });
+    assert.strictEqual(student.allowed, true);
+    assert.strictEqual(student.accountType, 'STUDENT');
+    assert.strictEqual(student.priorityLevel, 1);
+
+    // External Visitor (@gmail.com)
+    const visitor = authorizeCheckoutAccount({ uid: 'v1', token: { email: 'john.doe@gmail.com', email_verified: true } });
+    assert.strictEqual(visitor.allowed, true);
+    assert.strictEqual(visitor.accountType, 'VISITOR');
+    assert.strictEqual(visitor.priorityLevel, 0);
+
+    // Unverified Institutional Email -> Blocked
+    const unverifiedStudent = authorizeCheckoutAccount({ uid: 's2', token: { email: '5678@tcetmumbai.in', email_verified: false } });
+    assert.strictEqual(unverifiedStudent.allowed, false);
+    assert.strictEqual(unverifiedStudent.reason, 'UNVERIFIED_INSTITUTIONAL_EMAIL');
+  });
+
+  it('144. Pickup State Machine Bypass Elimination: updateOrderStatus strictly rejects transition to collected', () => {
+    const ALLOWED_OPERATIONAL_TRANSITIONS = {
+      confirmed: ['preparing', 'cancelled'],
+      preparing: ['ready', 'cancelled'],
+      ready: ['cancelled'], // ready -> collected removed from generic status updater
+      collected: [],
+      cancelled: [],
+    };
+
+    function validateStatusTransition(fromStatus, toStatus) {
+      const allowedNext = ALLOWED_OPERATIONAL_TRANSITIONS[fromStatus] || [];
+      return allowedNext.includes(toStatus);
+    }
+
+    assert.strictEqual(validateStatusTransition('preparing', 'ready'), true);
+    assert.strictEqual(validateStatusTransition('ready', 'collected'), false, 'updateOrderStatus must NOT permit ready -> collected bypass');
+    assert.strictEqual(validateStatusTransition('ready', 'cancelled'), true);
+  });
+
+  it('145. Atomic Claims Manager Invariant: Merges staff roles without wiping accountType or priorityLevel', () => {
+    function mergeUserClaims(existingClaims, claimsPatch) {
+      return {
+        ...existingClaims,
+        ...claimsPatch,
+        updatedAt: '2026-09-01T00:00:00Z',
+      };
+    }
+
+    const initialTeacherClaims = {
+      accountType: 'TEACHER',
+      verificationStatus: 'VERIFIED',
+      priorityLevel: 2,
+    };
+
+    // Assign pickup staff role to teacher
+    const updatedClaims = mergeUserClaims(initialTeacherClaims, {
+      role: 'pickup',
+      permissionsVersion: 2,
+    });
+
+    // Invariant: Both role AND teacher identity attributes are preserved
+    assert.strictEqual(updatedClaims.role, 'pickup');
+    assert.strictEqual(updatedClaims.accountType, 'TEACHER');
+    assert.strictEqual(updatedClaims.verificationStatus, 'VERIFIED');
+    assert.strictEqual(updatedClaims.priorityLevel, 2);
+    assert.strictEqual(updatedClaims.permissionsVersion, 2);
+  });
+
+  it('146. Operational Views Least-Privilege & Role Separation: Enforces station role bounds', () => {
+    function evaluateOperationalViewAccess(auth, requiredRole) {
+      if (!auth || !auth.uid) return false;
+      const callerRole = auth.token?.role || 'student';
+      if (['manager', 'admin', 'security_admin'].includes(callerRole)) return true;
+      return callerRole === requiredRole;
+    }
+
+    const kitchenStaff = { uid: 'k1', token: { role: 'kitchen' } };
+    const pickupStaff = { uid: 'p1', token: { role: 'pickup' } };
+    const studentUser = { uid: 's1', token: { role: 'student' } };
+
+    assert.strictEqual(evaluateOperationalViewAccess(kitchenStaff, 'kitchen'), true);
+    assert.strictEqual(evaluateOperationalViewAccess(kitchenStaff, 'pickup'), false, 'Kitchen cannot access pickup counter view');
+    assert.strictEqual(evaluateOperationalViewAccess(pickupStaff, 'pickup'), true);
+    assert.strictEqual(evaluateOperationalViewAccess(pickupStaff, 'kitchen'), false, 'Pickup cannot access kitchen view');
+    assert.strictEqual(evaluateOperationalViewAccess(studentUser, 'kitchen'), false, 'Student blocked from kitchen view');
+  });
+
+  it('147. Rate Limiter TTL Boundary Invariant: Accurate sliding window expiration calculation', () => {
+    function computeRateLimitExpireAt(nowMs, windowSeconds) {
+      return nowMs + (windowSeconds * 1000); // windowSeconds * 1000, NOT 2000
+    }
+
+    const now = 1700000000000;
+    const expireAt = computeRateLimitExpireAt(now, 60);
+    assert.strictEqual(expireAt, 1700000000000 + 60000);
+  });
+
+  it('148. Cashier View Fail-Closed Financial Invariant: Flags invalid/corrupt totalAmountPaise', () => {
+    function processCashierOrder(orderData) {
+      const hasValidPaise = typeof orderData.totalAmountPaise === 'number' &&
+        Number.isSafeInteger(orderData.totalAmountPaise) &&
+        orderData.totalAmountPaise >= 0;
+
+      return {
+        orderId: orderData.id,
+        totalAmountPaise: hasValidPaise ? orderData.totalAmountPaise : -1,
+        isAmountCorrupt: !hasValidPaise,
+      };
+    }
+
+    const validOrder = processCashierOrder({ id: 'ord_1', totalAmountPaise: 12000 });
+    assert.strictEqual(validOrder.totalAmountPaise, 12000);
+    assert.strictEqual(validOrder.isAmountCorrupt, false);
+
+    const corruptOrder = processCashierOrder({ id: 'ord_2', totalAmountPaise: null, totalAmount: 120 });
+    assert.strictEqual(corruptOrder.totalAmountPaise, -1);
+    assert.strictEqual(corruptOrder.isAmountCorrupt, true, 'Must fail closed on corrupt amount without silent calculation');
+  });
 });

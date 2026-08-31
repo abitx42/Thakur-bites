@@ -1,8 +1,10 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import * as crypto from 'crypto';
 import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
 import { logSecurityEvent } from './security_logger';
+import { syncUserCustomClaims } from './claims_manager';
 import { AccountType, VerificationStatus, PriorityLevel, VerificationApplication } from './types';
 
 if (!admin.apps.length) {
@@ -65,8 +67,8 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
     throw new HttpsError('invalid-argument', 'Valid Designation title is required.');
   }
 
-  // Generate unique application ID (e.g. FAC-A8F2)
-  const hexSuffix = Math.random().toString(16).substring(2, 6).toUpperCase();
+  // Generate unique cryptographic application ID (e.g. FAC-A8F23BC98410)
+  const hexSuffix = crypto.randomBytes(8).toString('hex').toUpperCase();
   const applicationId = `${applicationType === 'TEACHER' ? 'FAC' : 'STF'}-${hexSuffix}`;
   const appRef = db.collection('verificationApplications').doc(applicationId);
   const userRef = db.collection('users').doc(userId);
@@ -232,10 +234,10 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
     }
   });
 
-  // Update Firebase Auth custom claims
+  // Update Firebase Auth custom claims atomically
   if (reviewResult.decision === 'APPROVED' && reviewResult.applicantUid) {
     try {
-      await admin.auth().setCustomUserClaims(reviewResult.applicantUid, {
+      await syncUserCustomClaims(reviewResult.applicantUid, {
         accountType: reviewResult.accountType,
         verificationStatus: reviewResult.verificationStatus,
         priorityLevel: reviewResult.priorityLevel,

@@ -3,7 +3,9 @@ import * as admin from 'firebase-admin';
 import { UserDocument } from './types';
 import { classifyIdentity } from './identity_classifier';
 import { enforceRateLimit } from './rate_limiter';
+import { enforceAppCheck } from './app_check';
 import { logSecurityEvent } from './security_logger';
+import { syncUserCustomClaims } from './claims_manager';
 
 const db = admin.firestore();
 
@@ -26,6 +28,7 @@ export interface ProvisionUserRequest {
  * accountDisabled, totalOrders, totalSpentPaise, averageOrderPaise.
  */
 export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request) => {
+  enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
@@ -143,8 +146,8 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
     };
   });
 
-  // Set custom claims for RBAC
-  await admin.auth().setCustomUserClaims(userId, {
+  // Set custom claims for RBAC using atomic claims synchronizer
+  await syncUserCustomClaims(userId, {
     accountType: result.accountType,
     verificationStatus: result.verificationStatus,
     priorityLevel: result.priorityLevel,

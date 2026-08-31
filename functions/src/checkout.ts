@@ -20,7 +20,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   enforceAppCheck(request);
   await assertOperationalMode('checkout');
 
-  // 1. Authenticate student with fail-closed institutional email invariant
+  // 1. Authenticate user with fail-closed identity verification
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to checkout.');
   }
@@ -29,19 +29,13 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   const tokenEmail = (request.auth.token.email as string | undefined)?.trim().toLowerCase();
   
   if (!tokenEmail || typeof tokenEmail !== 'string') {
-    throw new HttpsError('permission-denied', 'Checkout requires a verified institutional email account.');
+    throw new HttpsError('permission-denied', 'Checkout requires an authenticated email account.');
   }
 
-  const isCollegeDomain = tokenEmail.endsWith('@tcetmumbai.in') || tokenEmail.endsWith('@thakureducation.org');
-  if (!isCollegeDomain) {
-    throw new HttpsError(
-      'permission-denied',
-      'Checkout is restricted to authorized college domain accounts (@tcetmumbai.in or @thakureducation.org).'
-    );
-  }
+  const isInstitutional = tokenEmail.endsWith('@tcetmumbai.in') || tokenEmail.endsWith('@thakureducation.org');
 
-  // Backend Security Invariant: Require verified institutional email (Fail closed, zero test bypass)
-  if (request.auth.token.email_verified !== true) {
+  // Institutional email verification invariant: If claiming college identity, email must be verified
+  if (isInstitutional && request.auth.token.email_verified !== true) {
     throw new HttpsError('permission-denied', 'Institutional email must be verified before placing orders.');
   }
 
