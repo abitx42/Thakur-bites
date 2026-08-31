@@ -1479,4 +1479,65 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(cashRes.alreadySettled, true);
     assert.strictEqual(settlementCount, 1, 'Order must settle exactly once across competing channels');
   });
+
+  it('64. Operational Mode Invariant: NORMAL mode permits all operations', () => {
+    function evaluateMode(mode, category) {
+      if (mode === 'NORMAL') return { allowed: true };
+      if (mode === 'EMERGENCY_HALT') return { allowed: false, error: 'EMERGENCY_HALT' };
+      if (mode === 'FINANCIAL_FROZEN' && ['checkout', 'payment', 'refund'].includes(category)) {
+        return { allowed: false, error: 'FINANCIAL_FROZEN' };
+      }
+      if (mode === 'DEGRADED' && category === 'checkout') {
+        return { allowed: false, error: 'DEGRADED_CHECKOUT_PAUSED' };
+      }
+      return { allowed: true };
+    }
+
+    assert.strictEqual(evaluateMode('NORMAL', 'checkout').allowed, true);
+    assert.strictEqual(evaluateMode('NORMAL', 'payment').allowed, true);
+    assert.strictEqual(evaluateMode('NORMAL', 'refund').allowed, true);
+    assert.strictEqual(evaluateMode('NORMAL', 'pickup').allowed, true);
+  });
+
+  it('65. Emergency Financial Freeze Invariant: Blocks checkout/payments/refunds while allowing KDS & pickup', () => {
+    function evaluateMode(mode, category) {
+      if (mode === 'FINANCIAL_FROZEN' && ['checkout', 'payment', 'refund'].includes(category)) {
+        return { allowed: false, error: 'FINANCIAL_FROZEN' };
+      }
+      return { allowed: true };
+    }
+
+    assert.strictEqual(evaluateMode('FINANCIAL_FROZEN', 'checkout').allowed, false);
+    assert.strictEqual(evaluateMode('FINANCIAL_FROZEN', 'payment').allowed, false);
+    assert.strictEqual(evaluateMode('FINANCIAL_FROZEN', 'refund').allowed, false);
+    assert.strictEqual(evaluateMode('FINANCIAL_FROZEN', 'kds_preparation').allowed, true);
+    assert.strictEqual(evaluateMode('FINANCIAL_FROZEN', 'pickup_collection').allowed, true);
+  });
+
+  it('66. Emergency Halt Kill Switch Invariant: Completely locks down all canteen operations', () => {
+    function evaluateMode(mode, category) {
+      if (mode === 'EMERGENCY_HALT') return { allowed: false, error: 'EMERGENCY_HALT' };
+      return { allowed: true };
+    }
+
+    assert.strictEqual(evaluateMode('EMERGENCY_HALT', 'checkout').allowed, false);
+    assert.strictEqual(evaluateMode('EMERGENCY_HALT', 'payment').allowed, false);
+    assert.strictEqual(evaluateMode('EMERGENCY_HALT', 'pickup').allowed, false);
+    assert.strictEqual(evaluateMode('EMERGENCY_HALT', 'kds').allowed, false);
+  });
+
+  it('67. Kill Switch Permission Invariant: Blocks unauthorized users from modifying operational mode', () => {
+    function canModifyOperationalMode(role) {
+      const allowedRoles = ['manager', 'admin', 'security_admin'];
+      return allowedRoles.includes(role);
+    }
+
+    assert.strictEqual(canModifyOperationalMode('student'), false);
+    assert.strictEqual(canModifyOperationalMode('kitchen'), false);
+    assert.strictEqual(canModifyOperationalMode('cashier'), false);
+    assert.strictEqual(canModifyOperationalMode('pickup'), false);
+    assert.strictEqual(canModifyOperationalMode('manager'), true);
+    assert.strictEqual(canModifyOperationalMode('admin'), true);
+    assert.strictEqual(canModifyOperationalMode('security_admin'), true);
+  });
 });

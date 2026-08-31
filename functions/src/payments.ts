@@ -12,6 +12,7 @@ import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
 import { finalizeSuccessfulPayment } from './payment_finalize';
 import { releaseInventoryInTransaction } from './inventory_reservation';
+import { assertOperationalMode } from './kill_switch';
 
 const db = admin.firestore();
 
@@ -88,6 +89,8 @@ export function computeGatewaySignature(gatewayOrderId: string, gatewayPaymentId
  * 1. Creates an authoritative, idempotent payment session for checkout.
  */
 export const createPaymentSession = onCall<PaymentSessionRequest>(async (request) => {
+  await assertOperationalMode('payment');
+
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Student must be authenticated to initiate payment.');
   }
@@ -337,6 +340,8 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
  * Restricted strictly to Cashier, Manager, and Admin roles.
  */
 export const recordCashPayment = onCall<{ orderId: string; idempotencyKey?: string }>(async (request) => {
+  await assertOperationalMode('payment');
+
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }

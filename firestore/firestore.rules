@@ -162,5 +162,11 @@ service cloud.firestore {
     match /checkoutRequests/{reqId} {
       allow read, write: if false;
     }
+
+    // ─── Global System Config & Operational Kill Switch ─────────
+    match /systemConfig/{configId} {
+      allow read: if true;
+      allow write: if false;
+    }
   }
 }

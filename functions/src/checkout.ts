@@ -5,6 +5,7 @@ import { CheckoutRequest, OrderDocument, OrderItemSnapshot, OrderSecretDoc } fro
 import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
 import { reserveInventoryInTransaction, commitInventoryInTransaction } from './inventory_reservation';
+import { assertOperationalMode } from './kill_switch';
 
 const db = admin.firestore();
 
@@ -12,6 +13,8 @@ const db = admin.firestore();
  * Creates an authoritative, idempotent checkout order with atomic inventory reservation and integer paise pricing.
  */
 export const createCheckout = onCall<CheckoutRequest>(async (request) => {
+  await assertOperationalMode('checkout');
+
   // 1. Authenticate student
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to checkout.');

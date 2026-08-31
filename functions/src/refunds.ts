@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { UserRole, FinancialTransactionRecord } from './types';
 import { logSecurityEvent } from './security_logger';
 import { enforceRateLimit } from './rate_limiter';
+import { assertOperationalMode } from './kill_switch';
 
 const db = admin.firestore();
 
@@ -28,6 +29,8 @@ export interface RefundResponse {
  * Strictly guarantees: amountRefundedPaise + requestedRefundPaise <= amountPaidPaise.
  */
 export const processOrderRefund = onCall<RefundRequest>(async (request) => {
+  await assertOperationalMode('refund');
+
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
