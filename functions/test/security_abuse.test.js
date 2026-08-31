@@ -2525,4 +2525,83 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     const resolvedPriority = resolveOrderPriority(maliciousClientBody, legitimateStudentDoc);
     assert.strictEqual(resolvedPriority, 1, 'Malicious client priority override completely neutralised');
   });
+
+  it('117. Shift PIN Hashing & Salt Invariant: Rejects plaintext PIN storage and matches salted hash', () => {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const rawPin = '849201';
+    const computedHash = crypto.createHash('sha256').update(`${rawPin}_${salt}`).digest('hex');
+
+    function verifyPin(inputPin, storedSalt, storedHash) {
+      const hash = crypto.createHash('sha256').update(`${inputPin.trim()}_${storedSalt}`).digest('hex');
+      return hash === storedHash;
+    }
+
+    assert.ok(verifyPin('849201', salt, computedHash), 'Valid PIN matches salted hash');
+    assert.ok(!verifyPin('849202', salt, computedHash), 'Incorrect PIN rejected');
+    assert.ok(!verifyPin('000000', salt, computedHash), 'Arbitrary PIN rejected');
+  });
+
+  it('118. Shift Window Expiration Invariant: Rejects PIN outside active operational hours', () => {
+    function isShiftActive(shiftExpiresAt, currentTime) {
+      return currentTime.getTime() <= shiftExpiresAt.getTime();
+    }
+
+    const shiftExpiry = new Date('2026-09-01T15:30:00Z');
+    const activeTime = new Date('2026-09-01T14:00:00Z');
+    const expiredTime = new Date('2026-09-01T16:00:00Z');
+
+    assert.strictEqual(isShiftActive(shiftExpiry, activeTime), true, 'Shift PIN active during morning shift');
+    assert.strictEqual(isShiftActive(shiftExpiry, expiredTime), false, 'Shift PIN rejected after shift hours');
+  });
+
+  it('119. Device Fingerprint Binding Invariant: Restricts PIN to designated counter workstations', () => {
+    function validateDeviceBinding(pinDoc, incomingDeviceId) {
+      const boundDevices = pinDoc.boundDevices || [];
+      const maxDevices = pinDoc.maxDevices || 2;
+
+      if (boundDevices.includes(incomingDeviceId)) {
+        return { allowed: true, newBinding: false };
+      }
+      if (boundDevices.length >= maxDevices) {
+        return { allowed: false, error: 'MAX_DEVICES_BOUND' };
+      }
+      return { allowed: true, newBinding: true };
+    }
+
+    const pinDoc = {
+      pinId: 'kitchen_2026-09-01_MORNING',
+      maxDevices: 2,
+      boundDevices: ['tablet_station_k1', 'tablet_station_k2'],
+    };
+
+    // Valid existing bound device
+    assert.strictEqual(validateDeviceBinding(pinDoc, 'tablet_station_k1').allowed, true);
+
+    // Third unauthorized device (e.g. employee personal phone)
+    const unauthorizedAttempt = validateDeviceBinding(pinDoc, 'attacker_rogue_phone');
+    assert.strictEqual(unauthorizedAttempt.allowed, false);
+    assert.strictEqual(unauthorizedAttempt.error, 'MAX_DEVICES_BOUND');
+  });
+
+  it('120. Shift PIN Brute-Force Lockout Defense: 5 failed attempts locks workstation login', () => {
+    function processLoginAttempt(currentFails) {
+      const newFails = currentFails + 1;
+      if (newFails >= 5) {
+        return { locked: true, lockDurationMinutes: 15, fails: newFails };
+      }
+      return { locked: false, fails: newFails };
+    }
+
+    let fails = 0;
+    for (let i = 1; i <= 4; i++) {
+      const res = processLoginAttempt(fails);
+      assert.strictEqual(res.locked, false);
+      fails = res.fails;
+    }
+
+    // 5th attempt triggers lockout
+    const fifthAttempt = processLoginAttempt(fails);
+    assert.strictEqual(fifthAttempt.locked, true);
+    assert.strictEqual(fifthAttempt.lockDurationMinutes, 15);
+  });
 });

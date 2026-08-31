@@ -14,8 +14,10 @@ import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/
 let unsubscribeMenu = null;
 let unsubscribeStatus = null;
 let unsubscribeApps = null;
+let unsubscribePins = null;
 let currentItems = [];
 let currentApplications = [];
+let currentShiftPins = [];
 let showAddModal = false;
 let editingItem = null; // Item object currently being edited in details modal
 let currentMode = 'NORMAL';
@@ -25,6 +27,7 @@ export function renderAdminView(container) {
   if (unsubscribeMenu) unsubscribeMenu();
   if (unsubscribeStatus) unsubscribeStatus();
   if (unsubscribeApps) unsubscribeApps();
+  if (unsubscribePins) unsubscribePins();
 
   function render() {
     const cookedItems = currentItems.filter(i => i.type === 'cooked');
@@ -171,6 +174,78 @@ export function renderAdminView(container) {
                       style="padding: 8px 12px; border-radius: 8px; border: 1px solid #DC2626; background: #FFF; color: #DC2626; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;"
                     >
                       ✕ Reject
+                    </button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 0.5: STAFF SHIFT PINS & DEVICE BINDING (P2.0)       -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 16px; padding: 1.4rem; margin-bottom: 2rem; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1rem;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <h3 style="font-family: var(--font-display); font-size: 1.4rem; margin: 0; display: flex; align-items: center; gap: 6px;">
+                  <span>🔑</span>
+                  <span>STAFF SHIFT PINS & WORKSTATION DEVICE BINDING</span>
+                </h3>
+                <span style="background: #3B82F6; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 2px 10px; border-radius: 999px;">
+                  ${currentShiftPins.length} ACTIVE SHIFTS
+                </span>
+              </div>
+              <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
+                Generate role-specific 6-digit shift PINs for Kitchen, Pickup, and Cashier counter tablets. Bound cryptographically to hardware workstations.
+              </p>
+            </div>
+
+            <button 
+              id="generate-shift-pins-btn"
+              style="padding: 8px 16px; border-radius: 8px; background: #3B82F6; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;"
+            >
+              <span>+</span>
+              <span>Generate Shift PIN</span>
+            </button>
+          </div>
+
+          ${currentShiftPins.length === 0 ? `
+            <div style="padding: 1.2rem; background: var(--bg-surface); border-radius: 10px; border: 1px dashed var(--border-light); text-align: center;">
+              <span style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary);">
+                ℹ️ No active shift PINs generated for today yet. Click "Generate Shift PIN" to issue credentials for today's shifts.
+              </span>
+            </div>
+          ` : `
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem;">
+              ${currentShiftPins.map(pin => `
+                <div style="background: var(--bg-surface); border: 1.5px solid var(--border-light); border-radius: 12px; padding: 1.2rem;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <span style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: var(--ink-primary); text-transform: uppercase;">
+                      ${pin.role === 'kitchen' ? '👨‍🍳 KITCHEN' : (pin.role === 'pickup' ? '🛍️ PICKUP' : '💵 CASHIER')}
+                    </span>
+                    <span style="font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: ${pin.status === 'ACTIVE' ? '#DCFCE7' : '#FEE2E2'}; color: ${pin.status === 'ACTIVE' ? '#166534' : '#991B1B'};">
+                      ${pin.status}
+                    </span>
+                  </div>
+
+                  <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-top: 4px;">
+                    Window: <strong>${pin.shiftWindow}</strong> · Date: <strong>${pin.shiftDate}</strong>
+                  </div>
+
+                  <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-top: 4px;">
+                    Bound Workstations: <strong>${(pin.boundDevices || []).length} / ${pin.maxDevices || 2}</strong>
+                  </div>
+
+                  <div style="display: flex; gap: 8px; margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--border-light);">
+                    <button 
+                      class="revoke-shift-pin-btn" 
+                      data-pin-id="${pin.pinId || pin.id}"
+                      ${pin.status !== 'ACTIVE' ? 'disabled' : ''}
+                      style="flex: 1; padding: 6px; border-radius: 6px; border: 1px solid #DC2626; background: #FFF; color: #DC2626; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer;"
+                    >
+                      Revoke PIN
                     </button>
                   </div>
                 </div>
@@ -737,6 +812,60 @@ export function renderAdminView(container) {
         }
       });
     });
+    // 9. Shift PIN Management Actions
+    const genShiftPinBtn = container.querySelector('#generate-shift-pins-btn');
+    if (genShiftPinBtn) {
+      genShiftPinBtn.addEventListener('click', async () => {
+        const role = prompt('Enter role for new Shift PIN (kitchen / pickup / cashier):', 'kitchen');
+        if (!role || !['kitchen', 'pickup', 'cashier'].includes(role.toLowerCase().trim())) {
+          if (role !== null) alert('Invalid role. Must be kitchen, pickup, or cashier.');
+          return;
+        }
+
+        const windowChoice = prompt('Enter shift window (MORNING / AFTERNOON / FULL_DAY):', 'FULL_DAY');
+        if (!windowChoice || !['MORNING', 'AFTERNOON', 'FULL_DAY'].includes(windowChoice.toUpperCase().trim())) {
+          if (windowChoice !== null) alert('Invalid window. Must be MORNING, AFTERNOON, or FULL_DAY.');
+          return;
+        }
+
+        genShiftPinBtn.disabled = true;
+        genShiftPinBtn.textContent = 'Generating...';
+        try {
+          const functions = getFunctions();
+          const genFn = httpsCallable(functions, 'generateShiftPin');
+          const res = await genFn({
+            role: role.toLowerCase().trim(),
+            shiftWindow: windowChoice.toUpperCase().trim(),
+          });
+          const generatedPin = res.data?.pin;
+          alert(`✅ SHIFT PIN GENERATED!\n\nRole: ${role.toUpperCase()}\nWindow: ${windowChoice.toUpperCase()}\n\n🔑 6-DIGIT PIN: ${generatedPin}\n\n⚠️ IMPORTANT: Write this PIN down or provide to staff. It will NOT be displayed again.`);
+        } catch (err) {
+          alert('Generation Error: ' + (err.message || err));
+        } finally {
+          genShiftPinBtn.disabled = false;
+          genShiftPinBtn.textContent = '+ Generate Shift PIN';
+        }
+      });
+    }
+
+    container.querySelectorAll('.revoke-shift-pin-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const pinId = btn.getAttribute('data-pin-id');
+        if (!confirm(`Revoke shift PIN ${pinId}? All counter workstations currently logged in with this PIN will be disconnected.`)) return;
+
+        btn.disabled = true;
+        btn.textContent = 'Revoking...';
+        try {
+          const functions = getFunctions();
+          const revokeFn = httpsCallable(functions, 'revokeShiftPin');
+          await revokeFn({ pinId });
+        } catch (err) {
+          alert('Revoke Error: ' + (err.message || err));
+          btn.disabled = false;
+          btn.textContent = 'Revoke PIN';
+        }
+      });
+    });
   }
 
   // Subscribe to menu items
@@ -771,6 +900,25 @@ export function renderAdminView(container) {
   } catch (err) {
     console.warn("Could not query verification applications:", err);
   }
+
+  // Subscribe to shift PINs (Platform 2.0)
+  try {
+    const d = new Date();
+    const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const pinsQuery = query(
+      collection(db, 'shiftPins'),
+      where('shiftDate', '==', todayStr)
+    );
+    unsubscribePins = onSnapshot(pinsQuery, (snap) => {
+      currentShiftPins = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      render();
+    }, (err) => {
+      console.warn("Shift PINs subscription notice:", err);
+    });
+  } catch (err) {
+    console.warn("Could not query shift PINs:", err);
+  }
 }
+
 
 

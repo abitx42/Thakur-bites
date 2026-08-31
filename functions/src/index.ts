@@ -32,5 +32,12 @@ export {
   reviewVerificationApplication,
   getPendingVerificationApplications,
 } from './verification';
+export {
+  generateShiftPin,
+  verifyShiftPin,
+  listActiveShiftPins,
+  revokeShiftPin,
+} from './shift_pins';
+
 
 
