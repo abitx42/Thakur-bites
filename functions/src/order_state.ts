@@ -4,19 +4,23 @@ import { OrderStatus, UserRole } from './types';
 
 const db = admin.firestore();
 
-const ALLOWED_TRANSITIONS: Record<OrderStatus, { next: OrderStatus[]; roles: UserRole[] }[]> = {
-  draft: [{ next: ['payment_pending', 'confirmed'], roles: ['student', 'admin'] }],
-  payment_pending: [{ next: ['paid', 'cancelled'], roles: ['student', 'system', 'admin'] }],
-  paid: [{ next: ['confirmed'], roles: ['system', 'admin'] }],
+/**
+ * Operational State Transitions Matrix (Decoupled from Payment States).
+ * Payment states are strictly transitioned via PaymentFinalizer, CashSettlement, or RefundEngine.
+ */
+const ALLOWED_OPERATIONAL_TRANSITIONS: Record<OrderStatus, { next: OrderStatus[]; roles: UserRole[] }[]> = {
+  draft: [],
+  payment_pending: [], // Payment pending cancellations must go through cancelOrExpirePaymentSession
+  paid: [],
   confirmed: [{ next: ['preparing', 'cancelled'], roles: ['kitchen', 'manager', 'admin'] }],
-  preparing: [{ next: ['ready'], roles: ['kitchen', 'manager', 'admin'] }],
+  preparing: [{ next: ['ready', 'cancelled'], roles: ['kitchen', 'manager', 'admin'] }],
   ready: [{ next: ['collected'], roles: ['pickup', 'manager', 'admin'] }],
   collected: [],
   cancelled: [],
 };
 
 /**
- * Validates and executes an authoritative order status transition.
+ * Validates and executes an authoritative kitchen/pickup operational order status transition.
  */
 export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStatus }>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -29,6 +33,13 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
 
   if (!orderId || !nextStatus) {
     throw new HttpsError('invalid-argument', 'orderId and nextStatus are required.');
+  }
+
+  if (nextStatus === 'paid' || nextStatus === 'payment_pending') {
+    throw new HttpsError(
+      'permission-denied',
+      'Payment state transitions cannot be performed through updateOrderStatus. Use payment finalizers.'
+    );
   }
 
   const orderRef = db.collection('orders').doc(orderId);
@@ -48,13 +59,13 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
     }
 
     // Check transition validity
-    const allowed = ALLOWED_TRANSITIONS[currentStatus];
+    const allowed = ALLOWED_OPERATIONAL_TRANSITIONS[currentStatus];
     const match = allowed?.find(rule => rule.next.includes(nextStatus));
 
     if (!match) {
       throw new HttpsError(
         'failed-precondition',
-        `Illegal transition from ${currentStatus} to ${nextStatus}.`
+        `Illegal operational transition from ${currentStatus} to ${nextStatus}.`
       );
     }
 
@@ -62,7 +73,7 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
     if (!match.roles.includes(actorRole) && actorRole !== 'admin' && actorRole !== 'security_admin') {
       throw new HttpsError(
         'permission-denied',
-        `Role ${actorRole} is not authorized to transition order to ${nextStatus}.`
+        `Role ${actorRole} is not authorized to transition order from ${currentStatus} to ${nextStatus}.`
       );
     }
 

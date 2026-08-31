@@ -9,7 +9,7 @@ const db = admin.firestore();
 export interface RefundRequest {
   orderId: string;
   reason: string;
-  amountPaise?: number; // Optional partial refund, defaults to full amount
+  amountPaise?: number; // Optional partial refund amount in paise
 }
 
 export interface RefundResponse {
@@ -17,12 +17,14 @@ export interface RefundResponse {
   refundId: string;
   orderId: string;
   refundedPaise: number;
+  totalRefundedPaise: number;
+  remainingRefundablePaise: number;
   status: 'refunded' | 'partially_refunded';
 }
 
 /**
- * Formal, Audited Refund Workflow (P2: 24).
- * Restricted to Manager and Admin roles.
+ * Formal, Audited Cumulative Refund Engine (P0 & Stage 2 Hardened).
+ * Strictly guarantees: amountRefundedPaise + requestedRefundPaise <= amountPaidPaise.
  */
 export const processOrderRefund = onCall<RefundRequest>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -56,21 +58,34 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     }
 
     const orderData = snap.data()!;
-    if (orderData.paymentStatus !== 'paid') {
+    if (orderData.paymentStatus !== 'paid' && orderData.paymentStatus !== 'partially_refunded') {
       throw new HttpsError(
         'failed-precondition',
-        `Cannot refund an order with paymentStatus '${orderData.paymentStatus}' (must be 'paid').`
+        `Cannot refund an order with paymentStatus '${orderData.paymentStatus}' (must be 'paid' or 'partially_refunded').`
       );
     }
 
+    // Cumulative Refund Bounds Assertion
     const orderTotalPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
-    const refundAmountPaise = amountPaise !== undefined ? amountPaise : orderTotalPaise;
+    const amountPaidPaise = orderData.amountPaidPaise || orderTotalPaise;
+    const previouslyRefundedPaise = Number(orderData.amountRefundedPaise || 0);
+    const remainingRefundablePaise = Math.max(0, amountPaidPaise - previouslyRefundedPaise);
 
-    if (!Number.isSafeInteger(refundAmountPaise) || refundAmountPaise <= 0 || refundAmountPaise > orderTotalPaise) {
-      throw new HttpsError('invalid-argument', `Invalid refund amount ${refundAmountPaise} paise. Must be between 1 and ${orderTotalPaise}.`);
+    if (remainingRefundablePaise <= 0) {
+      throw new HttpsError('failed-precondition', `Order ${orderId} has already been fully refunded.`);
     }
 
-    const isFullRefund = refundAmountPaise === orderTotalPaise;
+    const requestedRefundPaise = amountPaise !== undefined ? amountPaise : remainingRefundablePaise;
+
+    if (!Number.isSafeInteger(requestedRefundPaise) || requestedRefundPaise <= 0 || requestedRefundPaise > remainingRefundablePaise) {
+      throw new HttpsError(
+        'invalid-argument',
+        `Invalid refund amount ${requestedRefundPaise} paise. Maximum refundable amount is ${remainingRefundablePaise} paise.`
+      );
+    }
+
+    const newTotalRefundedPaise = previouslyRefundedPaise + requestedRefundPaise;
+    const isFullRefund = newTotalRefundedPaise === amountPaidPaise;
     const nextPaymentStatus = isFullRefund ? 'refunded' : 'partially_refunded';
     const nextOrderStatus = isFullRefund ? 'cancelled' : orderData.status;
 
@@ -81,19 +96,19 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
       transactionId: finTxRef.id,
       orderId,
       type: 'REFUND_DISBURSEMENT',
-      amount: refundAmountPaise / 100,
-      amountPaise: refundAmountPaise,
+      amount: requestedRefundPaise / 100,
+      amountPaise: requestedRefundPaise,
       currency: 'INR',
       postings: [
         {
           account: 'SALES_REVENUE',
-          debitPaise: refundAmountPaise,
+          debitPaise: requestedRefundPaise,
           creditPaise: 0,
         },
         {
           account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE',
           debitPaise: 0,
-          creditPaise: refundAmountPaise,
+          creditPaise: requestedRefundPaise,
         },
       ],
       gatewayTransactionId: refundId,
@@ -104,19 +119,21 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     };
     transaction.set(finTxRef, finRecord);
 
-    // 2. Update Order State
+    // 2. Update Order State with Cumulative Refund Tracking
     transaction.update(orderRef, {
       paymentStatus: nextPaymentStatus,
       status: nextOrderStatus,
       refundId,
       refundedAt: now,
-      refundedAmountPaise: refundAmountPaise,
+      amountRefundedPaise: newTotalRefundedPaise,
+      amountRefundablePaise: amountPaidPaise - newTotalRefundedPaise,
+      lastRefundAmountPaise: requestedRefundPaise,
       refundReason: reason,
       refundedByStaffId: request.auth!.uid,
       updatedAt: now,
     });
 
-    // 3. Record immutable orderEvent
+    // 3. Record Immutable Audit Event
     const eventRef = db.collection('orderEvents').doc();
     transaction.set(eventRef, {
       orderId,
@@ -126,28 +143,21 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
       actorRole,
       timestamp: now,
       reason: `REFUND_PROCESSED: ${reason}`,
-      metadata: { refundId, refundAmountPaise, isFullRefund },
-    });
-
-    // 4. Record security / financial audit event
-    const secRef = db.collection('securityEvents').doc();
-    transaction.set(secRef, {
-      eventType: 'REFUND_DISBURSED',
-      orderId,
-      actorUid: request.auth!.uid,
-      actorRole,
-      refundId,
-      refundAmountPaise,
-      reason,
-      severity: 'INFO',
-      timestamp: now,
+      metadata: {
+        refundId,
+        refundAmountPaise: requestedRefundPaise,
+        totalRefundedPaise: newTotalRefundedPaise,
+        isFullRefund,
+      },
     });
 
     return {
       success: true,
       refundId,
       orderId,
-      refundedPaise: refundAmountPaise,
+      refundedPaise: requestedRefundPaise,
+      totalRefundedPaise: newTotalRefundedPaise,
+      remainingRefundablePaise: amountPaidPaise - newTotalRefundedPaise,
       status: nextPaymentStatus,
     };
   });

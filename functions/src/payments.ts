@@ -56,7 +56,7 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
     return false;
   }
 
-  verifyWebhookSignature(payloadRaw: string, signature: string): boolean {
+  verifyWebhookSignature(payloadRaw: Buffer | string, signature: string): boolean {
     const expected = crypto
       .createHmac('sha256', this.webhookSecret)
       .update(payloadRaw)
@@ -229,9 +229,9 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
     return;
   }
 
-  const bodyStr = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+  const rawBody = (req as any).rawBody || (typeof req.body === 'string' ? Buffer.from(req.body, 'utf8') : Buffer.from(JSON.stringify(req.body), 'utf8'));
   const adapter = new RazorpayPaymentAdapter();
-  const isSignatureValid = adapter.verifyWebhookSignature(bodyStr, webhookSignature);
+  const isSignatureValid = adapter.verifyWebhookSignature(rawBody, webhookSignature);
 
   if (!isSignatureValid) {
     await db.collection('securityEvents').doc().set({

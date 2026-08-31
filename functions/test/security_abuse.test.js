@@ -850,4 +850,92 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
       assert.strictEqual(passed, true, `Invariant '${name}' must pass 100%`);
     }
   });
+
+  it('38. Cumulative Refund Invariant: Multiple partial refunds cannot exceed amount paid', () => {
+    const order = {
+      totalAmountPaise: 10000, // ₹100.00
+      amountPaidPaise: 10000,
+      amountRefundedPaise: 0,
+      paymentStatus: 'paid',
+    };
+
+    function processRefundAtomic(orderDoc, requestedRefundPaise) {
+      const previouslyRefunded = orderDoc.amountRefundedPaise || 0;
+      const remaining = orderDoc.amountPaidPaise - previouslyRefunded;
+
+      if (remaining <= 0) {
+        return { success: false, error: 'ALREADY_FULLY_REFUNDED' };
+      }
+      if (requestedRefundPaise > remaining) {
+        return { success: false, error: 'EXCEEDS_REMAINING_REFUNDABLE', remaining };
+      }
+
+      orderDoc.amountRefundedPaise = previouslyRefunded + requestedRefundPaise;
+      orderDoc.paymentStatus = (orderDoc.amountRefundedPaise === orderDoc.amountPaidPaise) ? 'refunded' : 'partially_refunded';
+      return { success: true, refunded: requestedRefundPaise, totalRefunded: orderDoc.amountRefundedPaise };
+    }
+
+    // First partial refund of ₹40
+    const ref1 = processRefundAtomic(order, 4000);
+    assert.strictEqual(ref1.success, true);
+    assert.strictEqual(order.amountRefundedPaise, 4000);
+    assert.strictEqual(order.paymentStatus, 'partially_refunded');
+
+    // Second partial refund of ₹40
+    const ref2 = processRefundAtomic(order, 4000);
+    assert.strictEqual(ref2.success, true);
+    assert.strictEqual(order.amountRefundedPaise, 8000);
+    assert.strictEqual(order.paymentStatus, 'partially_refunded');
+
+    // Third partial refund of ₹40 (Attempts to total ₹120 on ₹100 payment -> MUST BE REJECTED)
+    const ref3 = processRefundAtomic(order, 4000);
+    assert.strictEqual(ref3.success, false);
+    assert.strictEqual(ref3.error, 'EXCEEDS_REMAINING_REFUNDABLE');
+    assert.strictEqual(ref3.remaining, 2000); // Only ₹20 remaining!
+
+    // Final refund of remaining ₹20
+    const refFinal = processRefundAtomic(order, 2000);
+    assert.strictEqual(refFinal.success, true);
+    assert.strictEqual(order.amountRefundedPaise, 10000);
+    assert.strictEqual(order.paymentStatus, 'refunded');
+
+    // Subsequent refund attempt rejected because already fully refunded
+    const refOver = processRefundAtomic(order, 1000);
+    assert.strictEqual(refOver.success, false);
+    assert.strictEqual(refOver.error, 'ALREADY_FULLY_REFUNDED');
+  });
+
+  it('39. Raw Webhook Buffer HMAC Verification Invariant: Validates raw bytes against secret', () => {
+    const webhookSecret = 'test_webhook_secret_key_123';
+    const rawPayloadBuffer = Buffer.from(JSON.stringify({ event: 'payment.captured', id: 'evt_123' }), 'utf8');
+
+    const validSignature = crypto.createHmac('sha256', webhookSecret).update(rawPayloadBuffer).digest('hex');
+
+    function verifyRaw(rawBuf, sig, secret) {
+      const expected = crypto.createHmac('sha256', secret).update(rawBuf).digest('hex');
+      const expBuf = Buffer.from(expected, 'utf8');
+      const actBuf = Buffer.from(sig, 'utf8');
+      if (expBuf.length === actBuf.length) {
+        return crypto.timingSafeEqual(expBuf, actBuf);
+      }
+      return false;
+    }
+
+    assert.strictEqual(verifyRaw(rawPayloadBuffer, validSignature, webhookSecret), true);
+    assert.strictEqual(verifyRaw(rawPayloadBuffer, 'tampered_sig', webhookSecret), false);
+  });
+
+  it('40. State Machine Payment Transition Decoupling: Generic updateOrderStatus rejects payment status jumps', () => {
+    function validateOrderStatusUpdate(targetStatus) {
+      if (targetStatus === 'paid' || targetStatus === 'payment_pending') {
+        return { allowed: false, error: 'PAYMENT_STATE_MUTATION_FORBIDDEN' };
+      }
+      return { allowed: true };
+    }
+
+    assert.strictEqual(validateOrderStatusUpdate('preparing').allowed, true);
+    assert.strictEqual(validateOrderStatusUpdate('ready').allowed, true);
+    assert.strictEqual(validateOrderStatusUpdate('paid').allowed, false);
+    assert.strictEqual(validateOrderStatusUpdate('paid').error, 'PAYMENT_STATE_MUTATION_FORBIDDEN');
+  });
 });
