@@ -67,8 +67,9 @@ class MenuItem {
 
   factory MenuItem.fromFirestore(String docId, Map<String, dynamic> data) {
     final isAvail = data['available'] ?? true;
-    final stock = data['stockCount'] != null ? (data['stockCount'] as num).toInt() : (isAvail ? 50 : 0);
     final type = data['type'] ?? 'instant';
+    final rawStock = data['stockCount'] != null ? (data['stockCount'] as num).toInt() : (type == 'cooked' ? 100 : 0);
+    final stock = rawStock.clamp(0, 999999);
 
     return MenuItem(
       id: docId,

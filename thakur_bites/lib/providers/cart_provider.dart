@@ -151,23 +151,27 @@ class CartProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Sync cart items with live catalog availability.
-  /// Only marks items completely unavailable (available: false) — NOT for quantity limits.
+  /// Sync cart items with live catalog availability and stock.
   void syncAvailability(List<MenuItem> allCatalogItems) {
     bool hasChanged = false;
     final map = {for (var i in allCatalogItems) i.id: i};
 
     for (final entry in _entries.values) {
       final liveItem = map[entry.item.id];
-      final isNowInStock = liveItem != null ? liveItem.isInStock : false;
-
-      if (entry.item.available != (liveItem?.available ?? false) ||
-          entry.item.isInStock != isNowInStock) {
-        entry.item = entry.item.copyWith(
-          available: liveItem?.available ?? false,
-          stockCount: liveItem?.stockCount ?? 0,
-        );
-        hasChanged = true;
+      if (liveItem != null) {
+        if (entry.item.available != liveItem.available ||
+            entry.item.stockCount != liveItem.stockCount ||
+            entry.item.price != liveItem.price ||
+            entry.item.name != liveItem.name ||
+            entry.item.type != liveItem.type) {
+          entry.item = liveItem;
+          hasChanged = true;
+        }
+      } else {
+        if (entry.item.available) {
+          entry.item = entry.item.copyWith(available: false, stockCount: 0);
+          hasChanged = true;
+        }
       }
     }
 

@@ -89,8 +89,14 @@ export function subscribeMenuItems(callback) {
     const items = snapshot.docs.map(doc => {
       const data = doc.data();
       const isAvail = data.available !== false;
-      const stock = data.stockCount !== undefined ? Number(data.stockCount) : (isAvail ? 50 : 0);
       const isInstant = data.type === 'instant';
+      const rawStock = data.stockCount !== undefined ? Number(data.stockCount) : (isInstant ? 0 : 100);
+      const stock = Math.max(0, isNaN(rawStock) ? 0 : rawStock);
+
+      // Self-heal negative stock in database if found
+      if (data.stockCount !== undefined && data.stockCount < 0) {
+        updateDoc(doc.ref, { stockCount: 0, available: false }).catch(console.error);
+      }
 
       return {
         id: doc.id,

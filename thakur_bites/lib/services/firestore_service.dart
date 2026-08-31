@@ -59,7 +59,8 @@ class FirestoreService {
           final data = doc.data()!;
           final isAvailable = data['available'] ?? false;
           final type = data['type'] ?? 'instant';
-          final stockCount = (data['stockCount'] as num?)?.toInt() ?? (isAvailable ? 50 : 0);
+          final rawStock = (data['stockCount'] as num?)?.toInt() ?? 0;
+          final stockCount = rawStock.clamp(0, 999999);
 
           if (!isAvailable) {
             stockIssues[entry.item.id] = 0;
@@ -98,6 +99,7 @@ class FirestoreService {
         category: 'dosa',
         type: 'cooked',
         prepMinutes: 6,
+        stockCount: 100,
         iconKey: 'dosa',
       ),
       MenuItem(
@@ -107,6 +109,7 @@ class FirestoreService {
         category: 'rotibhaji',
         type: 'cooked',
         prepMinutes: 8,
+        stockCount: 100,
         iconKey: 'roti',
       ),
       MenuItem(
@@ -116,6 +119,7 @@ class FirestoreService {
         category: 'drinks',
         type: 'cooked',
         prepMinutes: 3,
+        stockCount: 100,
         iconKey: 'chai',
       ),
       MenuItem(
@@ -220,7 +224,8 @@ class FirestoreService {
         final data = snap.data()!;
         final isAvail = data['available'] ?? false;
         final type = data['type'] ?? 'instant';
-        final currentStock = (data['stockCount'] as num?)?.toInt() ?? (isAvail ? 50 : 0);
+        final rawStock = (data['stockCount'] as num?)?.toInt() ?? 0;
+        final currentStock = rawStock.clamp(0, 999999);
 
         if (!isAvail) {
           throw InsufficientStockException(entry.item.id, entry.item.name, 0);
@@ -273,14 +278,15 @@ class FirestoreService {
       // 4. ALL ATOMIC WRITES AFTER READS
       // ═════════════════════════════════════════════════════════════
 
-      // a. Decrement store inventory
+      // a. Decrement store inventory safely
       for (final entry in cart.entries) {
         final snap = itemSnapshots[entry.item.id]!;
         final data = snap.data()!;
         final type = data['type'] ?? 'instant';
         if (type == 'instant') {
-          final currentStock = (data['stockCount'] as num?)?.toInt() ?? 0;
-          final newStock = currentStock - entry.qty; // Guaranteed >= 0 by step 2
+          final rawStock = (data['stockCount'] as num?)?.toInt() ?? 0;
+          final currentStock = rawStock.clamp(0, 999999);
+          final newStock = (currentStock - entry.qty).clamp(0, 999999);
           transaction.update(itemRefs[entry.item.id]!, {
             'stockCount': newStock,
             'available': newStock > 0,

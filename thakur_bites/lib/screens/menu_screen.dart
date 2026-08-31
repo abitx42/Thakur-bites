@@ -1150,13 +1150,15 @@ class _OrderCard extends StatelessWidget {
     final cart = context.read<CartProvider>();
 
     for (final item in order.items) {
+      final isInstantItem = ['cold_drink', 'chocolate', 'chips'].contains(item.menuItemId);
       final menuItem = MenuItem(
         id: item.menuItemId,
         name: item.name,
         price: item.price,
-        category: 'dosa', // Fallback category
-        type: 'cooked',
-        prepMinutes: 6,
+        category: isInstantItem ? 'snacks' : 'dosa',
+        type: isInstantItem ? 'instant' : 'cooked',
+        prepMinutes: isInstantItem ? 0 : 6,
+        stockCount: isInstantItem ? 50 : 100,
       );
       cart.setQty(menuItem, item.quantity);
     }
