@@ -84,7 +84,8 @@ class Order {
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       readyAt: (data['readyAt'] as Timestamp?)?.toDate(),
       estimatedMinutes: data['estimatedMinutes'] ?? 0,
-      totalAmount: (data['totalAmount'] as num?)?.toDouble() ?? 0.0,
+      totalAmount: (data['totalAmount'] as num?)?.toDouble() ??
+          (((data['totalAmountPaise'] as num?)?.toDouble() ?? 0.0) / 100.0),
       items: (data['items'] as List<dynamic>?)
               ?.map((item) => OrderItem.fromMap(item as Map<String, dynamic>))
               .toList() ??
@@ -104,6 +105,7 @@ class Order {
       'readyAt': readyAt != null ? Timestamp.fromDate(readyAt!) : null,
       'estimatedMinutes': estimatedMinutes,
       'totalAmount': totalAmount,
+      'totalAmountPaise': (totalAmount * 100).round(),
       'items': items.map((item) => item.toMap()).toList(),
     };
   }

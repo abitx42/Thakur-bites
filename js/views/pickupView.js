@@ -1,5 +1,5 @@
 // Phase 10 — Counter Pickup & Dispatch View (Automatic Live Queue with Exact PIN & XSS Sanitization)
-import { subscribeOrders, updateOrderStatus } from '../firebase.js?v=4';
+import { subscribeOrders, updateOrderStatus, unlockOrder } from '../firebase.js?v=4';
 import { escapeHtml } from './escapeHtml.js';
 
 let unsubscribeOrders = null;
@@ -139,10 +139,15 @@ export function renderPickupView(container) {
                     <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 2px;">
                       Roll: <strong style="color: var(--ink-primary);">${escapeHtml(order.studentRoll || 'N/A')}</strong> · ${formatTime(order.createdAt)}
                     </div>
-                    <div style="margin-top: 4px;">
+                    <div style="margin-top: 4px; display: flex; gap: 6px; align-items: center;">
                       <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; background: #22C55E; color: #FFF; padding: 2px 8px; border-radius: 999px;">
                         READY FOR PICKUP 🔔
                       </span>
+                      ${order.isLockedForInvestigation ? `
+                        <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; background: #DC2626; color: #FFF; padding: 2px 8px; border-radius: 999px;">
+                          🔒 PIN LOCKED
+                        </span>
+                      ` : ''}
                     </div>
                   </div>
                 </div>
@@ -162,17 +167,28 @@ export function renderPickupView(container) {
                   </div>
                 </div>
 
-                <!-- Right: Big Side-by-Side Collected Button -->
-                <div>
-                  <button 
-                    class="collect-action-btn" 
-                    data-order-id="${order.id}"
-                    data-token="${order.tokenNumber}"
-                    style="padding: 16px 28px; border-radius: 12px; border: none; background: #16A34A; color: #FFF; font-family: var(--font-sans); font-size: 1.1rem; font-weight: 900; cursor: pointer; box-shadow: 0 4px 14px rgba(22,163,74,0.35); display: flex; align-items: center; gap: 8px; transition: transform 0.1s ease;"
-                  >
-                    <span style="font-size: 1.3rem;">✓</span>
-                    <span>Mark Collected</span>
-                  </button>
+                <!-- Right: Big Side-by-Side Collected Button / Unlock Button -->
+                <div style="display: flex; gap: 8px;">
+                  ${order.isLockedForInvestigation ? `
+                    <button 
+                      class="unlock-action-btn" 
+                      data-order-id="${order.id}"
+                      style="padding: 16px 20px; border-radius: 12px; border: none; background: #DC2626; color: #FFF; font-family: var(--font-sans); font-size: 1rem; font-weight: 900; cursor: pointer; box-shadow: 0 4px 14px rgba(220,38,38,0.35); display: flex; align-items: center; gap: 6px;"
+                    >
+                      <span>🔓</span>
+                      <span>Manager Unlock</span>
+                    </button>
+                  ` : `
+                    <button 
+                      class="collect-action-btn" 
+                      data-order-id="${order.id}"
+                      data-token="${order.tokenNumber}"
+                      style="padding: 16px 28px; border-radius: 12px; border: none; background: #16A34A; color: #FFF; font-family: var(--font-sans); font-size: 1.1rem; font-weight: 900; cursor: pointer; box-shadow: 0 4px 14px rgba(220,38,38,0.35); display: flex; align-items: center; gap: 8px; transition: transform 0.1s ease;"
+                    >
+                      <span style="font-size: 1.3rem;">✓</span>
+                      <span>Mark Collected</span>
+                    </button>
+                  `}
                 </div>
 
               </div>
@@ -307,6 +323,18 @@ export function renderPickupView(container) {
         btn.disabled = true;
 
         await updateOrderStatus(orderId, 'collected');
+      });
+    });
+
+    container.querySelectorAll('.unlock-action-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const orderId = btn.getAttribute('data-order-id');
+        const reason = prompt('Enter manager verification note for unlocking order:', 'Student verified with physical College ID');
+        if (reason) {
+          btn.textContent = 'Unlocking...';
+          btn.disabled = true;
+          await unlockOrder(orderId, reason);
+        }
       });
     });
   }

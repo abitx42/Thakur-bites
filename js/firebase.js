@@ -233,3 +233,30 @@ export async function deleteMenuItem(itemId) {
   const itemRef = doc(db, 'menuItems', itemId);
   await deleteDoc(itemRef);
 }
+
+/**
+ * Manager Unlock for PIN-locked orders
+ */
+export async function unlockOrder(orderId, reason = 'Student presented physical ID') {
+  const orderRef = doc(db, 'orders', orderId);
+  await updateDoc(orderRef, {
+    isLockedForInvestigation: false,
+    failedPinAttempts: 0,
+    unlockReason: reason,
+    unlockedAt: Timestamp.now()
+  });
+}
+
+/**
+ * Record Counter Cash Payment
+ */
+export async function recordCashPayment(orderId) {
+  const orderRef = doc(db, 'orders', orderId);
+  await updateDoc(orderRef, {
+    paymentStatus: 'paid',
+    status: 'confirmed',
+    paidAt: Timestamp.now(),
+    updatedAt: Timestamp.now()
+  });
+}
+
