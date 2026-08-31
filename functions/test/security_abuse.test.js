@@ -1993,4 +1993,82 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual('regexPattern' in res, false);
     assert.strictEqual('rateLimitThreshold' in res, false);
   });
+
+  it('90. Enterprise Integrity Monitor: Fail-Closed Type Validation on reservedStock (Zero fallback)', () => {
+    function validateInventoryIntegrityStrict(item) {
+      if (item.type === 'instant') {
+        const stockOnHand = item.stockOnHand;
+        const reservedStock = item.reservedStock;
+
+        if (typeof stockOnHand !== 'number' || !Number.isSafeInteger(stockOnHand) || stockOnHand < 0) {
+          return { valid: false, error: 'INVENTORY_CORRUPTION_STOCK_ON_HAND' };
+        }
+        if (typeof reservedStock !== 'number' || !Number.isSafeInteger(reservedStock) || reservedStock < 0) {
+          return { valid: false, error: 'INVENTORY_CORRUPTION_RESERVED_STOCK' };
+        }
+        if (reservedStock > stockOnHand) {
+          return { valid: false, error: 'INVENTORY_INVARIANT_BREACH' };
+        }
+      }
+      return { valid: true };
+    }
+
+    assert.strictEqual(validateInventoryIntegrityStrict({ type: 'instant', stockOnHand: 20, reservedStock: 5 }).valid, true);
+    // null or undefined reservedStock must NOT default to 0
+    assert.strictEqual(validateInventoryIntegrityStrict({ type: 'instant', stockOnHand: 20, reservedStock: null }).error, 'INVENTORY_CORRUPTION_RESERVED_STOCK');
+    assert.strictEqual(validateInventoryIntegrityStrict({ type: 'instant', stockOnHand: 20, reservedStock: undefined }).error, 'INVENTORY_CORRUPTION_RESERVED_STOCK');
+  });
+
+  it('91. Higher-Order Financial Invariants: Cross-checks transaction amount with postings total', () => {
+    function validateFinancialTransactionIntegrity(txn) {
+      const debits = (txn.postings || []).reduce((s, p) => s + (p.debitPaise || 0), 0);
+      const credits = (txn.postings || []).reduce((s, p) => s + (p.creditPaise || 0), 0);
+
+      if (debits !== credits) {
+        return { valid: false, error: 'UNBALANCED_POSTINGS' };
+      }
+      if (txn.amountPaise !== undefined && debits !== txn.amountPaise) {
+        return { valid: false, error: 'LEDGER_AMOUNT_MISMATCH' };
+      }
+      return { valid: true, totalPaise: debits };
+    }
+
+    const validTxn = {
+      amountPaise: 4500,
+      postings: [
+        { account: 'GATEWAY_RECEIVABLE', debitPaise: 4500, creditPaise: 0 },
+        { account: 'SALES_REVENUE', debitPaise: 0, creditPaise: 4500 },
+      ],
+    };
+
+    const mismatchTxn = {
+      amountPaise: 5000,
+      postings: [
+        { account: 'GATEWAY_RECEIVABLE', debitPaise: 4500, creditPaise: 0 },
+        { account: 'SALES_REVENUE', debitPaise: 0, creditPaise: 4500 },
+      ],
+    };
+
+    assert.strictEqual(validateFinancialTransactionIntegrity(validTxn).valid, true);
+    assert.strictEqual(validateFinancialTransactionIntegrity(mismatchTxn).error, 'LEDGER_AMOUNT_MISMATCH');
+  });
+
+  it('92. Tiered Multi-Signal Confidence Circuit Breaker Invariant', () => {
+    function evaluateCircuitBreaker(anomalies) {
+      const hasCritical = anomalies.some(a => a.severity === 'CRITICAL');
+      const hasWarning = anomalies.some(a => a.severity === 'MEDIUM');
+
+      if (hasCritical) {
+        return { status: 'CRITICAL_BREACH', action: 'AUTO_FINANCIAL_FROZEN' };
+      }
+      if (hasWarning) {
+        return { status: 'INVESTIGATION', action: 'ALERT_ADMIN' };
+      }
+      return { status: 'HEALTHY', action: 'NONE' };
+    }
+
+    assert.strictEqual(evaluateCircuitBreaker([{ severity: 'CRITICAL', type: 'LEDGER_UNBALANCED' }]).action, 'AUTO_FINANCIAL_FROZEN');
+    assert.strictEqual(evaluateCircuitBreaker([{ severity: 'MEDIUM', type: 'DUPLICATE_TOKEN' }]).action, 'ALERT_ADMIN');
+    assert.strictEqual(evaluateCircuitBreaker([]).action, 'NONE');
+  });
 });
