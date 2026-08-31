@@ -23,3 +23,4 @@ export { onOrderStatusNotification } from './notifications';
 export { provisionStudentProfile } from './students';
 export { setSystemOperationalMode } from './kill_switch';
 export { scheduledDailyReconciliation } from './reconciliation_cron';
+export { getKitchenOrders, getPickupOrders, getCashierOrders } from './operational_views';

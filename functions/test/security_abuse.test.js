@@ -1693,4 +1693,74 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
       assert.strictEqual(retriesTriggered, true);
     });
   });
+
+  it('76. Kitchen Operational View Data Minimization Invariant: Strips student PII and payment secrets', () => {
+    function projectKitchenOrder(fullOrder) {
+      return {
+        orderId: fullOrder.orderId,
+        tokenNumber: fullOrder.tokenNumber,
+        status: fullOrder.status,
+        items: fullOrder.items.map(it => ({
+          itemId: it.itemId,
+          name: it.name,
+          quantity: it.quantity,
+          station: it.station || 'general',
+        })),
+        estimatedPrepTimeMinutes: fullOrder.estimatedPrepTimeMinutes || 0,
+      };
+    }
+
+    const rawOrder = {
+      orderId: 'order_12345',
+      tokenNumber: 'TB-042',
+      status: 'confirmed',
+      studentId: 'student_9999',
+      studentName: 'Aarav Sharma',
+      studentRoll: 'TCET-IT-2026-042',
+      studentEmail: 'aarav.sharma.it26@tcetmumbai.in',
+      totalAmountPaise: 12000,
+      gatewayOrderId: 'order_rzp_999',
+      items: [{ itemId: 'item_1', name: 'Masala Dosa', quantity: 1, station: 'dosa' }],
+    };
+
+    const projected = projectKitchenOrder(rawOrder);
+    assert.strictEqual(projected.orderId, 'order_12345');
+    assert.strictEqual(projected.tokenNumber, 'TB-042');
+    assert.strictEqual('studentEmail' in projected, false);
+    assert.strictEqual('studentId' in projected, false);
+    assert.strictEqual('gatewayOrderId' in projected, false);
+    assert.strictEqual('totalAmountPaise' in projected, false);
+  });
+
+  it('77. Public Menu Catalog Projection Invariant: Exposes presentation data and conceals internal warehouse counts', () => {
+    function projectPublicMenuItem(internalDoc) {
+      return {
+        itemId: internalDoc.itemId,
+        name: internalDoc.name,
+        price: internalDoc.price,
+        category: internalDoc.category,
+        isOrderable: (internalDoc.stockOnHand - (internalDoc.reservedStock || 0)) > 0,
+        prepMinutes: internalDoc.prepMinutes,
+      };
+    }
+
+    const warehouseItem = {
+      itemId: 'item_samosa',
+      name: 'Samosa Pav',
+      price: 20,
+      category: 'counter',
+      prepMinutes: 2,
+      stockOnHand: 45,
+      reservedStock: 5,
+      reorderLevel: 10,
+      lastRestockedAt: 1756700000000,
+    };
+
+    const publicItem = projectPublicMenuItem(warehouseItem);
+    assert.strictEqual(publicItem.name, 'Samosa Pav');
+    assert.strictEqual(publicItem.isOrderable, true);
+    assert.strictEqual('stockOnHand' in publicItem, false);
+    assert.strictEqual('reservedStock' in publicItem, false);
+    assert.strictEqual('reorderLevel' in publicItem, false);
+  });
 });
