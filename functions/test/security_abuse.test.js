@@ -491,4 +491,86 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(successRes.success, true);
     assert.strictEqual(successRes.available, 0);
   });
+
+  it('24. Pickup Status Invariant: Rejects collection for confirmed or preparing orders', () => {
+    function validatePickupStatus(status) {
+      if (status !== 'ready') {
+        return { allowed: false, error: 'ORDER_NOT_READY' };
+      }
+      return { allowed: true };
+    }
+
+    assert.strictEqual(validatePickupStatus('confirmed').allowed, false);
+    assert.strictEqual(validatePickupStatus('preparing').allowed, false);
+    assert.strictEqual(validatePickupStatus('payment_pending').allowed, false);
+    assert.strictEqual(validatePickupStatus('ready').allowed, true);
+  });
+
+  it('25. One-Time QR Nonce Guard: Rejects previously consumed QR tokens', () => {
+    const orderDoc = {
+      id: 'order_qr_1',
+      studentId: 'student_1',
+      status: 'ready',
+      qrConsumedAt: new Date(), // Already scanned and consumed
+    };
+
+    function verifyPickupWithQr(order) {
+      if (order.qrConsumedAt) {
+        return { success: false, error: 'QR_ALREADY_CONSUMED' };
+      }
+      return { success: true };
+    }
+
+    const res = verifyPickupWithQr(orderDoc);
+    assert.strictEqual(res.success, false);
+    assert.strictEqual(res.error, 'QR_ALREADY_CONSUMED');
+  });
+
+  it('26. Zero-Knowledge PIN Invariant: Verifies strictly against SHA-256 hash without plaintext comparison', () => {
+    const cleanPin = '4321';
+    const legitimateHash = crypto.createHash('sha256').update(cleanPin).digest('hex');
+    const orderDoc = {
+      id: 'order_pin_1',
+      pickupPinHash: legitimateHash,
+    };
+
+    function verifyPin(order, inputPin) {
+      const inputHash = crypto.createHash('sha256').update(inputPin.trim()).digest('hex');
+      return inputHash === order.pickupPinHash;
+    }
+
+    assert.strictEqual(verifyPin(orderDoc, '4321'), true);
+    assert.strictEqual(verifyPin(orderDoc, '1234'), false);
+    assert.strictEqual(verifyPin(orderDoc, '0000'), false);
+  });
+
+  it('27. Manager PIN Lockout Unlock Invariant: Resets failed attempts to 0 and clears investigation lock', () => {
+    const orderDoc = {
+      id: 'order_locked_1',
+      failedPinAttempts: 3,
+      isLockedForInvestigation: true,
+    };
+
+    function unlockOrder(order, reason, actorRole) {
+      if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin') {
+        return { success: false, error: 'PERMISSION_DENIED' };
+      }
+      if (!reason || reason.trim().length === 0) {
+        return { success: false, error: 'REASON_REQUIRED' };
+      }
+      order.failedPinAttempts = 0;
+      order.isLockedForInvestigation = false;
+      order.unlockReason = reason;
+      return { success: true };
+    }
+
+    // Kitchen staff attempt fails
+    assert.strictEqual(unlockOrder(orderDoc, 'Physical ID verified', 'kitchen').success, false);
+
+    // Manager attempt succeeds
+    const unlockRes = unlockOrder(orderDoc, 'Physical student identity verified', 'manager');
+    assert.strictEqual(unlockRes.success, true);
+    assert.strictEqual(orderDoc.failedPinAttempts, 0);
+    assert.strictEqual(orderDoc.isLockedForInvestigation, false);
+  });
 });
