@@ -5,6 +5,7 @@ import { UserRole, FinancialTransactionRecord } from './types';
 import { logSecurityEvent } from './security_logger';
 import { enforceRateLimit } from './rate_limiter';
 import { assertOperationalMode } from './kill_switch';
+import { enforceAppCheck } from './app_check';
 
 const db = admin.firestore();
 
@@ -29,6 +30,7 @@ export interface RefundResponse {
  * Strictly guarantees: amountRefundedPaise + requestedRefundPaise <= amountPaidPaise.
  */
 export const processOrderRefund = onCall<RefundRequest>(async (request) => {
+  enforceAppCheck(request);
   await assertOperationalMode('refund');
 
   if (!request.auth || !request.auth.uid) {

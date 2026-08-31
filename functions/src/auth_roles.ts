@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import { UserRole } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
+import { enforceAppCheck } from './app_check';
 
 const db = admin.firestore();
 
@@ -13,6 +14,7 @@ const VALID_ROLES: UserRole[] = ['student', 'kitchen', 'pickup', 'cashier', 'man
  * Strictly enforces separation of duties and rate limiting.
  */
 export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(async (request) => {
+  enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
@@ -31,8 +33,8 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
   }
 
   const { targetUid, newRole } = request.data;
-  if (!targetUid || !VALID_ROLES.includes(newRole)) {
-    throw new HttpsError('invalid-argument', 'Valid targetUid and role required.');
+  if (!targetUid || typeof targetUid !== 'string' || targetUid.length > 128 || !VALID_ROLES.includes(newRole)) {
+    throw new HttpsError('invalid-argument', 'Valid targetUid (max 128 chars) and role required.');
   }
 
   // Separation of Duties: Admin cannot promote to security_admin unless caller is security_admin

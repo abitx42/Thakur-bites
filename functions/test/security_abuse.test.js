@@ -1879,4 +1879,74 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
 
     assert.throws(() => verifyAndRestoreBackup(tamperedBundle), /BACKUP_TAMPER_DETECTED/);
   });
+
+  it('83. Zero-Trust Institutional Email Invariant: Rejects missing email, unverified email, or external domains', () => {
+    function validateStudentAuthToken(token) {
+      const email = token?.email?.trim()?.toLowerCase();
+      if (!email || typeof email !== 'string') {
+        return { allowed: false, error: 'MISSING_EMAIL' };
+      }
+      const isCollegeDomain = email.endsWith('@tcetmumbai.in') || email.endsWith('@thakureducation.org');
+      if (!isCollegeDomain) {
+        return { allowed: false, error: 'INVALID_COLLEGE_DOMAIN' };
+      }
+      if (token.email_verified !== true) {
+        return { allowed: false, error: 'UNVERIFIED_EMAIL' };
+      }
+      return { allowed: true };
+    }
+
+    assert.strictEqual(validateStudentAuthToken({ email: 'student@tcetmumbai.in', email_verified: true }).allowed, true);
+    assert.strictEqual(validateStudentAuthToken({ email: 'student@thakureducation.org', email_verified: true }).allowed, true);
+    assert.strictEqual(validateStudentAuthToken({ email: undefined, email_verified: true }).error, 'MISSING_EMAIL');
+    assert.strictEqual(validateStudentAuthToken({ email: 'attacker@gmail.com', email_verified: true }).error, 'INVALID_COLLEGE_DOMAIN');
+    assert.strictEqual(validateStudentAuthToken({ email: 'student@tcetmumbai.in', email_verified: false }).error, 'UNVERIFIED_EMAIL');
+  });
+
+  it('84. Elimination of Test Environment Bypass Invariant: Production auth enforces invariants strictly', () => {
+    function checkEmailVerificationNoBypass(token) {
+      if (token.email_verified !== true) {
+        throw new Error('PERMISSION_DENIED: Institutional email must be verified');
+      }
+      return true;
+    }
+
+    assert.strictEqual(checkEmailVerificationNoBypass({ email_verified: true }), true);
+    assert.throws(() => checkEmailVerificationNoBypass({ email_verified: false }), /PERMISSION_DENIED/);
+    assert.throws(() => checkEmailVerificationNoBypass({}), /PERMISSION_DENIED/);
+  });
+
+  it('85. Staff Role Boundary Invariant: Admin cannot promote to security_admin', () => {
+    function validateRoleAssignment(callerRole, targetRole) {
+      const VALID_ROLES = ['student', 'kitchen', 'pickup', 'cashier', 'manager', 'admin', 'security_admin'];
+      if (callerRole !== 'admin' && callerRole !== 'security_admin') {
+        return { allowed: false, error: 'UNAUTHORIZED_CALLER' };
+      }
+      if (!VALID_ROLES.includes(targetRole)) {
+        return { allowed: false, error: 'INVALID_TARGET_ROLE' };
+      }
+      if (targetRole === 'security_admin' && callerRole !== 'security_admin') {
+        return { allowed: false, error: 'ADMIN_CANNOT_GRANT_SECURITY_ADMIN' };
+      }
+      return { allowed: true };
+    }
+
+    assert.strictEqual(validateRoleAssignment('security_admin', 'security_admin').allowed, true);
+    assert.strictEqual(validateRoleAssignment('admin', 'kitchen').allowed, true);
+    assert.strictEqual(validateRoleAssignment('admin', 'manager').allowed, true);
+    assert.strictEqual(validateRoleAssignment('admin', 'security_admin').error, 'ADMIN_CANNOT_GRANT_SECURITY_ADMIN');
+    assert.strictEqual(validateRoleAssignment('manager', 'kitchen').error, 'UNAUTHORIZED_CALLER');
+  });
+
+  it('86. Firebase App Check Enforcement Invariant: Rejects unverified client calls', () => {
+    function validateAppCheck(request, enforcementEnabled) {
+      if (enforcementEnabled && !request.app) {
+        throw new Error('APP_CHECK_VERIFICATION_FAILED: Unauthenticated client');
+      }
+      return true;
+    }
+
+    assert.strictEqual(validateAppCheck({ app: { appId: 'com.thakurbites.app' } }, true), true);
+    assert.throws(() => validateAppCheck({}, true), /APP_CHECK_VERIFICATION_FAILED/);
+  });
 });

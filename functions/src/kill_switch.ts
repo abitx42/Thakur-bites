@@ -2,6 +2,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { UserRole } from './types';
 import { logSecurityEvent } from './security_logger';
+import { enforceAppCheck } from './app_check';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -68,6 +69,7 @@ export async function assertOperationalMode(category: 'checkout' | 'payment' | '
  * - Security Admin & Admin: Full authority over all mode transitions and restorations.
  */
 export const setSystemOperationalMode = onCall<{ mode: SystemOperationalMode; reason?: string }>(async (request) => {
+  enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }

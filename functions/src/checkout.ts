@@ -7,6 +7,7 @@ import { getRequiredSecret } from './secrets';
 import { reserveInventoryInTransaction, commitInventoryInTransaction } from './inventory_reservation';
 import { assertOperationalMode } from './kill_switch';
 import { logSecurityEvent } from './security_logger';
+import { enforceAppCheck } from './app_check';
 
 const db = admin.firestore();
 
@@ -14,27 +15,31 @@ const db = admin.firestore();
  * Creates an authoritative, idempotent checkout order with atomic inventory reservation and integer paise pricing.
  */
 export const createCheckout = onCall<CheckoutRequest>(async (request) => {
+  enforceAppCheck(request);
   await assertOperationalMode('checkout');
 
-  // 1. Authenticate student
+  // 1. Authenticate student with fail-closed institutional email invariant
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to checkout.');
   }
 
   const studentId = request.auth.uid;
-  const tokenEmail = (request.auth.token.email as string | undefined)?.toLowerCase();
-  if (tokenEmail) {
-    const isCollegeDomain = tokenEmail.endsWith('@tcetmumbai.in') || tokenEmail.endsWith('@thakureducation.org');
-    if (!isCollegeDomain) {
-      throw new HttpsError(
-        'permission-denied',
-        'Checkout is restricted to authorized college domain accounts (@tcetmumbai.in or @thakureducation.org).'
-      );
-    }
+  const tokenEmail = (request.auth.token.email as string | undefined)?.trim().toLowerCase();
+  
+  if (!tokenEmail || typeof tokenEmail !== 'string') {
+    throw new HttpsError('permission-denied', 'Checkout requires a verified institutional email account.');
   }
 
-  // Backend Security Invariant: Require verified institutional email
-  if (request.auth.token.email_verified !== true && process.env.NODE_ENV !== 'test') {
+  const isCollegeDomain = tokenEmail.endsWith('@tcetmumbai.in') || tokenEmail.endsWith('@thakureducation.org');
+  if (!isCollegeDomain) {
+    throw new HttpsError(
+      'permission-denied',
+      'Checkout is restricted to authorized college domain accounts (@tcetmumbai.in or @thakureducation.org).'
+    );
+  }
+
+  // Backend Security Invariant: Require verified institutional email (Fail closed, zero test bypass)
+  if (request.auth.token.email_verified !== true) {
     throw new HttpsError('permission-denied', 'Institutional email must be verified before placing orders.');
   }
 

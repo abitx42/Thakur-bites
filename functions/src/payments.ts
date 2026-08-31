@@ -97,7 +97,7 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
   }
 
   const studentId = request.auth.uid;
-  if (request.auth.token.email_verified !== true && process.env.NODE_ENV !== 'test') {
+  if (request.auth.token.email_verified !== true) {
     throw new HttpsError('permission-denied', 'Institutional email must be verified before making payment.');
   }
 
