@@ -1,9 +1,11 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
 import '../services/firestore_service.dart';
+import '../services/checkout_service.dart';
 import '../theme/app_theme.dart';
 import 'ticket_screen.dart';
 
@@ -365,6 +367,8 @@ class _CartSummary extends StatefulWidget {
 
 class _CartSummaryState extends State<_CartSummary> {
   final FirestoreService _firestore = FirestoreService();
+  final CheckoutService _checkoutService = CheckoutService();
+  String? _currentIdempotencyKey;
   bool _isProcessing = false;
 
   Future<void> _handleConfirmAndPay() async {
@@ -384,7 +388,6 @@ class _CartSummaryState extends State<_CartSummary> {
     try {
       // ──────────────────────────────────────────────────────────────
       // 2. ATOMIC STOCK CHECK — Backend is the single source of truth.
-      //    This is where stock ownership is determined.
       //    First student to reach this point and pass wins the stock.
       // ──────────────────────────────────────────────────────────────
       final stockIssues = await _firestore.verifyItemsStockQuantity(cart.entries);
@@ -404,11 +407,19 @@ class _CartSummaryState extends State<_CartSummary> {
       }
 
       // ──────────────────────────────────────────────────────────────
-      // 3. ATOMIC STOCK RESERVATION — Place order & decrement inventory
-      //    in one operation. This reserves the stock.
+      // 3. TRUSTED CHECKOUT & INVENTORY RESERVATION ENGINE
+      //    Idempotency key prevents duplicate orders/billing on retry.
       // ──────────────────────────────────────────────────────────────
+      _currentIdempotencyKey ??= 'tb_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999999)}';
       final student = authProvider.currentStudent;
-      final order = await _firestore.placeOrder(cart, student: student);
+
+      final order = await _checkoutService.createCheckout(
+        idempotencyKey: _currentIdempotencyKey!,
+        entries: cart.entries,
+        student: student,
+      );
+
+      _currentIdempotencyKey = null;
 
       if (student != null) {
         authProvider.incrementOrderCount();
