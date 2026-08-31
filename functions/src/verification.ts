@@ -85,6 +85,15 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
       throw new HttpsError('already-exists', `You are already a verified ${applicationType}.`);
     }
 
+    if (userData.verificationStatus === 'UNDER_REVIEW') {
+      throw new HttpsError('already-exists', 'You already have a pending verification application under review.');
+    }
+
+    // Sanitize storage path to prevent directory traversal
+    const safeProofPath = idProofStoragePath
+      ? `faculty_proofs/${userId}_${crypto.randomBytes(6).toString('hex')}`
+      : undefined;
+
     const newApp: VerificationApplication = {
       applicationId,
       userId,
@@ -93,7 +102,7 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
       department: cleanDept,
       designation: cleanDesignation,
       officialEmail: cleanOfficialEmail,
-      idProofStoragePath: idProofStoragePath ? String(idProofStoragePath).slice(0, 200) : undefined,
+      idProofStoragePath: safeProofPath,
       status: 'SUBMITTED',
       submittedAt: now,
     };

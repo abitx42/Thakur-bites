@@ -39,7 +39,12 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   }
 
   await enforceRateLimit(studentId, 'checkout');
-  const { idempotencyKey, items, paymentMethod = 'online' } = request.data;
+  const { idempotencyKey, items, paymentMethod = 'online' } = request.data || {};
+
+  // Strict Payment Method Enum Validation (TB-NEW-008 Remediation)
+  if (paymentMethod !== 'online' && paymentMethod !== 'counter_cash') {
+    throw new HttpsError('invalid-argument', 'paymentMethod must be either "online" or "counter_cash".');
+  }
 
   if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0 || idempotencyKey.length > 128) {
     throw new HttpsError('invalid-argument', 'Valid non-empty idempotencyKey (max 128 characters) is required.');

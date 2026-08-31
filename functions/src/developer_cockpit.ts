@@ -237,9 +237,11 @@ export const requestEmergencyStepUpChallenge = onCall<RequestStepUpChallengeData
   }
 
   const { action, reason } = request.data || {};
-  if (!action || !reason || !['FREEZE_FINANCIALS', 'KILL_SWITCH', 'UNFREEZE_PLATFORM'].includes(action)) {
-    throw new HttpsError('invalid-argument', 'Valid action and operational justification reason are required.');
+  if (!action || !reason || typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 200 || !['FREEZE_FINANCIALS', 'KILL_SWITCH', 'UNFREEZE_PLATFORM'].includes(action)) {
+    throw new HttpsError('invalid-argument', 'Valid action and operational justification reason (1-200 chars) are required.');
   }
+
+  const cleanReason = reason.trim().replace(/[\r\n\t]/g, ' ');
 
   // Generate 32-byte CSPRNG nonce
   const rawNonce = crypto.randomBytes(32).toString('hex');
@@ -251,18 +253,19 @@ export const requestEmergencyStepUpChallenge = onCall<RequestStepUpChallengeData
     challengeId,
     actorUid: request.auth.uid,
     action,
-    reason,
+    reason: cleanReason,
     nonceHash,
     used: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     expiresAt: admin.firestore.Timestamp.fromDate(expiresAtDate),
+    ttl: admin.firestore.Timestamp.fromDate(new Date(Date.now() + 24 * 60 * 60 * 1000)), // Automated TTL cleanup
   });
 
   await logSecurityEvent({
     eventType: 'STEP_UP_CHALLENGE_ISSUED',
     severity: 'MEDIUM',
     actorUid: request.auth.uid,
-    details: { challengeId, action, reason },
+    details: { challengeId, action, reason: cleanReason },
   });
 
   return {

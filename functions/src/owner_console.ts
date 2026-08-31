@@ -236,12 +236,39 @@ export const updateOwnerFeatureFlags = onCall<Partial<OwnerFeatureFlags>>(async 
     updatedBy: request.auth.uid,
   };
 
-  if (onlineOrderingEnabled !== undefined) updates.onlineOrderingEnabled = Boolean(onlineOrderingEnabled);
-  if (priorityQueueEnabled !== undefined) updates.priorityQueueEnabled = Boolean(priorityQueueEnabled);
-  if (rushMultiplier !== undefined) updates.rushMultiplier = Math.max(1.0, Math.min(2.5, Number(rushMultiplier)));
-  if (cashCounterEnabled !== undefined) updates.cashCounterEnabled = Boolean(cashCounterEnabled);
+  if (onlineOrderingEnabled !== undefined) {
+    if (typeof onlineOrderingEnabled !== 'boolean') {
+      throw new HttpsError('invalid-argument', 'onlineOrderingEnabled must be a boolean.');
+    }
+    updates.onlineOrderingEnabled = onlineOrderingEnabled;
+  }
+
+  if (priorityQueueEnabled !== undefined) {
+    if (typeof priorityQueueEnabled !== 'boolean') {
+      throw new HttpsError('invalid-argument', 'priorityQueueEnabled must be a boolean.');
+    }
+    updates.priorityQueueEnabled = priorityQueueEnabled;
+  }
+
+  if (rushMultiplier !== undefined) {
+    if (typeof rushMultiplier !== 'number' || !Number.isFinite(rushMultiplier) || rushMultiplier < 1.0 || rushMultiplier > 2.5) {
+      throw new HttpsError('invalid-argument', 'rushMultiplier must be a finite number between 1.0 and 2.5.');
+    }
+    updates.rushMultiplier = rushMultiplier;
+  }
+
+  if (cashCounterEnabled !== undefined) {
+    if (typeof cashCounterEnabled !== 'boolean') {
+      throw new HttpsError('invalid-argument', 'cashCounterEnabled must be a boolean.');
+    }
+    updates.cashCounterEnabled = cashCounterEnabled;
+  }
+
   if (maxActivePriorityOrdersPerFaculty !== undefined) {
-    updates.maxActivePriorityOrdersPerFaculty = Math.max(1, Math.min(5, Math.floor(Number(maxActivePriorityOrdersPerFaculty))));
+    if (typeof maxActivePriorityOrdersPerFaculty !== 'number' || !Number.isSafeInteger(maxActivePriorityOrdersPerFaculty) || maxActivePriorityOrdersPerFaculty < 1 || maxActivePriorityOrdersPerFaculty > 5) {
+      throw new HttpsError('invalid-argument', 'maxActivePriorityOrdersPerFaculty must be an integer between 1 and 5.');
+    }
+    updates.maxActivePriorityOrdersPerFaculty = maxActivePriorityOrdersPerFaculty;
   }
 
   await db.collection('featureFlags').doc('global').set(updates, { merge: true });
