@@ -20,3 +20,4 @@ export { processOrderRefund } from './refunds';
 export { adjustInventoryStock } from './inventory';
 export { createMealRating } from './ratings';
 export { onOrderStatusNotification } from './notifications';
+export { provisionStudentProfile } from './students';

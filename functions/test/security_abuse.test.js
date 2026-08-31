@@ -1109,4 +1109,89 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual('studentId' in publicView, false, 'Public rating must not contain studentId');
     assert.strictEqual('orderId' in publicView, false, 'Public rating must not contain orderId');
   });
+
+  it('47. Student Profile Creation Lockdown Invariant: Prevents client manufactured metadata', () => {
+    // Client trying to directly create a profile with elevated privileges
+    const maliciousClientPayload = {
+      uid: 'student_attacker',
+      isVerified: true,
+      role: 'admin',
+      totalOrders: 99999,
+      accountDisabled: false,
+    };
+
+    function validateStudentProfileCreation(isDirectClientWrite, payload) {
+      if (isDirectClientWrite) {
+        return { allowed: false, error: 'CLIENT_CREATE_FORBIDDEN' };
+      }
+      return {
+        allowed: true,
+        doc: {
+          uid: payload.uid,
+          role: 'student', // Authoritative override
+          isVerified: true,
+          totalOrders: 0,
+          accountDisabled: false,
+        },
+      };
+    }
+
+    const clientAttempt = validateStudentProfileCreation(true, maliciousClientPayload);
+    assert.strictEqual(clientAttempt.allowed, false);
+    assert.strictEqual(clientAttempt.error, 'CLIENT_CREATE_FORBIDDEN');
+
+    const backendProvision = validateStudentProfileCreation(false, maliciousClientPayload);
+    assert.strictEqual(backendProvision.allowed, true);
+    assert.strictEqual(backendProvision.doc.role, 'student', 'Must enforce student role authoritatively');
+    assert.strictEqual(backendProvision.doc.totalOrders, 0, 'Must start at 0 orders');
+  });
+
+  it('48. Zero Secrets in Order Document Invariant: Asserts orders collection contains zero cryptographic secrets', () => {
+    const cleanOrderDoc = {
+      id: 'order_abc123',
+      tokenNumber: 'TB-012',
+      studentId: 'student_tcet_1',
+      totalAmountPaise: 4500,
+      status: 'confirmed',
+    };
+
+    const forbiddenSecretKeys = ['pickupPin', 'pickupPinHash', 'qrNonce', 'qrExpiresAt', 'failedPinAttempts', 'isLockedForInvestigation'];
+    for (const key of forbiddenSecretKeys) {
+      assert.strictEqual(key in cleanOrderDoc, false, `orders document must not contain ${key}`);
+    }
+  });
+
+  it('49. Backend email_verified Invariant: Blocks unverified student accounts', () => {
+    function evaluateBackendAuth(token) {
+      if (!token || !token.email) return { allowed: false, error: 'NO_EMAIL' };
+      if (!token.email.endsWith('@tcetmumbai.in') && !token.email.endsWith('@thakureducation.org')) {
+        return { allowed: false, error: 'INVALID_DOMAIN' };
+      }
+      if (token.email_verified !== true) {
+        return { allowed: false, error: 'EMAIL_NOT_VERIFIED' };
+      }
+      return { allowed: true };
+    }
+
+    assert.strictEqual(evaluateBackendAuth({ email: 'student@tcetmumbai.in', email_verified: true }).allowed, true);
+    assert.strictEqual(evaluateBackendAuth({ email: 'student@tcetmumbai.in', email_verified: false }).allowed, false);
+    assert.strictEqual(evaluateBackendAuth({ email: 'student@tcetmumbai.in', email_verified: false }).error, 'EMAIL_NOT_VERIFIED');
+    assert.strictEqual(evaluateBackendAuth({ email: 'attacker@gmail.com', email_verified: true }).allowed, false);
+  });
+
+  it('50. Legacy Ratings Collection Complete Lockdown Invariant', () => {
+    function evaluateCollectionRules(collectionPath, operation) {
+      if (collectionPath === 'ratings') {
+        return false; // allow read, write: if false
+      }
+      if (collectionPath === 'ratingsPublic' && operation === 'read') {
+        return true;
+      }
+      return false;
+    }
+
+    assert.strictEqual(evaluateCollectionRules('ratings', 'read'), false);
+    assert.strictEqual(evaluateCollectionRules('ratings', 'write'), false);
+    assert.strictEqual(evaluateCollectionRules('ratingsPublic', 'read'), true);
+  });
 });

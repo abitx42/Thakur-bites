@@ -49,11 +49,6 @@ export interface OrderDocument {
   id: string;
   idempotencyKey: string;
   tokenNumber: string;
-  pickupPinHash: string; // Zero-knowledge SHA-256 hash only
-  qrNonce?: string;
-  qrExpiresAt?: number;
-  qrConsumedAt?: Timestamp; // One-time QR consumption guard
-  qrConsumedBy?: string;
   studentId: string;
   studentName: string;
   studentRoll: string;
@@ -72,8 +67,6 @@ export interface OrderDocument {
   collectedAt?: Timestamp;
   collectedByStaffId?: string;
   verificationMethod?: 'PIN' | 'QR';
-  failedPinAttempts?: number;
-  isLockedForInvestigation?: boolean;
   unlockedByStaffId?: string;
   unlockedAt?: Timestamp;
   unlockReason?: string;

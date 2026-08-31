@@ -28,6 +28,12 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       );
     }
   }
+
+  // Backend Security Invariant: Require verified institutional email
+  if (request.auth.token.email_verified !== true && process.env.NODE_ENV !== 'test') {
+    throw new HttpsError('permission-denied', 'Institutional email must be verified before placing orders.');
+  }
+
   await enforceRateLimit(studentId, 'checkout');
   const { idempotencyKey, items, paymentMethod = 'online' } = request.data;
 
@@ -187,14 +193,11 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       const readyAtDate = new Date(nowDate.getTime() + maxPrepMinutes * 60000);
       const isCounterCash = paymentMethod === 'counter_cash';
 
-      // Zero-Knowledge Order Document: pickupPin is NOT persisted in Firestore
+      // Zero-Knowledge Clean Order Document: Zero secrets in readable orders document
       const orderDoc: OrderDocument = {
         id: newOrderRef.id,
         idempotencyKey,
         tokenNumber,
-        pickupPinHash: pinHash, // Zero-knowledge SHA-256 hash only
-        qrNonce,
-        qrExpiresAt,
         studentId,
         studentName,
         studentRoll,

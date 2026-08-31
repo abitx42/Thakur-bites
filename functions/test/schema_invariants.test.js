@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 describe('Phase 6 Canonical Schema & Model Alignment Invariants', () => {
-  it('1. Persistent OrderDocument does not contain plain pickupPin property in type definition', () => {
+  it('1. Persistent OrderDocument isolates secrets to OrderSecretDoc', () => {
     const typesFilePath = path.join(process.cwd(), 'src/types.ts');
     const typesContent = fs.readFileSync(typesFilePath, 'utf8');
 
@@ -14,14 +14,29 @@ describe('Phase 6 Canonical Schema & Model Alignment Invariants', () => {
 
     const orderDocBody = orderDocMatch[1];
     assert.strictEqual(
-      orderDocBody.includes('pickupPin?: string'),
+      orderDocBody.includes('pickupPin'),
       false,
-      'OrderDocument must NOT define persistent pickupPin?: string'
+      'OrderDocument must NOT define plaintext pickupPin or pickupPinHash'
     );
     assert.strictEqual(
-      orderDocBody.includes('pickupPinHash: string'),
+      orderDocBody.includes('qrNonce'),
+      false,
+      'OrderDocument must NOT define qrNonce'
+    );
+
+    // Extract OrderSecretDoc interface block
+    const secretDocMatch = typesContent.match(/export interface OrderSecretDoc\s*\{([\s\S]*?)\}/);
+    assert.ok(secretDocMatch, 'OrderSecretDoc interface must exist in types.ts');
+    const secretDocBody = secretDocMatch[1];
+    assert.strictEqual(
+      secretDocBody.includes('pickupPinHash: string'),
       true,
-      'OrderDocument must require pickupPinHash'
+      'OrderSecretDoc must define pickupPinHash'
+    );
+    assert.strictEqual(
+      secretDocBody.includes('qrNonce: string'),
+      true,
+      'OrderSecretDoc must define qrNonce'
     );
   });
 

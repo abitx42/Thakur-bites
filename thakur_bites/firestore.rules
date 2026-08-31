@@ -46,11 +46,12 @@ service cloud.firestore {
     }
 
     // ─── Students Profile ───────────────────────────────────────
+    // Students profile creation is restricted strictly to trusted backend Cloud Functions (provisionStudentProfile).
     // Students can read and update ONLY harmless profile fields (name, phone, department, photoUrl, preferences).
-    // Security fields (role, isVerified, accountDisabled, uid) are strictly protected.
+    // Security fields (role, isVerified, accountDisabled, totalOrders, uid) are strictly protected.
     match /students/{studentId} {
       allow read: if isOwner(studentId) || isStaff();
-      allow create: if isOwner(studentId);
+      allow create: if false; // Backend Cloud Function ONLY
       allow update: if isOwner(studentId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'phone', 'department', 'year', 'photoUrl', 'preferences', 'updatedAt']);
       allow delete: if false;
     }
@@ -66,9 +67,9 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Legacy unredacted ratings collection (Locked down)
     match /ratings/{ratingId} {
-      allow read: if true;
-      allow write: if false;
+      allow read, write: if false;
     }
 
     // ─── Staff Users (RBAC Records) ─────────────────────────────
