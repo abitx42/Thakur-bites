@@ -186,16 +186,21 @@ async function runEndToEndSmokeTest() {
   assert.strictEqual(checkShiftPin('000000', pinSalt, shiftPinHash), false);
   console.log('  ✓ Shift PIN verified against salted SHA-256 hash (Zero plaintext storage)\n');
 
-  // 9. TV Display Zero-PII Projection
-  console.log('Step 9: TV Display Zero-PII Projection...');
-  const tvDoc = {
-    tokenNumber: orderDoc.tokenNumber,
-    status: orderDoc.status,
-    priorityLevel: orderDoc.priorityLevel,
-  };
-  assert.strictEqual('studentId' in tvDoc, false);
-  assert.strictEqual('totalAmountPaise' in tvDoc, false);
-  console.log('  ✓ TV Projection contains only token and status (Zero student PII or financial leak)\n');
+  // 9. TV Display Zero-PII Projection (Single Ephemeral publicLiveQueue/current)
+  console.log('Step 9: TV Display Zero-PII Single Document Projection...');
+  const { buildPublicQueuePayload } = require('../functions/lib/tv_projection');
+  const projection = buildPublicQueuePayload([
+    { tokenNumber: 'TB-042', status: 'preparing', estimatedMinutes: 8, priorityLevel: 2 },
+    { tokenNumber: 'TB-041', status: 'ready', priorityLevel: 1 },
+  ]);
+
+  assert.strictEqual(projection.preparing.length, 1);
+  assert.strictEqual(projection.ready.length, 1);
+  assert.strictEqual(projection.activeCount, 2);
+  assert.strictEqual('studentId' in projection.preparing[0], false);
+  assert.strictEqual('priorityLevel' in projection.preparing[0], false, 'No public priority exposure on TV');
+  assert.strictEqual(projection.preparing[0].token, 'TB-042');
+  console.log('  ✓ Single publicLiveQueue/current projection verified: Zero PII, Zero priority stars, 1 doc\n');
 
   // 10. Owner Console Predictive Stockout Velocity
   console.log('Step 10: Owner Console Predictive Stockout Velocity...');

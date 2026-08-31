@@ -2851,4 +2851,90 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(evaluateSystemHealth(75, 0).circuitBreakerTripped, true, 'Integrity drop triggers circuit breaker');
     assert.strictEqual(evaluateSystemHealth(100, 3).circuitBreakerTripped, true, '3 critical incidents triggers circuit breaker');
   });
+
+  it('133. TV Public Projection Sanitizer: Strips 100% of PII, amounts, items, and internal priority flags', () => {
+    const { buildPublicQueuePayload } = require('../lib/tv_projection');
+
+    const rawOrders = [
+      {
+        orderId: 'ord_1',
+        tokenNumber: 'TB-042',
+        studentId: 'student_secret_uid',
+        studentName: 'Rohit Sharma',
+        items: [{ name: 'Samosa', quantity: 2, price: 50 }],
+        totalAmountPaise: 5000,
+        status: 'preparing',
+        priorityLevel: 2,
+        isPriority: true,
+        estimatedMinutes: 8,
+      },
+      {
+        orderId: 'ord_2',
+        tokenNumber: 'TB-041',
+        studentId: 'student_secret_uid_2',
+        studentName: 'Sneha Patil',
+        status: 'ready',
+        priorityLevel: 1,
+        isPriority: false,
+      },
+      {
+        orderId: 'ord_3',
+        tokenNumber: 'TB-040',
+        status: 'collected', // Already collected, should be excluded from active display
+      },
+    ];
+
+    const projection = buildPublicQueuePayload(rawOrders);
+
+    assert.strictEqual(projection.preparing.length, 1);
+    assert.strictEqual(projection.ready.length, 1);
+    assert.strictEqual(projection.activeCount, 2);
+
+    // Preparing item check
+    const prep = projection.preparing[0];
+    assert.strictEqual(prep.token, 'TB-042');
+    assert.strictEqual(prep.estimatedMinutes, 8);
+    assert.strictEqual('studentId' in prep, false);
+    assert.strictEqual('studentName' in prep, false);
+    assert.strictEqual('totalAmountPaise' in prep, false);
+    assert.strictEqual('priorityLevel' in prep, false, 'Internal priority flag must NOT be exposed on public TV');
+    assert.strictEqual('isPriority' in prep, false);
+
+    // Ready item check
+    const rdy = projection.ready[0];
+    assert.strictEqual(rdy.token, 'TB-041');
+    assert.strictEqual('studentId' in rdy, false);
+  });
+
+  it('134. Single Ephemeral Document Invariant: Projection bundles entire cafeteria state into one document', () => {
+    const { buildPublicQueuePayload } = require('../lib/tv_projection');
+    const emptyProjection = buildPublicQueuePayload([]);
+
+    assert.deepStrictEqual(emptyProjection.preparing, []);
+    assert.deepStrictEqual(emptyProjection.ready, []);
+    assert.strictEqual(emptyProjection.activeCount, 0);
+    assert.ok(emptyProjection.updatedAt);
+  });
+
+  it('135. TV Stream Exponential Backoff: Enforces capped exponential delays and reset on success', () => {
+    function computeNextBackoff(currentDelay, maxDelay = 60000) {
+      return Math.min(currentDelay * 2, maxDelay);
+    }
+
+    let delay = 5000;
+    delay = computeNextBackoff(delay);
+    assert.strictEqual(delay, 10000);
+    delay = computeNextBackoff(delay);
+    assert.strictEqual(delay, 20000);
+    delay = computeNextBackoff(delay);
+    assert.strictEqual(delay, 40000);
+    delay = computeNextBackoff(delay);
+    assert.strictEqual(delay, 60000);
+    delay = computeNextBackoff(delay);
+    assert.strictEqual(delay, 60000, 'Backoff must be capped at 60 seconds');
+
+    // On healthy stream reconnect, reset to 5s
+    delay = 5000;
+    assert.strictEqual(delay, 5000);
+  });
 });

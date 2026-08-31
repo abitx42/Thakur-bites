@@ -232,10 +232,13 @@ service cloud.firestore {
       allow write: if false; // Backend Cloud Function ONLY
     }
 
-    // ─── Public Live Queue (TV Display Zero-PII Projection) ───────
-    match /publicLiveQueue/{tokenId} {
+    // ─── Public Live Queue (TV Display Zero-PII Ephemeral Projection) ───
+    match /publicLiveQueue/current {
       allow read: if true; // Public read for cafeteria wall monitors
       allow write: if false; // Backend Cloud Function ONLY
+    }
+    match /publicLiveQueue/{otherDoc} {
+      allow read, write: if false; // Deny arbitrary collection scanning or token enumeration
     }
   }
 }

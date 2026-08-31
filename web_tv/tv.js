@@ -1,9 +1,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { 
   getFirestore, 
-  collection, 
-  query, 
-  where, 
+  doc, 
   onSnapshot 
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
@@ -36,6 +34,9 @@ const audioBanner = document.getElementById('audio-enable-banner');
 const knownReadyTokens = new Set();
 let isFirstLoad = true;
 let audioContext = null;
+let currentUnsubscribe = null;
+let reconnectDelayMs = 5000;
+const MAX_RECONNECT_DELAY_MS = 60000;
 
 // Initialize Web Audio API on first user interaction
 function initAudio() {
@@ -115,16 +116,16 @@ function escapeHtml(str) {
 }
 
 /**
- * Render Tokens into DOM
+ * Render Tokens from the single sanitized publicLiveQueue/current projection
  */
-function renderTokens(orders) {
-  const preparingOrders = orders.filter(o => o.status === 'confirmed' || o.status === 'preparing' || o.status === 'placed');
-  const readyOrders = orders.filter(o => o.status === 'ready');
+function renderQueueData(data) {
+  const preparingTickets = Array.isArray(data?.preparing) ? data.preparing : [];
+  const readyTickets = Array.isArray(data?.ready) ? data.ready : [];
 
   // Check for newly ready orders to trigger chime
   let hasNewReady = false;
-  readyOrders.forEach(o => {
-    const token = o.tokenNumber;
+  readyTickets.forEach(item => {
+    const token = item.token;
     if (token && !knownReadyTokens.has(token)) {
       knownReadyTokens.add(token);
       if (!isFirstLoad) {
@@ -139,7 +140,7 @@ function renderTokens(orders) {
   isFirstLoad = false;
 
   // Clean up departed ready tokens from set
-  const currentReadySet = new Set(readyOrders.map(o => o.tokenNumber));
+  const currentReadySet = new Set(readyTickets.map(item => item.token));
   for (const t of knownReadyTokens) {
     if (!currentReadySet.has(t)) {
       knownReadyTokens.delete(t);
@@ -147,52 +148,52 @@ function renderTokens(orders) {
   }
 
   // Update Counters
-  preparingCountEl.textContent = preparingOrders.length;
-  readyCountEl.textContent = readyOrders.length;
+  preparingCountEl.textContent = preparingTickets.length;
+  readyCountEl.textContent = readyTickets.length;
 
   // Render Preparing Grid
-  if (preparingOrders.length === 0) {
+  if (preparingTickets.length === 0) {
     preparingGrid.innerHTML = `
       <div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 1rem;">
         No tickets currently in kitchen queue
       </div>
     `;
   } else {
-    preparingGrid.innerHTML = preparingOrders.map(o => {
-      const isPriority = (o.priorityLevel || 0) >= 2;
-      const eta = o.estimatedMinutes || 6;
+    preparingGrid.innerHTML = preparingTickets.map(item => {
+      const etaLabel = typeof item.estimatedMinutes === 'number' && item.estimatedMinutes > 0
+        ? `Est. ~${item.estimatedMinutes}m`
+        : `Est. Pending`;
+
       return `
-        <div class="token-card preparing ${isPriority ? 'is-priority' : ''}">
-          ${isPriority ? '<div class="priority-crown">⭐️</div>' : ''}
-          <div class="token-number">${escapeHtml(o.tokenNumber || 'TB-???')}</div>
-          <div class="token-eta">Est. ~${eta}m</div>
+        <div class="token-card preparing">
+          <div class="token-number">${escapeHtml(item.token || 'TB-???')}</div>
+          <div class="token-eta">${etaLabel}</div>
         </div>
       `;
     }).join('');
   }
 
   // Render Ready Grid
-  if (readyOrders.length === 0) {
+  if (readyTickets.length === 0) {
     readyGrid.innerHTML = `
       <div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 1rem;">
         Ready orders will appear here
       </div>
     `;
   } else {
-    readyGrid.innerHTML = readyOrders.map(o => {
-      const isPriority = (o.priorityLevel || 0) >= 2;
+    readyGrid.innerHTML = readyTickets.map(item => {
       return `
-        <div class="token-card ready ${isPriority ? 'is-priority' : ''}">
-          ${isPriority ? '<div class="priority-crown">⭐️</div>' : ''}
-          <div class="token-number">${escapeHtml(o.tokenNumber || 'TB-???')}</div>
+        <div class="token-card ready">
+          <div class="token-number">${escapeHtml(item.token || 'TB-???')}</div>
           <div class="token-ready-label">COLLECT AT COUNTER</div>
         </div>
       `;
     }).join('');
   }
 
-  // Standby Overlay State: If total active orders is 0, show Standby Card
-  if (orders.length === 0) {
+  // Standby Overlay State: If total active count is 0, show Standby Card
+  const totalActive = preparingTickets.length + readyTickets.length;
+  if (totalActive === 0) {
     standbyOverlay.classList.remove('hidden');
   } else {
     standbyOverlay.classList.add('hidden');
@@ -200,51 +201,59 @@ function renderTokens(orders) {
 }
 
 /**
- * Resilient Firestore Listener with Auto-Reconnection
+ * Resilient Single-Document Firestore Listener with Clean Lifecycle and Exponential Backoff
  */
 function startTVStream() {
-  try {
-    const q = query(
-      collection(db, 'orders'),
-      where('status', 'in', ['confirmed', 'preparing', 'ready', 'placed'])
-    );
+  // Clean up any existing listener before creating a new one
+  if (currentUnsubscribe) {
+    try {
+      currentUnsubscribe();
+    } catch (_) {}
+    currentUnsubscribe = null;
+  }
 
-    onSnapshot(
-      q,
+  try {
+    const queueDocRef = doc(db, 'publicLiveQueue', 'current');
+
+    currentUnsubscribe = onSnapshot(
+      queueDocRef,
       (snapshot) => {
         // State 1: Live Stream Active
         statusPill.className = 'status-pill live';
         statusText.textContent = 'LIVE DISPATCH';
         reconnectBanner.classList.add('hidden');
+        
+        // Reset exponential backoff on healthy snapshot
+        reconnectDelayMs = 5000;
 
-        const orders = snapshot.docs.map(doc => ({
-          id: doc.id,
-          tokenNumber: doc.data().tokenNumber,
-          status: doc.data().status,
-          priorityLevel: doc.data().priorityLevel || 1,
-          estimatedMinutes: doc.data().estimatedMinutes || 6,
-          createdAt: doc.data().createdAt?.toDate?.() || new Date(),
-        }));
-
-        renderTokens(orders);
+        if (snapshot.exists()) {
+          renderQueueData(snapshot.data());
+        } else {
+          renderQueueData({ preparing: [], ready: [] });
+        }
       },
       (error) => {
-        // State 2: Reconnecting / Stale Data State (Graceful fallback)
-        console.warn("TV Stream Connection interrupted:", error);
+        // State 2: Reconnecting / Stale Data State
+        console.warn("TV Stream connection interrupted:", error);
         statusPill.className = 'status-pill reconnecting';
         statusText.textContent = 'RECONNECTING';
         reconnectBanner.classList.remove('hidden');
 
-        // Retry connection in 5 seconds
-        setTimeout(startTVStream, 5000);
+        // Exponential backoff
+        const nextDelay = reconnectDelayMs;
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
+        setTimeout(startTVStream, nextDelay);
       }
     );
   } catch (e) {
-    console.warn("TV Init error, retrying in 5s:", e);
+    console.warn("TV Init error:", e);
     statusPill.className = 'status-pill reconnecting';
     statusText.textContent = 'RECONNECTING';
     reconnectBanner.classList.remove('hidden');
-    setTimeout(startTVStream, 5000);
+    
+    const nextDelay = reconnectDelayMs;
+    reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
+    setTimeout(startTVStream, nextDelay);
   }
 }
 

@@ -9,6 +9,7 @@ import { assertOperationalMode } from './kill_switch';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { evaluateOrderPriorityLevel } from './priority_queue';
+import { updatePublicLiveQueueProjection } from './tv_projection';
 
 const db = admin.firestore();
 
@@ -124,7 +125,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   const itemRefs = consolidatedItems.map(i => db.collection('menuItems').doc(i.itemId));
 
   try {
-    return await db.runTransaction(async (transaction) => {
+    const checkoutResult = await db.runTransaction(async (transaction) => {
       // ═════════════════════════════════════════════════════════════
       // 1. ALL READS FIRST (Strict Transaction Invariant)
       // ═════════════════════════════════════════════════════════════
@@ -341,9 +342,13 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         },
         rawPin,
         signedQrPayload,
-        isReplay: false,
       };
     });
+
+    // Asynchronously synchronize the single ephemeral publicLiveQueue/current document
+    await updatePublicLiveQueueProjection(db);
+
+    return checkoutResult;
   } catch (error: any) {
     if (error.code === 'resource-exhausted') {
       await logSecurityEvent({

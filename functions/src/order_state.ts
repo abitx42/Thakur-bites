@@ -2,6 +2,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { OrderStatus, UserRole } from './types';
 import { enforceRateLimit } from './rate_limiter';
+import { updatePublicLiveQueueProjection } from './tv_projection';
 
 const db = admin.firestore();
 
@@ -47,7 +48,7 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
   const orderRef = db.collection('orders').doc(orderId);
   const now = admin.firestore.Timestamp.now();
 
-  return await db.runTransaction(async (transaction) => {
+  const stateResult = await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(orderRef);
     if (!snap.exists) {
       throw new HttpsError('not-found', `Order ${orderId} not found.`);
@@ -106,4 +107,9 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
 
     return { success: true, fromStatus: currentStatus, toStatus: nextStatus };
   });
+
+  // Asynchronously synchronize the single ephemeral publicLiveQueue/current document
+  await updatePublicLiveQueueProjection(db);
+
+  return stateResult;
 });

@@ -6,6 +6,7 @@ import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
+import { updatePublicLiveQueueProjection } from './tv_projection';
 
 const db = admin.firestore();
 
@@ -41,7 +42,7 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
   const secretRef = db.collection('orderSecrets').doc(orderId);
   const now = admin.firestore.Timestamp.now();
 
-  return await db.runTransaction(async (transaction) => {
+  const verifyResult = await db.runTransaction(async (transaction) => {
     const [orderSnap, secretSnap] = await Promise.all([
       transaction.get(orderRef),
       transaction.get(secretRef),
@@ -211,6 +212,11 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
       verificationMethod,
     };
   });
+
+  // Asynchronously synchronize the single ephemeral publicLiveQueue/current document
+  await updatePublicLiveQueueProjection(db);
+
+  return verifyResult;
 });
 
 /**
