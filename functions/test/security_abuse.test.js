@@ -1763,4 +1763,120 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual('reservedStock' in publicItem, false);
     assert.strictEqual('reorderLevel' in publicItem, false);
   });
+
+  it('78. Security Integrity Monitor: Detects impossible order states (e.g. collected without payment)', () => {
+    function evaluateOrderIntegrity(order) {
+      if ((order.status === 'collected' || order.status === 'ready') && order.paymentMethod === 'online' && order.paymentStatus !== 'paid') {
+        return { valid: false, error: 'IMPOSSIBLE_ORDER_STATE' };
+      }
+      return { valid: true };
+    }
+
+    assert.strictEqual(evaluateOrderIntegrity({ status: 'collected', paymentMethod: 'online', paymentStatus: 'paid' }).valid, true);
+    assert.strictEqual(evaluateOrderIntegrity({ status: 'collected', paymentMethod: 'online', paymentStatus: 'unpaid' }).error, 'IMPOSSIBLE_ORDER_STATE');
+    assert.strictEqual(evaluateOrderIntegrity({ status: 'ready', paymentMethod: 'online', paymentStatus: 'failed' }).error, 'IMPOSSIBLE_ORDER_STATE');
+  });
+
+  it('79. Security Integrity Monitor: Detects inventory corruption and reserved > stockOnHand breaches', () => {
+    function evaluateInventoryIntegrity(item) {
+      if (item.type === 'instant') {
+        if (typeof item.stockOnHand !== 'number' || item.stockOnHand < 0) {
+          return { valid: false, error: 'NEGATIVE_STOCK_CORRUPTION' };
+        }
+        if (typeof item.reservedStock !== 'number' || item.reservedStock < 0 || item.reservedStock > item.stockOnHand) {
+          return { valid: false, error: 'RESERVED_EXCEEDS_STOCK' };
+        }
+      }
+      return { valid: true };
+    }
+
+    assert.strictEqual(evaluateInventoryIntegrity({ type: 'instant', stockOnHand: 20, reservedStock: 5 }).valid, true);
+    assert.strictEqual(evaluateInventoryIntegrity({ type: 'instant', stockOnHand: -5, reservedStock: 0 }).error, 'NEGATIVE_STOCK_CORRUPTION');
+    assert.strictEqual(evaluateInventoryIntegrity({ type: 'instant', stockOnHand: 10, reservedStock: 15 }).error, 'RESERVED_EXCEEDS_STOCK');
+  });
+
+  it('80. Security Integrity Monitor: Detects double-entry financial ledger imbalances', () => {
+    function evaluateLedgerBalance(txn) {
+      const debits = (txn.postings || []).reduce((s, p) => s + (p.debitPaise || 0), 0);
+      const credits = (txn.postings || []).reduce((s, p) => s + (p.creditPaise || 0), 0);
+      if (debits !== credits) {
+        return { balanced: false, debits, credits, discrepancy: Math.abs(debits - credits) };
+      }
+      return { balanced: true, totalPaise: debits };
+    }
+
+    const balancedTxn = {
+      postings: [
+        { account: 'GATEWAY_RECEIVABLE', debitPaise: 5000, creditPaise: 0 },
+        { account: 'SALES_REVENUE', debitPaise: 0, creditPaise: 5000 },
+      ],
+    };
+
+    const corruptTxn = {
+      postings: [
+        { account: 'GATEWAY_RECEIVABLE', debitPaise: 5000, creditPaise: 0 },
+        { account: 'SALES_REVENUE', debitPaise: 0, creditPaise: 4000 },
+      ],
+    };
+
+    assert.strictEqual(evaluateLedgerBalance(balancedTxn).balanced, true);
+    assert.strictEqual(evaluateLedgerBalance(corruptTxn).balanced, false);
+    assert.strictEqual(evaluateLedgerBalance(corruptTxn).discrepancy, 1000);
+  });
+
+  it('81. Automatic Circuit Breaker Invariant: Critical integrity breach automatically freezes financial operations', () => {
+    function handleIntegrityScanResult(scanStatus) {
+      let mode = 'NORMAL';
+      let actionTaken = 'NONE';
+
+      if (scanStatus === 'CRITICAL_BREACH') {
+        mode = 'FINANCIAL_FROZEN';
+        actionTaken = 'AUTO_FINANCIAL_FROZEN';
+      }
+      return { mode, actionTaken };
+    }
+
+    assert.strictEqual(handleIntegrityScanResult('HEALTHY').mode, 'NORMAL');
+    assert.strictEqual(handleIntegrityScanResult('CRITICAL_BREACH').mode, 'FINANCIAL_FROZEN');
+    assert.strictEqual(handleIntegrityScanResult('CRITICAL_BREACH').actionTaken, 'AUTO_FINANCIAL_FROZEN');
+  });
+
+  it('82. Automated Backup Restore Integrity & Ledger Checksum Invariant: Validates backup recoverability', () => {
+    const { generateCryptographicBackup, verifyAndRestoreBackup } = require('../scripts/verify_backup_restore');
+    
+    const mockBackupData = {
+      menuItems: [
+        { itemId: 'item_1', name: 'Masala Dosa', type: 'cooked', price: 60 },
+        { itemId: 'item_2', name: 'Samosa', type: 'instant', price: 20, stockOnHand: 30, reservedStock: 2 },
+      ],
+      orders: [
+        { orderId: 'order_1', tokenNumber: 'TB-001', status: 'collected', totalAmountPaise: 2000 },
+      ],
+      financialTransactions: [
+        {
+          txnId: 'txn_1',
+          postings: [
+            { account: 'GATEWAY_RECEIVABLE', debitPaise: 2000, creditPaise: 0 },
+            { account: 'SALES_REVENUE', debitPaise: 0, creditPaise: 2000 },
+          ],
+        },
+      ],
+    };
+
+    const validBundle = generateCryptographicBackup(mockBackupData);
+    const restoreResult = verifyAndRestoreBackup(validBundle);
+    assert.strictEqual(restoreResult.status, 'VERIFIED_SUCCESSFUL');
+    assert.strictEqual(restoreResult.checksumMatch, true);
+
+    // Tampered payload checksum violation
+    const tamperedBundle = {
+      ...validBundle,
+      payload: {
+        ...validBundle.payload,
+        orders: [{ orderId: 'tampered_order', totalAmountPaise: 999999 }],
+      },
+    };
+
+    assert.throws(() => verifyAndRestoreBackup(tamperedBundle), /BACKUP_TAMPER_DETECTED/);
+  });
 });

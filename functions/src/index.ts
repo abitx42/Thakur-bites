@@ -24,3 +24,4 @@ export { provisionStudentProfile } from './students';
 export { setSystemOperationalMode } from './kill_switch';
 export { scheduledDailyReconciliation } from './reconciliation_cron';
 export { getKitchenOrders, getPickupOrders, getCashierOrders } from './operational_views';
+export { scheduledSecurityIntegrityMonitor, runSecurityIntegrityScan } from './integrity_monitor';
