@@ -14,6 +14,7 @@ export {
   recordCashPayment,
   handlePaymentWebhook,
   reconcileDailyLedger,
+  cancelOrExpirePaymentSession,
 } from './payments';
 export { processOrderRefund } from './refunds';
 export { adjustInventoryStock } from './inventory';

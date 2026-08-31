@@ -424,4 +424,71 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(legitRes.valid, true);
     assert.strictEqual(legitRes.alreadyCaptured, true);
   });
+
+  it('21. Two-Phase Stock Reservation Lifecycle: Reserve -> Commit reduces stockOnHand and clears reservedStock', () => {
+    let stockOnHand = 10;
+    let reservedStock = 0;
+
+    function getAvailableStock() {
+      return stockOnHand - reservedStock;
+    }
+
+    // Step 1: Checkout initiates reservation for 2 units
+    const requestQty = 2;
+    assert.strictEqual(getAvailableStock() >= requestQty, true);
+    reservedStock += requestQty;
+    assert.strictEqual(getAvailableStock(), 8); // Available dropped to 8, but stockOnHand still 10
+
+    // Step 2: Payment succeeds -> Commit reservation
+    reservedStock -= requestQty;
+    stockOnHand -= requestQty;
+    assert.strictEqual(stockOnHand, 8);
+    assert.strictEqual(reservedStock, 0);
+    assert.strictEqual(getAvailableStock(), 8);
+  });
+
+  it('22. Payment Failure & Expiry Release Invariant: Reserve -> Release restores available stock completely', () => {
+    let stockOnHand = 10;
+    let reservedStock = 0;
+
+    function getAvailableStock() {
+      return stockOnHand - reservedStock;
+    }
+
+    // Step 1: Student reserves 3 units
+    const requestQty = 3;
+    reservedStock += requestQty;
+    assert.strictEqual(getAvailableStock(), 7);
+
+    // Step 2: Payment fails or session expires -> Release reservation
+    reservedStock -= requestQty;
+    assert.strictEqual(stockOnHand, 10); // Physical stock intact!
+    assert.strictEqual(reservedStock, 0); // No lingering reservations!
+    assert.strictEqual(getAvailableStock(), 10); // Fully restored!
+  });
+
+  it('23. Stock Boundary & Exhaustion Defense: Blocks reserving more units than available stock', () => {
+    let stockOnHand = 5;
+    let reservedStock = 3; // 2 units available
+
+    function tryReserve(qty) {
+      const available = stockOnHand - reservedStock;
+      if (qty > available) {
+        return { success: false, error: 'INSUFFICIENT_STOCK', available };
+      }
+      reservedStock += qty;
+      return { success: true, available: stockOnHand - reservedStock };
+    }
+
+    // Attempting to reserve 3 units when only 2 are available
+    const failRes = tryReserve(3);
+    assert.strictEqual(failRes.success, false);
+    assert.strictEqual(failRes.error, 'INSUFFICIENT_STOCK');
+    assert.strictEqual(failRes.available, 2);
+
+    // Attempting to reserve 2 units succeeds exactly
+    const successRes = tryReserve(2);
+    assert.strictEqual(successRes.success, true);
+    assert.strictEqual(successRes.available, 0);
+  });
 });

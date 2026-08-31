@@ -1,5 +1,6 @@
 import * as admin from 'firebase-admin';
 import { PaymentRecord, FinancialTransactionRecord } from './types';
+import { commitInventoryInTransaction } from './inventory_reservation';
 
 const db = admin.firestore();
 
@@ -167,7 +168,10 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     };
     transaction.set(finTxRef, finRecord);
 
-    // 7. Update order state machine: payment_pending -> confirmed
+    // 7. Commit inventory reservation (Phase 2 Two-Phase Inventory Lifecycle)
+    await commitInventoryInTransaction(transaction, db, orderId, actorId);
+
+    // 8. Update order state machine: payment_pending -> confirmed
     transaction.update(orderRef, {
       paymentStatus: 'paid',
       status: 'confirmed',

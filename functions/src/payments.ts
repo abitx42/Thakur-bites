@@ -11,6 +11,7 @@ import {
 import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
 import { finalizeSuccessfulPayment } from './payment_finalize';
+import { releaseInventoryInTransaction } from './inventory_reservation';
 
 const db = admin.firestore();
 
@@ -438,3 +439,76 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
 
   return reconciliation;
 }
+
+/**
+ * 6. Cancel or Expire Payment Session & Automatically Release Inventory Reservation (Phase 2 Hardened)
+ */
+export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: string }>(async (request) => {
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { orderId, reason = 'PAYMENT_SESSION_CANCELLED' } = request.data;
+  if (!orderId) {
+    throw new HttpsError('invalid-argument', 'orderId is required.');
+  }
+
+  const orderRef = db.collection('orders').doc(orderId);
+  const now = admin.firestore.Timestamp.now();
+
+  return await db.runTransaction(async (transaction) => {
+    const orderSnap = await transaction.get(orderRef);
+    if (!orderSnap.exists) {
+      throw new HttpsError('not-found', 'Order not found.');
+    }
+
+    const orderData = orderSnap.data()!;
+    const isOwner = orderData.studentId === request.auth!.uid;
+    const actorRole = (request.auth!.token.role as UserRole) || 'student';
+    const isStaff = actorRole === 'manager' || actorRole === 'admin' || actorRole === 'security_admin';
+
+    if (!isOwner && !isStaff) {
+      throw new HttpsError('permission-denied', 'Only order owner or staff can cancel payment session.');
+    }
+
+    if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
+      throw new HttpsError('failed-precondition', 'Cannot cancel a payment session for an already paid order.');
+    }
+
+    if (orderData.status === 'cancelled') {
+      return { success: true, alreadyCancelled: true, orderId };
+    }
+
+    // 1. Release Inventory Reservation (Phase 2 Invariant: Releases stock back to available pool)
+    await releaseInventoryInTransaction(transaction, db, orderId, reason, request.auth!.uid);
+
+    // 2. Update order state
+    transaction.update(orderRef, {
+      status: 'cancelled',
+      paymentStatus: 'unpaid',
+      cancelledAt: now,
+      cancellationReason: reason,
+      cancelledBy: request.auth!.uid,
+      updatedAt: now,
+    });
+
+    // 3. Log order event
+    const eventRef = db.collection('orderEvents').doc();
+    transaction.set(eventRef, {
+      orderId,
+      fromStatus: orderData.status || 'payment_pending',
+      toStatus: 'cancelled',
+      actorId: request.auth!.uid,
+      actorRole,
+      timestamp: now,
+      reason,
+    });
+
+    return {
+      success: true,
+      alreadyCancelled: false,
+      orderId,
+      status: 'cancelled',
+    };
+  });
+});

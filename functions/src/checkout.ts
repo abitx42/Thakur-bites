@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { CheckoutRequest, OrderDocument, OrderItemSnapshot } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
+import { reserveInventoryInTransaction, commitInventoryInTransaction } from './inventory_reservation';
 
 const db = admin.firestore();
 
@@ -203,32 +204,18 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       // 4. ALL WRITES AFTER READS
       // ═════════════════════════════════════════════════════════════
 
-      // a. Decrement instant store items
-      for (let i = 0; i < consolidatedItems.length; i++) {
-        const req = consolidatedItems[i];
-        const snap = itemSnapshots[i];
-        const menuData = snap.data()!;
-        if (menuData.type === 'instant') {
-          const currentStock = Math.max(0, Number(menuData.stockCount || 0));
-          const newStock = Math.max(0, currentStock - req.quantity);
-          transaction.update(itemRefs[i], {
-            stockCount: newStock,
-            available: newStock > 0,
-          });
+      // a. Reserve instant store items (Phase 2 Two-Phase Inventory Lifecycle)
+      await reserveInventoryInTransaction(
+        transaction,
+        db,
+        newOrderRef.id,
+        studentId,
+        consolidatedItems,
+        15 // 15-minute reservation TTL
+      );
 
-          // Write to append-only inventoryLedger
-          const ledgerRef = db.collection('inventoryLedger').doc();
-          transaction.set(ledgerRef, {
-            itemId: req.itemId,
-            orderId: newOrderRef.id,
-            changeType: 'CHECKOUT_RESERVE',
-            deltaUnits: -req.quantity,
-            previousAvailable: currentStock,
-            newAvailable: newStock,
-            actorId: studentId,
-            timestamp: now,
-          });
-        }
+      if (isCounterCash) {
+        await commitInventoryInTransaction(transaction, db, newOrderRef.id, studentId);
       }
 
       // b. Update sequence counter
