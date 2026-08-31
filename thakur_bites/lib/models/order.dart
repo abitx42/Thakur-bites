@@ -76,7 +76,7 @@ class Order {
     return Order(
       id: docId,
       tokenNumber: data['tokenNumber'] ?? '',
-      pinCode: data['pinCode'] ?? '',
+      pinCode: data['pinCode'] ?? data['pickupPin'] ?? '',
       studentId: data['studentId'],
       studentName: data['studentName'],
       studentRoll: data['studentRoll'],
@@ -84,7 +84,7 @@ class Order {
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       readyAt: (data['readyAt'] as Timestamp?)?.toDate(),
       estimatedMinutes: data['estimatedMinutes'] ?? 0,
-      totalAmount: (data['totalAmount'] ?? 0).toDouble(),
+      totalAmount: (data['totalAmount'] as num?)?.toDouble() ?? 0.0,
       items: (data['items'] as List<dynamic>?)
               ?.map((item) => OrderItem.fromMap(item as Map<String, dynamic>))
               .toList() ??

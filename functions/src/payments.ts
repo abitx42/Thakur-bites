@@ -85,12 +85,18 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
   }
 
   const expectedSignature = computeGatewaySignature(gatewayOrderId, gatewayPaymentId);
+  const cleanSignature = typeof gatewaySignature === 'string' ? gatewaySignature.trim() : '';
 
-  // Timing-safe buffer comparison to prevent timing attacks
-  const expectedBuf = Buffer.from(expectedSignature, 'utf8');
-  const actualBuf = Buffer.from(gatewaySignature, 'utf8');
-
-  const isValid = expectedBuf.length === actualBuf.length && crypto.timingSafeEqual(expectedBuf, actualBuf);
+  let isValid = false;
+  try {
+    const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+    const actualBuf = Buffer.from(cleanSignature, 'utf8');
+    if (expectedBuf.length === actualBuf.length) {
+      isValid = crypto.timingSafeEqual(expectedBuf, actualBuf);
+    }
+  } catch (_) {
+    isValid = false;
+  }
 
   const now = admin.firestore.Timestamp.now();
   const orderRef = db.collection('orders').doc(orderId);

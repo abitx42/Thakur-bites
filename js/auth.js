@@ -51,6 +51,21 @@ export const staffAuth = {
     }
   },
 
+  async refreshToken() {
+    if (currentStaffState.user) {
+      try {
+        const tokenResult = await currentStaffState.user.getIdTokenResult(true);
+        const role = tokenResult.claims.role || currentStaffState.role || 'manager';
+        currentStaffState.role = role;
+        sessionStorage.setItem('tb_staff_role', role);
+        return role;
+      } catch (e) {
+        console.warn("Token refresh warning:", e);
+      }
+    }
+    return currentStaffState.role;
+  },
+
   async logout() {
     await staffLogout();
     currentStaffState = { user: null, role: null, isAuthenticated: false };

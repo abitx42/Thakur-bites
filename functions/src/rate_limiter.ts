@@ -17,6 +17,7 @@ export const ENDPOINT_LIMITS: Record<string, RateLimitConfig> = {
 
 /**
  * Checks and updates sliding window rate limit for an actor on a specific endpoint.
+ * Fix 7: Adds expireAt TTL timestamp and array pruning to prevent unbounded document accumulation.
  */
 export async function enforceRateLimit(actorId: string, endpoint: string): Promise<void> {
   const config = ENDPOINT_LIMITS[endpoint] || { maxRequests: 30, windowSeconds: 60 };
@@ -40,11 +41,14 @@ export async function enforceRateLimit(actorId: string, endpoint: string): Promi
     }
 
     timestamps.push(now);
+    const expireAt = admin.firestore.Timestamp.fromMillis(now + config.windowSeconds * 2000);
+
     transaction.set(rateLimitRef, {
       actorId,
       endpoint,
       timestamps,
       lastUpdatedAt: admin.firestore.Timestamp.now(),
+      expireAt,
     });
 
     return true;

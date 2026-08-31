@@ -1,18 +1,26 @@
 // Big Screen TV Token Board View for Canteen Wall Display connected to live Firestore
-import { subscribeOrders } from '../firebase.js';
+import { subscribeOrders } from '../firebase.js?v=4';
+import { escapeHtml } from './escapeHtml.js';
 
 let unsubscribeOrders = null;
 let currentOrders = [];
+let clockInterval = null;
 
 export function renderTvDisplayView(container) {
   if (unsubscribeOrders) {
     unsubscribeOrders();
   }
+  if (clockInterval) {
+    clearInterval(clockInterval);
+  }
+
+  function getFormattedTime() {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
 
   function render() {
     const readyOrders = currentOrders.filter(o => o.status === 'ready');
     const prepOrders = currentOrders.filter(o => o.status === 'preparing' || o.status === 'placed');
-    const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     container.innerHTML = `
       <div style="padding: 1.5rem; max-width: 1600px; margin: 0 auto;">
@@ -33,8 +41,8 @@ export function renderTvDisplayView(container) {
 
             <div style="display: flex; align-items: center; gap: 1.5rem;">
               <div style="text-align: right;">
-                <div style="font-family: var(--font-mono); font-size: 2.25rem; font-weight: 700; color: #EFA727; line-height: 1;">
-                  ${currentTime}
+                <div id="tv-live-clock" style="font-family: var(--font-mono); font-size: 2.25rem; font-weight: 700; color: #EFA727; line-height: 1;">
+                  ${getFormattedTime()}
                 </div>
                 <div style="font-family: var(--font-mono); font-size: 0.75rem; color: #71717A; text-transform: uppercase; margin-top: 2px;">
                   CAMPUS LIVE TIME
@@ -61,7 +69,7 @@ export function renderTvDisplayView(container) {
                 ` : readyOrders.map(o => `
                   <div style="background: #14532D; border: 2.5px solid #22C55E; border-radius: 14px; padding: 1.4rem 1rem; text-align: center; box-shadow: 0 0 25px rgba(34,197,94,0.35);">
                     <div style="font-family: var(--font-mono); font-size: 2.6rem; font-weight: 900; color: #4ADE80; line-height: 1;">
-                      ${o.tokenNumber}
+                      ${escapeHtml(o.tokenNumber)}
                     </div>
                     <div style="font-family: var(--font-mono); font-size: 0.8rem; color: #BBF7D0; margin-top: 8px; font-weight: 700; letter-spacing: 0.05em;">
                       COLLECT NOW 🟢
@@ -86,7 +94,7 @@ export function renderTvDisplayView(container) {
                 ` : prepOrders.map(o => `
                   <div style="background: #18181B; border: 1.5px solid #3F3F46; border-radius: 14px; padding: 1.4rem 1rem; text-align: center;">
                     <div style="font-family: var(--font-mono); font-size: 2.6rem; font-weight: 700; color: #E4E4E7; line-height: 1;">
-                      ${o.tokenNumber}
+                      ${escapeHtml(o.tokenNumber)}
                     </div>
                     <div style="font-family: var(--font-mono); font-size: 0.8rem; color: #A1A1AA; margin-top: 8px;">
                       ${o.status === 'preparing' ? 'Cooking 🔥' : 'In Queue ⏳'}
@@ -101,6 +109,14 @@ export function renderTvDisplayView(container) {
       </div>
     `;
   }
+
+  // Fix 8: Independent 1-second clock updater
+  clockInterval = setInterval(() => {
+    const clockEl = container.querySelector('#tv-live-clock');
+    if (clockEl) {
+      clockEl.textContent = getFormattedTime();
+    }
+  }, 1000);
 
   unsubscribeOrders = subscribeOrders((orders) => {
     currentOrders = orders;

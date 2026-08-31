@@ -87,6 +87,30 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                     );
                   }
 
+                  if (snapshot.connectionState != ConnectionState.waiting && snapshot.data == null && widget.initialOrder == null) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.cancel_outlined, size: 48, color: AppColors.red),
+                            const SizedBox(height: 12),
+                            Text('Order Cancelled or Inactive', style: AppFonts.display(fontSize: 18)),
+                            const SizedBox(height: 8),
+                            Text('This order is no longer active in the system.', style: AppFonts.body(fontSize: 13, color: AppColors.inkSoft)),
+                            const SizedBox(height: 16),
+                            ElevatedButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              style: ElevatedButton.styleFrom(backgroundColor: AppColors.red, foregroundColor: Colors.white),
+                              child: const Text('Back to Menu'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+
                   final order = snapshot.data ?? widget.initialOrder;
                   if (order == null) {
                     return Center(

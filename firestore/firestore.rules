@@ -47,6 +47,13 @@ service cloud.firestore {
       allow read, write: if isOwner(studentId);
     }
 
+    // ─── Student Feedback & Ratings (Fix 12) ─────────────────────
+    match /ratings/{ratingId} {
+      allow create: if isAuthenticated() && request.resource.data.studentId == request.auth.uid;
+      allow read: if isStaff() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
+      allow update, delete: if false;
+    }
+
     // ─── Staff Users (RBAC Records) ─────────────────────────────
     // Staff profiles managed exclusively via admin Cloud Functions.
     match /staffUsers/{userId} {

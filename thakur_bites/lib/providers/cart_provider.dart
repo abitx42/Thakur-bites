@@ -62,12 +62,19 @@ class CartProvider extends ChangeNotifier {
   int get totalItemCount =>
       _entries.values.fold(0, (sum, e) => sum + e.qty);
 
-  double get totalPrice =>
-      _entries.values.fold(0.0, (sum, e) => sum + e.subtotal);
+  static const int maxQuantityPerItem = 99;
 
-  double get availableTotalPrice => _entries.values
-      .where((e) => e.isAvailable)
-      .fold(0.0, (sum, e) => sum + e.subtotal);
+  double get totalPrice {
+    final raw = _entries.values.fold(0.0, (sum, e) => sum + e.subtotal);
+    return double.parse(raw.toStringAsFixed(2));
+  }
+
+  double get availableTotalPrice {
+    final raw = _entries.values
+        .where((e) => e.isAvailable)
+        .fold(0.0, (sum, e) => sum + e.subtotal);
+    return double.parse(raw.toStringAsFixed(2));
+  }
 
   bool get isEmpty => _entries.isEmpty;
   bool get isNotEmpty => _entries.isNotEmpty;
@@ -104,13 +111,14 @@ class CartProvider extends ChangeNotifier {
 
   // ─── Mutations ────────────────────────────────────────────────
 
-  /// Add one of this item to cart. Cart is a wishlist — no stock limits enforced here.
-  /// Only blocks items that are completely marked unavailable (staff toggled off).
+  /// Add one of this item to cart. Cart is a wishlist — bounded to 99 items per entry.
   void addItem(MenuItem item) {
     if (!item.isInStock) return; // Only block completely unavailable items
 
     if (_entries.containsKey(item.id)) {
-      _entries[item.id]!.qty++;
+      if (_entries[item.id]!.qty < maxQuantityPerItem) {
+        _entries[item.id]!.qty++;
+      }
     } else {
       _entries[item.id] = CartEntry(item: item);
     }
@@ -127,15 +135,16 @@ class CartProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Set exact quantity for an item (removes if qty <= 0)
+  /// Set exact quantity for an item (removes if qty <= 0, capped at maxQuantityPerItem)
   void setQty(MenuItem item, int qty) {
     if (qty <= 0) {
       _entries.remove(item.id);
     } else {
+      final safeQty = qty.clamp(1, maxQuantityPerItem);
       if (_entries.containsKey(item.id)) {
-        _entries[item.id]!.qty = qty;
+        _entries[item.id]!.qty = safeQty;
       } else {
-        _entries[item.id] = CartEntry(item: item, qty: qty);
+        _entries[item.id] = CartEntry(item: item, qty: safeQty);
       }
     }
     notifyListeners();

@@ -1,5 +1,6 @@
-// Phase 10 — Counter Pickup & Dispatch View (Automatic Live Queue with Side Collected Action)
-import { subscribeOrders, updateOrderStatus } from '../firebase.js';
+// Phase 10 — Counter Pickup & Dispatch View (Automatic Live Queue with Exact PIN & XSS Sanitization)
+import { subscribeOrders, updateOrderStatus } from '../firebase.js?v=4';
+import { escapeHtml } from './escapeHtml.js';
 
 let unsubscribeOrders = null;
 let currentOrders = [];
@@ -20,12 +21,13 @@ export function renderPickupView(container) {
 
     // Split active into Ready (top priority) and In-Kitchen/Placed
     const readyOrders = activeOrders.filter(o => o.status === 'ready');
-    const kitchenOrders = activeOrders.filter(o => o.status === 'preparing' || o.status === 'placed');
+    const kitchenOrders = activeOrders.filter(o => o.status === 'preparing' || o.status === 'placed' || o.status === 'confirmed');
 
-    // Apply search filter if typed
+    // Fix 13: Exact PIN prefix / token search filter
     const filterFn = (order) => {
       if (!cleanSearch) return true;
-      const pinMatch = order.pinCode && order.pinCode.toString().includes(cleanSearch);
+      const pin = order.pinCode ? order.pinCode.toString() : '';
+      const pinMatch = cleanSearch.length === 4 ? pin === cleanSearch : pin.startsWith(cleanSearch);
       const tokenMatch = order.tokenNumber && order.tokenNumber.toString().toLowerCase().replace('#', '').includes(cleanSearch);
       const nameMatch = order.studentName && order.studentName.toLowerCase().includes(cleanSearch);
       const rollMatch = order.studentRoll && order.studentRoll.toLowerCase().includes(cleanSearch);
@@ -85,7 +87,7 @@ export function renderPickupView(container) {
             type="text" 
             id="pickup-filter-input" 
             placeholder="Filter by Token #, PIN, or Student Name (optional)..." 
-            value="${searchFilter}"
+            value="${escapeHtml(searchFilter)}"
             style="flex: 1; border: none; outline: none; font-family: var(--font-mono); font-size: 1rem; font-weight: 600; color: var(--ink-primary); background: transparent;"
           />
           ${searchFilter ? `
@@ -95,9 +97,7 @@ export function renderPickupView(container) {
           ` : ''}
         </div>
 
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- SECTION 1: READY FOR PICKUP (PRIMARY QUEUE)                -->
-        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 1: READY FOR PICKUP (PRIMARY QUEUE) -->
         <div style="margin-bottom: 2rem;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8rem;">
             <h3 style="font-family: var(--font-display); font-size: 1.4rem; color: #166534; margin: 0; display: flex; align-items: center; gap: 8px;">
@@ -125,19 +125,19 @@ export function renderPickupView(container) {
                 <div style="display: flex; align-items: center; gap: 1.2rem; min-width: 220px;">
                   <div style="background: #DCFCE7; border: 2px solid #22C55E; border-radius: 12px; padding: 8px 16px; text-align: center;">
                     <div style="font-family: var(--font-mono); font-size: 2.4rem; font-weight: 900; color: #15803D; line-height: 1;">
-                      ${order.tokenNumber || '#---'}
+                      ${escapeHtml(order.tokenNumber || '#---')}
                     </div>
                     <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #166534; margin-top: 4px; letter-spacing: 0.05em;">
-                      PIN: ${order.pinCode || '----'}
+                      PIN: ${escapeHtml(order.pinCode || '----')}
                     </div>
                   </div>
 
                   <div>
                     <div style="font-family: var(--font-sans); font-size: 1.15rem; font-weight: 800; color: var(--ink-primary);">
-                      👤 ${order.studentName || 'Student (Walk-in)'}
+                      👤 ${escapeHtml(order.studentName || 'Student (Walk-in)')}
                     </div>
                     <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 2px;">
-                      Roll: <strong style="color: var(--ink-primary);">${order.studentRoll || 'N/A'}</strong> · ${formatTime(order.createdAtDate)}
+                      Roll: <strong style="color: var(--ink-primary);">${escapeHtml(order.studentRoll || 'N/A')}</strong> · ${formatTime(order.createdAt)}
                     </div>
                     <div style="margin-top: 4px;">
                       <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; background: #22C55E; color: #FFF; padding: 2px 8px; border-radius: 999px;">
@@ -150,14 +150,14 @@ export function renderPickupView(container) {
                 <!-- Center: Order Dishes Checklist -->
                 <div style="flex: 1; min-width: 260px; background: #FFF; border: 1.5px solid #BBF7D0; border-radius: 10px; padding: 0.9rem 1.1rem;">
                   <div style="font-family: var(--font-mono); font-size: 1.05rem; font-weight: 800; color: var(--ink-primary); line-height: 1.4;">
-                    ${(order.items || []).map(i => `<span style="display: inline-block; background: #F0FDF4; padding: 2px 8px; border-radius: 6px; margin: 2px 4px 2px 0; border: 1px solid #DCFCE7;">${i.quantity}x ${i.name}</span>`).join('')}
+                    ${(order.items || []).map(i => `<span style="display: inline-block; background: #F0FDF4; padding: 2px 8px; border-radius: 6px; margin: 2px 4px 2px 0; border: 1px solid #DCFCE7;">${escapeHtml(i.quantity)}x ${escapeHtml(i.name)}</span>`).join('')}
                   </div>
                   <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #DCFCE7;">
                     <span style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--ink-secondary);">
                       ${(order.items || []).length} item(s)
                     </span>
                     <span style="font-family: var(--font-mono); font-size: 1rem; font-weight: 800; color: var(--ink-primary);">
-                      Total: ₹${order.totalAmount}
+                      Total: ₹${escapeHtml(order.totalAmount)}
                     </span>
                   </div>
                 </div>
@@ -180,18 +180,13 @@ export function renderPickupView(container) {
           </div>
         </div>
 
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- SECTION 2: IN-KITCHEN / PREPARING QUEUE                    -->
-        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 2: IN-KITCHEN / PREPARING QUEUE -->
         <div style="margin-bottom: 2rem;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8rem;">
             <h3 style="font-family: var(--font-display); font-size: 1.3rem; color: #B45309; margin: 0; display: flex; align-items: center; gap: 8px;">
               <span>⏳</span>
               <span>IN-KITCHEN & INCOMING ORDERS (${displayKitchen.length})</span>
             </h3>
-            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary);">
-              Being prepared / instant handovers
-            </span>
           </div>
 
           <div style="display: flex; flex-direction: column; gap: 0.8rem;">
@@ -202,45 +197,36 @@ export function renderPickupView(container) {
             ` : displayKitchen.map(order => `
               <div class="pickup-card kitchen-card" style="background: #FFFDF7; border: 1.5px solid #FDE68A; border-radius: 12px; padding: 1rem 1.2rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
                 
-                <!-- Left: Token & PIN -->
                 <div style="display: flex; align-items: center; gap: 1rem; min-width: 200px;">
                   <div style="background: #FEF3C7; border: 1.5px solid #FCD34D; border-radius: 10px; padding: 6px 12px; text-align: center;">
                     <div style="font-family: var(--font-mono); font-size: 1.8rem; font-weight: 800; color: #B45309; line-height: 1;">
-                      ${order.tokenNumber || '#---'}
+                      ${escapeHtml(order.tokenNumber || '#---')}
                     </div>
                     <div style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: #92400E; margin-top: 2px;">
-                      PIN: ${order.pinCode}
+                      PIN: ${escapeHtml(order.pinCode)}
                     </div>
                   </div>
 
                   <div>
                     <div style="font-family: var(--font-sans); font-size: 1rem; font-weight: 700; color: var(--ink-primary);">
-                      👤 ${order.studentName || 'Student'}
+                      👤 ${escapeHtml(order.studentName || 'Student')}
                     </div>
                     <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary);">
-                      Roll: ${order.studentRoll || 'N/A'} · ${formatTime(order.createdAtDate)}
-                    </div>
-                    <div style="margin-top: 3px;">
-                      <span style="font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700; background: #FEF3C7; color: #92400E; padding: 1px 6px; border-radius: 4px;">
-                        ${order.status === 'preparing' ? '🔥 PREPARING' : '⏳ PLACED'}
-                      </span>
+                      Roll: ${escapeHtml(order.studentRoll || 'N/A')} · ${formatTime(order.createdAt)}
                     </div>
                   </div>
                 </div>
 
-                <!-- Center: Dishes -->
                 <div style="flex: 1; min-width: 240px; font-family: var(--font-mono); font-size: 0.9rem; font-weight: 700; color: var(--ink-primary);">
-                  ${(order.items || []).map(i => `${i.quantity}x ${i.name}`).join(' · ')}
+                  ${(order.items || []).map(i => `${escapeHtml(i.quantity)}x ${escapeHtml(i.name)}`).join(' · ')}
                 </div>
 
-                <!-- Right: Quick Collect button -->
                 <div>
                   <button 
                     class="collect-action-btn" 
                     data-order-id="${order.id}"
                     data-token="${order.tokenNumber}"
-                    style="padding: 10px 18px; border-radius: 8px; border: 1.5px solid #F59E0B; background: #FEF3C7; color: #92400E; font-family: var(--font-sans); font-size: 0.9rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;"
-                    title="Direct handover for instant snacks/drinks"
+                    style="padding: 10px 18px; border-radius: 8px; border: 1.5px solid #F59E0B; background: #FEF3C7; color: #92400E; font-family: var(--font-sans); font-size: 0.9rem; font-weight: 700; cursor: pointer;"
                   >
                     <span>✓</span>
                     <span>Quick Collect</span>
@@ -252,9 +238,7 @@ export function renderPickupView(container) {
           </div>
         </div>
 
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- SECTION 3: COLLECTED HISTORY (COLLAPSIBLE)                  -->
-        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 3: COLLECTED HISTORY -->
         <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 12px; padding: 1.2rem;">
           <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" id="toggle-history-btn">
             <h4 style="font-family: var(--font-display); font-size: 1.2rem; margin: 0; color: var(--ink-secondary); display: flex; align-items: center; gap: 8px;">
@@ -273,8 +257,8 @@ export function renderPickupView(container) {
               ` : displayCollected.map(o => `
                 <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: var(--bg-surface); border-radius: 8px; font-family: var(--font-mono); font-size: 0.85rem;">
                   <div>
-                    <strong style="color: var(--ink-primary); font-size: 1rem;">${o.tokenNumber}</strong>
-                    <span style="color: var(--ink-secondary); margin-left: 8px;">PIN: ${o.pinCode} · 👤 ${o.studentName || 'Student'} (${o.studentRoll || 'N/A'})</span>
+                    <strong style="color: var(--ink-primary); font-size: 1rem;">${escapeHtml(o.tokenNumber)}</strong>
+                    <span style="color: var(--ink-secondary); margin-left: 8px;">PIN: ${escapeHtml(o.pinCode)} · 👤 ${escapeHtml(o.studentName || 'Student')}</span>
                   </div>
                   <span style="color: #16A34A; font-weight: 700;">✓ Handed Over</span>
                 </div>
@@ -316,7 +300,6 @@ export function renderPickupView(container) {
       });
     }
 
-    // Side Collected Action Buttons
     container.querySelectorAll('.collect-action-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const orderId = btn.getAttribute('data-order-id');
@@ -336,5 +319,5 @@ export function renderPickupView(container) {
 
 function formatTime(date) {
   if (!date) return '';
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return new Date(date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }

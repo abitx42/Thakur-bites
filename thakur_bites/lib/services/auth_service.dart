@@ -43,9 +43,11 @@ class AuthService {
       throw Exception('Failed to create student account.');
     }
 
-    final isCollegeDomain = cleanEmail.endsWith('@thakureducation.org') ||
-        cleanEmail.endsWith('@tcetmumbai.in') ||
-        cleanEmail.endsWith('.edu.in');
+    final domain = cleanEmail.contains('@') ? cleanEmail.split('@').last : '';
+    final isCollegeDomain = domain == 'thakureducation.org' ||
+        domain == 'tcetmumbai.in' ||
+        domain.endsWith('.tcetmumbai.in') ||
+        domain.endsWith('.thakureducation.org');
 
     final student = Student(
       uid: user.uid,

@@ -8,6 +8,7 @@ const db = admin.firestore();
 
 /**
  * Validates 4-digit PIN / QR hash and marks the order collected idempotently.
+ * Fix 6: Protects against PIN brute-forcing with per-order lockout.
  */
 export const verifyPickup = onCall<{ orderId: string; pinCode: string }>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -40,25 +41,47 @@ export const verifyPickup = onCall<{ orderId: string; pinCode: string }>(async (
       return { success: true, alreadyCollected: true, message: 'Order has already been collected.' };
     }
 
+    // Check if order is locked due to excessive PIN failures
+    if (orderData.isLockedForInvestigation || (orderData.failedPinAttempts || 0) >= 3) {
+      throw new HttpsError('permission-denied', 'Order is locked due to repeated PIN failures. Manager verification required.');
+    }
+
     if (orderData.status !== 'ready' && orderData.status !== 'confirmed' && orderData.status !== 'preparing') {
       throw new HttpsError('failed-precondition', `Order is currently in status: ${orderData.status}.`);
     }
 
     // Verify PIN or hash match
-    const inputHash = crypto.createHash('sha256').update(pinCode.trim()).digest('hex');
-    const isPinMatch = orderData.pickupPin === pinCode.trim() || orderData.pickupPinHash === inputHash;
+    const cleanPin = pinCode.trim();
+    const inputHash = crypto.createHash('sha256').update(cleanPin).digest('hex');
+    const isPinMatch = orderData.pickupPin === cleanPin || orderData.pickupPinHash === inputHash;
 
     if (!isPinMatch) {
-      // Record failed attempt
+      const attempts = (orderData.failedPinAttempts || 0) + 1;
+      const isLocked = attempts >= 3;
+
+      transaction.update(orderRef, {
+        failedPinAttempts: attempts,
+        isLockedForInvestigation: isLocked,
+        lastFailedPinAt: now,
+      });
+
+      // Record security event
       const secRef = db.collection('securityEvents').doc();
       transaction.set(secRef, {
-        eventType: 'FAILED_PICKUP_VERIFICATION',
+        eventType: isLocked ? 'ORDER_PIN_BRUTEFORCE_LOCKOUT' : 'FAILED_PICKUP_VERIFICATION',
         orderId,
         actorUid: request.auth!.uid,
+        attemptNumber: attempts,
+        severity: isLocked ? 'critical' : 'warn',
         timestamp: now,
       });
 
-      throw new HttpsError('permission-denied', 'Incorrect pickup PIN/QR code.');
+      throw new HttpsError(
+        'permission-denied',
+        isLocked
+          ? 'Incorrect PIN. Order locked for security. Please present physical ID.'
+          : `Incorrect pickup PIN (${3 - attempts} attempt(s) remaining).`
+      );
     }
 
     transaction.update(orderRef, {
@@ -66,6 +89,7 @@ export const verifyPickup = onCall<{ orderId: string; pinCode: string }>(async (
       collectedAt: now,
       collectedByStaffId: request.auth!.uid,
       verificationMethod: 'PIN',
+      failedPinAttempts: 0,
       updatedAt: now,
     });
 
