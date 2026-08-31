@@ -42,6 +42,11 @@ export {
   getOwnerBusinessMetrics,
   updateOwnerFeatureFlags,
 } from './owner_console';
+export {
+  getDeveloperTelemetry,
+  simulatePermissionCheck,
+} from './developer_cockpit';
+
 
 
 

@@ -1,6 +1,6 @@
-// Staff Operations Security Center & Audit Stream View (Stage 3.0 Hardened)
+// Thakur Bites Platform 2.0 — Developer Command Cockpit & Security Center
 import { db } from '../firebase.js?v=4';
-import { collection, onSnapshot, query, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { collection, onSnapshot, query, limit, orderBy } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 
 let unsubscribeSecurity = null;
@@ -8,6 +8,8 @@ let currentEvents = [];
 let severityFilter = 'all';
 let scanRunning = false;
 let lastScanResult = null;
+let simulationResult = null;
+let simRunning = false;
 
 export function renderSecurityCenterView(container) {
   if (unsubscribeSecurity) {
@@ -34,28 +36,28 @@ export function renderSecurityCenterView(container) {
     }).length;
 
     container.innerHTML = `
-      <div class="main-wrapper" style="max-width: 1200px; margin: 0 auto; padding: 1.5rem 1rem;">
+      <div class="main-wrapper" style="max-width: 1300px; margin: 0 auto; padding: 1.5rem 1rem;">
         
-        <!-- Top Security Bar -->
+        <!-- Top Security Header -->
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
           <div>
             <div style="display: flex; align-items: center; gap: 10px;">
               <h2 style="font-family: var(--font-display); font-size: 2.2rem; letter-spacing: 0.05em; margin: 0; line-height: 1;">
-                SECURITY & AUDIT OPERATIONS CENTER
+                DEVELOPER COMMAND COCKPIT & SECURITY
               </h2>
               <span style="background: #16A34A; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 999px;">
-                ● ACTIVE SENTINEL 3.0
+                ● SENTINEL 2.0 HARDENED
               </span>
             </div>
             <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
-              Live stream of deterministic security telemetry, rate-limit triggers, fail-closed assertions, and continuous integrity monitor states.
+              Real-time attack telemetry, RBAC permission simulator, and continuous 15-point invariant scanner.
             </p>
           </div>
 
           <!-- Stat Badges & Integrity Action -->
           <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             <button id="run-scan-btn" ${scanRunning ? 'disabled' : ''} style="background: #0F172A; color: #FFF; border: none; padding: 10px 16px; border-radius: 10px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px;">
-              ${scanRunning ? '⏳ SCANNING...' : '🔍 RUN INTEGRITY SCAN'}
+              ${scanRunning ? '⏳ SCANNING INVARIANTS...' : '🔍 RUN 15-POINT INTEGRITY SCAN'}
             </button>
 
             <div style="background: #FEF2F2; border: 1.5px solid #FCA5A5; padding: 8px 14px; border-radius: 10px; text-align: center;">
@@ -84,7 +86,7 @@ export function renderSecurityCenterView(container) {
         ${lastScanResult ? `
           <div style="background: ${lastScanResult.status === 'HEALTHY' ? '#F0FDF4' : (lastScanResult.status === 'CRITICAL_BREACH' ? '#FEF2F2' : '#FFFBEB')}; border: 1.5px solid ${lastScanResult.status === 'HEALTHY' ? '#86EFAC' : (lastScanResult.status === 'CRITICAL_BREACH' ? '#FCA5A5' : '#FDE68A')}; border-radius: 12px; padding: 1rem; margin-bottom: 1.5rem; font-family: var(--font-mono); font-size: 0.85rem;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-              <strong>🛡️ INTEGRITY MONITOR SCAN RESULT: ${lastScanResult.status}</strong>
+              <strong>🛡️ 15-POINT INTEGRITY SCAN RESULT: ${lastScanResult.status}</strong>
               <span>${new Date(lastScanResult.timestamp).toLocaleTimeString()}</span>
             </div>
             <div style="margin-top: 6px; color: var(--ink-secondary);">
@@ -93,39 +95,98 @@ export function renderSecurityCenterView(container) {
           </div>
         ` : ''}
 
-        <!-- Sentinel Health Matrix -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
-          <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 12px; padding: 1rem;">
-            <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); font-weight: 700;">COLLEGE NAT-AWARE RATE LIMIT</div>
-            <div style="font-family: var(--font-sans); font-size: 1.1rem; font-weight: 800; color: #16A34A; margin-top: 4px;">ACTIVE (Per-UID + Subnet)</div>
-            <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-top: 2px;">Campus Wi-Fi Cross-Talk Shielded</div>
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 1: INTERACTIVE RBAC PERMISSION SIMULATOR (P2.0)     -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 16px; padding: 1.4rem; margin-bottom: 2rem; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
+          <div style="margin-bottom: 1rem;">
+            <h3 style="font-family: var(--font-display); font-size: 1.4rem; margin: 0; display: flex; align-items: center; gap: 8px;">
+              <span>🧪</span>
+              <span>INTERACTIVE RBAC PERMISSION SIMULATOR</span>
+            </h3>
+            <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
+              Simulate role authorization boundaries against Firestore security rules and backend Cloud Functions.
+            </p>
           </div>
 
-          <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 12px; padding: 1rem;">
-            <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); font-weight: 700;">DETERMINISTIC AGGREGATION</div>
-            <div style="font-family: var(--font-sans); font-size: 1.1rem; font-weight: 800; color: #16A34A; margin-top: 4px;">ENFORCED (SHA-256 5-Min)</div>
-            <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-top: 2px;">Multi-Instance Atomic Increment</div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; align-items: flex-end;">
+            <div>
+              <label style="display: block; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: var(--ink-secondary); margin-bottom: 4px;">
+                SIMULATE ROLE:
+              </label>
+              <select id="sim-role-select" style="width: 100%; padding: 10px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.9rem;">
+                <option value="student">👨‍🎓 Student (Institutional)</option>
+                <option value="teacher">👨‍🏫 Teacher / Faculty</option>
+                <option value="college_staff">🏢 College Staff</option>
+                <option value="visitor">👤 Visitor / Guest</option>
+                <option value="kitchen">🍳 Kitchen Staff</option>
+                <option value="pickup">📦 Pickup Staff</option>
+                <option value="cashier">💵 Cashier</option>
+                <option value="manager">📋 Canteen Manager</option>
+                <option value="admin">🛡️ Canteen Admin</option>
+                <option value="security_admin">⚡️ Security Admin</option>
+              </select>
+            </div>
+
+            <div>
+              <label style="display: block; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: var(--ink-secondary); margin-bottom: 4px;">
+                TARGET OPERATION:
+              </label>
+              <select id="sim-op-select" style="width: 100%; padding: 10px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.9rem;">
+                <option value="createCheckout">createCheckout (Place Order)</option>
+                <option value="reviewVerificationApplication">reviewVerificationApplication (Approve Faculty)</option>
+                <option value="generateShiftPin">generateShiftPin (Issue Workstation PIN)</option>
+                <option value="adjustInventoryStock">adjustInventoryStock (Modify Physical Stock)</option>
+                <option value="setSystemOperationalMode">setSystemOperationalMode (Emergency Kill Switch)</option>
+                <option value="reconcileDailyLedger">reconcileDailyLedger (Financial Reconcile)</option>
+                <option value="viewSecurityIncidents">viewSecurityIncidents (Security Telemetry)</option>
+              </select>
+            </div>
+
+            <button 
+              id="test-rbac-btn"
+              ${simRunning ? 'disabled' : ''}
+              style="padding: 11px 18px; border-radius: 8px; background: #2563EB; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;"
+            >
+              ${simRunning ? 'Evaluating...' : 'Test RBAC Capability →'}
+            </button>
           </div>
 
-          <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 12px; padding: 1rem;">
-            <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); font-weight: 700;">AUTOMATIC CIRCUIT BREAKER</div>
-            <div style="font-family: var(--font-sans); font-size: 1.1rem; font-weight: 800; color: #16A34A; margin-top: 4px;">ARMED (FINANCIAL_FROZEN)</div>
-            <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-top: 2px;">Cross-checks Orders & Ledgers</div>
-          </div>
+          ${simulationResult ? `
+            <div style="margin-top: 1.2rem; padding: 1rem; border-radius: 10px; background: ${simulationResult.allowed ? '#F0FDF4' : '#FEF2F2'}; border: 1.5px solid ${simulationResult.allowed ? '#86EFAC' : '#FCA5A5'}; font-family: var(--font-mono); font-size: 0.85rem;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <span style="padding: 3px 8px; border-radius: 4px; font-weight: 800; background: ${simulationResult.allowed ? '#16A34A' : '#DC2626'}; color: #FFF;">
+                  ${simulationResult.allowed ? '✅ AUTHORIZED (200 OK)' : '🚫 REJECTED (403 FORBIDDEN)'}
+                </span>
+                <span style="font-weight: 700; color: var(--ink-primary);">
+                  Role: ${simulationResult.simulatedRole} → Operation: ${simulationResult.operation}
+                </span>
+              </div>
+              <div style="color: var(--ink-secondary); margin-top: 4px;">
+                ${simulationResult.reason}
+              </div>
+              <div style="font-size: 0.75rem; color: var(--ink-secondary); margin-top: 4px;">
+                Required Capabilities: [${(simulationResult.requiredRoles || []).join(', ')}]
+              </div>
+            </div>
+          ` : ''}
         </div>
 
-        <!-- Filter Buttons -->
-        <div style="display: flex; gap: 8px; margin-bottom: 1rem; align-items: center;">
-          <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary);">FILTER SEVERITY:</span>
-          <button class="sev-filter-btn ${severityFilter === 'all' ? 'active' : ''}" data-sev="all" style="padding: 6px 12px; border-radius: 6px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.75rem; cursor: pointer;">ALL</button>
-          <button class="sev-filter-btn ${severityFilter === 'warn' ? 'active' : ''}" data-sev="warn" style="padding: 6px 12px; border-radius: 6px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.75rem; cursor: pointer;">WARNINGS</button>
-          <button class="sev-filter-btn ${severityFilter === 'critical' ? 'active' : ''}" data-sev="critical" style="padding: 6px 12px; border-radius: 6px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.75rem; cursor: pointer;">CRITICAL</button>
-        </div>
-
-        <!-- Security Event Feed -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 2: LIVE SECURITY EVENT & INCIDENT STREAM            -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
         <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 1.2rem; box-shadow: 0 1px 4px rgba(0,0,0,0.03);">
-          <div style="font-family: var(--font-mono); font-size: 0.9rem; font-weight: 700; color: var(--ink-primary); margin-bottom: 1rem;">
-            LIVE EVENT STREAM (${filteredEvents.length} events logged)
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1rem;">
+            <div style="font-family: var(--font-mono); font-size: 0.9rem; font-weight: 700; color: var(--ink-primary);">
+              LIVE INCIDENT & TELEMETRY STREAM (${filteredEvents.length} events logged)
+            </div>
+
+            <!-- Filter Buttons -->
+            <div style="display: flex; gap: 6px;">
+              <button class="sev-filter-btn ${severityFilter === 'all' ? 'active' : ''}" data-sev="all" style="padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-light); font-family: var(--font-mono); font-size: 0.75rem; cursor: pointer;">ALL</button>
+              <button class="sev-filter-btn ${severityFilter === 'warn' ? 'active' : ''}" data-sev="warn" style="padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-light); font-family: var(--font-mono); font-size: 0.75rem; cursor: pointer;">WARNINGS</button>
+              <button class="sev-filter-btn ${severityFilter === 'critical' ? 'active' : ''}" data-sev="critical" style="padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-light); font-family: var(--font-mono); font-size: 0.75rem; cursor: pointer;">CRITICAL</button>
+            </div>
           </div>
 
           <div style="display: flex; flex-direction: column; gap: 8px;">
@@ -186,6 +247,30 @@ export function renderSecurityCenterView(container) {
           alert('Integrity Scan Notice: ' + (err.message || err));
         } finally {
           scanRunning = false;
+          render();
+        }
+      });
+    }
+
+    // Interactive RBAC Simulator Listener
+    const testRbacBtn = container.querySelector('#test-rbac-btn');
+    if (testRbacBtn) {
+      testRbacBtn.addEventListener('click', async () => {
+        const role = container.querySelector('#sim-role-select')?.value;
+        const op = container.querySelector('#sim-op-select')?.value;
+
+        simRunning = true;
+        render();
+
+        try {
+          const functions = getFunctions();
+          const simFn = httpsCallable(functions, 'simulatePermissionCheck');
+          const res = await simFn({ simulatedRole: role, operation: op });
+          simulationResult = res.data;
+        } catch (err) {
+          alert('Simulation Error: ' + (err.message || err));
+        } finally {
+          simRunning = false;
           render();
         }
       });

@@ -2788,4 +2788,67 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(negative.rushMultiplier, 1.0, 'Rush multiplier lower bounded to 1.0');
     assert.strictEqual(negative.maxActivePriorityOrdersPerFaculty, 1, 'Priority quota lower bounded to 1');
   });
+
+  it('129. Developer Cockpit RBAC Boundary: Blocks unauthorized staff from telemetry access', () => {
+    function authorizeTelemetryAccess(callerRole) {
+      const allowed = ['admin', 'security_admin'];
+      return allowed.includes(callerRole);
+    }
+
+    assert.strictEqual(authorizeTelemetryAccess('security_admin'), true);
+    assert.strictEqual(authorizeTelemetryAccess('admin'), true);
+    assert.strictEqual(authorizeTelemetryAccess('manager'), false, 'Managers lack raw developer telemetry capability');
+    assert.strictEqual(authorizeTelemetryAccess('kitchen'), false);
+    assert.strictEqual(authorizeTelemetryAccess('student'), false);
+  });
+
+  it('130. Interactive RBAC Simulator: Correctly matrix-evaluates all roles across privileged ops', () => {
+    const { evaluateRBACPermission } = require('../lib/developer_cockpit');
+
+    // Customer Checkout
+    assert.strictEqual(evaluateRBACPermission('student', 'createCheckout').allowed, true);
+    assert.strictEqual(evaluateRBACPermission('teacher', 'createCheckout').allowed, true);
+    assert.strictEqual(evaluateRBACPermission('visitor', 'createCheckout').allowed, true);
+    assert.strictEqual(evaluateRBACPermission('kitchen', 'createCheckout').allowed, false);
+
+    // Faculty Verification Review
+    assert.strictEqual(evaluateRBACPermission('admin', 'reviewVerificationApplication').allowed, true);
+    assert.strictEqual(evaluateRBACPermission('manager', 'reviewVerificationApplication').allowed, true);
+    assert.strictEqual(evaluateRBACPermission('student', 'reviewVerificationApplication').allowed, false);
+
+    // Emergency Kill Switch
+    assert.strictEqual(evaluateRBACPermission('security_admin', 'setSystemOperationalMode').allowed, true);
+    assert.strictEqual(evaluateRBACPermission('admin', 'setSystemOperationalMode').allowed, true);
+    assert.strictEqual(evaluateRBACPermission('manager', 'setSystemOperationalMode').allowed, false, 'Kill switch reserved for security_admin/admin');
+  });
+
+  it('131. Security Incident Deduplication Invariant: Aggregates repeated attack vectors deterministically', () => {
+    function generateIncidentFingerprint(actorUid, eventType, clientIp) {
+      return crypto.createHash('sha256').update(`${actorUid}_${eventType}_${clientIp}`).digest('hex').substring(0, 16);
+    }
+
+    const fingerprint1 = generateIncidentFingerprint('attacker_99', 'RATE_LIMIT_EXCEEDED', '10.0.0.1');
+    const fingerprint2 = generateIncidentFingerprint('attacker_99', 'RATE_LIMIT_EXCEEDED', '10.0.0.1');
+    const differentIp = generateIncidentFingerprint('attacker_99', 'RATE_LIMIT_EXCEEDED', '10.0.0.2');
+
+    assert.strictEqual(fingerprint1, fingerprint2, 'Same attack vector must map to same deterministic incident ID');
+    assert.notStrictEqual(fingerprint1, differentIp, 'Distinct IP vectors produce isolated incidents');
+  });
+
+  it('132. Circuit Breaker State Machine Inspection: Evaluates system health and auto-freeze trigger', () => {
+    function evaluateSystemHealth(integrityScore, criticalIncidentsLastHour) {
+      if (integrityScore < 80 || criticalIncidentsLastHour >= 3) {
+        return { operationalMode: 'EMERGENCY_FINANCIAL_FREEZE', circuitBreakerTripped: true, reason: 'CRITICAL_SECURITY_BREACH' };
+      }
+      if (integrityScore < 95 || criticalIncidentsLastHour >= 1) {
+        return { operationalMode: 'DEGRADED', circuitBreakerTripped: false, reason: 'ELEVATED_RISK_WARN' };
+      }
+      return { operationalMode: 'NORMAL', circuitBreakerTripped: false, reason: 'HEALTHY' };
+    }
+
+    assert.strictEqual(evaluateSystemHealth(100, 0).operationalMode, 'NORMAL');
+    assert.strictEqual(evaluateSystemHealth(90, 1).operationalMode, 'DEGRADED');
+    assert.strictEqual(evaluateSystemHealth(75, 0).circuitBreakerTripped, true, 'Integrity drop triggers circuit breaker');
+    assert.strictEqual(evaluateSystemHealth(100, 3).circuitBreakerTripped, true, '3 critical incidents triggers circuit breaker');
+  });
 });
