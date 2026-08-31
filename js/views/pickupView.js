@@ -1,10 +1,10 @@
-// Phase 10 — Pickup Counter with Live Automatic Incoming Feed & Side-by-Side Collected Button
+// Phase 10 — Counter Pickup & Dispatch View (Automatic Live Queue with Side Collected Action)
 import { subscribeOrders, updateOrderStatus } from '../firebase.js';
 
 let unsubscribeOrders = null;
 let currentOrders = [];
-let searchCode = '';
-let activeFilter = 'active'; // 'active' | 'ready' | 'all'
+let searchFilter = '';
+let showCollectedHistory = false;
 
 export function renderPickupView(container) {
   if (unsubscribeOrders) {
@@ -12,177 +12,275 @@ export function renderPickupView(container) {
   }
 
   function render() {
-    const cleanSearch = searchCode.trim().toLowerCase().replace('#', '');
+    const cleanSearch = searchFilter.trim().toLowerCase().replace('#', '');
 
-    // Filter orders based on search and active tab
-    const filteredOrders = currentOrders.filter(order => {
-      // Search filter
-      if (cleanSearch) {
-        const pinMatch = order.pinCode && order.pinCode.toString().includes(cleanSearch);
-        const tokenMatch = order.tokenNumber && order.tokenNumber.toString().toLowerCase().replace('#', '').includes(cleanSearch);
-        const nameMatch = order.studentName && order.studentName.toLowerCase().includes(cleanSearch);
-        const rollMatch = order.studentRoll && order.studentRoll.toLowerCase().includes(cleanSearch);
-        if (!pinMatch && !tokenMatch && !nameMatch && !rollMatch) return false;
-      }
+    // Filter active orders
+    const activeOrders = currentOrders.filter(o => o.status !== 'collected');
+    const collectedOrders = currentOrders.filter(o => o.status === 'collected');
 
-      // Tab filter
-      if (activeFilter === 'active') {
-        return order.status !== 'collected';
-      } else if (activeFilter === 'ready') {
-        return order.status === 'ready';
-      }
-      return true; // 'all'
-    });
+    // Split active into Ready (top priority) and In-Kitchen/Placed
+    const readyOrders = activeOrders.filter(o => o.status === 'ready');
+    const kitchenOrders = activeOrders.filter(o => o.status === 'preparing' || o.status === 'placed');
 
-    const readyCount = currentOrders.filter(o => o.status === 'ready').length;
-    const activeCount = currentOrders.filter(o => o.status !== 'collected').length;
+    // Apply search filter if typed
+    const filterFn = (order) => {
+      if (!cleanSearch) return true;
+      const pinMatch = order.pinCode && order.pinCode.toString().includes(cleanSearch);
+      const tokenMatch = order.tokenNumber && order.tokenNumber.toString().toLowerCase().replace('#', '').includes(cleanSearch);
+      const nameMatch = order.studentName && order.studentName.toLowerCase().includes(cleanSearch);
+      const rollMatch = order.studentRoll && order.studentRoll.toLowerCase().includes(cleanSearch);
+      return pinMatch || tokenMatch || nameMatch || rollMatch;
+    };
+
+    const displayReady = readyOrders.filter(filterFn);
+    const displayKitchen = kitchenOrders.filter(filterFn);
+    const displayCollected = collectedOrders.filter(filterFn);
 
     container.innerHTML = `
       <div class="main-wrapper" style="max-width: 1200px; margin: 0 auto; padding: 1.5rem 1rem;">
         
-        <!-- Header -->
+        <!-- Header with Live Stats -->
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
           <div>
             <div style="display: flex; align-items: center; gap: 10px;">
               <h2 style="font-family: var(--font-display); font-size: 2.2rem; letter-spacing: 0.05em; margin: 0; line-height: 1;">
-                COUNTER PICKUP & DISPATCH QUEUE
+                COUNTER PICKUP & DISPATCH
               </h2>
-              <span style="background: #22C55E; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 3px 8px; border-radius: 999px;">
-                ● LIVE AUTO-FEED
+              <span style="background: #22C55E; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; display: flex; align-items: center; gap: 4px;">
+                <span style="width: 6px; height: 6px; background: #FFF; border-radius: 50%;"></span>
+                LIVE STREAM
               </span>
             </div>
             <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
-              Incoming orders stream automatically in sequence. Tap "Mark Collected" beside any order to complete handover.
+              Orders ready for collection appear below in sequence. Verify token/PIN and tap "Mark Collected".
             </p>
           </div>
 
-          <!-- Tab Filter Buttons -->
-          <div style="display: flex; gap: 6px; background: var(--bg-surface); padding: 4px; border-radius: 999px; border: 1.5px solid var(--border-light);">
-            <button 
-              class="pickup-tab-btn ${activeFilter === 'active' ? 'active' : ''}" 
-              data-tab="active"
-              style="padding: 6px 14px; border-radius: 999px; border: none; background: ${activeFilter === 'active' ? 'var(--brand-red)' : 'transparent'}; color: ${activeFilter === 'active' ? '#FFF' : 'var(--ink-secondary)'}; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;"
-            >
-              Active Queue (${activeCount})
-            </button>
-            <button 
-              class="pickup-tab-btn ${activeFilter === 'ready' ? 'active' : ''}" 
-              data-tab="ready"
-              style="padding: 6px 14px; border-radius: 999px; border: none; background: ${activeFilter === 'ready' ? '#16A34A' : 'transparent'}; color: ${activeFilter === 'ready' ? '#FFF' : 'var(--ink-secondary)'}; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;"
-            >
-              🔔 Ready at Counter (${readyCount})
-            </button>
-            <button 
-              class="pickup-tab-btn ${activeFilter === 'all' ? 'active' : ''}" 
-              data-tab="all"
-              style="padding: 6px 14px; border-radius: 999px; border: none; background: ${activeFilter === 'all' ? 'var(--ink-primary)' : 'transparent'}; color: ${activeFilter === 'all' ? '#FFF' : 'var(--ink-secondary)'}; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;"
-            >
-              All Orders
-            </button>
+          <!-- Counter Quick Badges -->
+          <div style="display: flex; gap: 10px;">
+            <div style="background: #F0FDF4; border: 1.5px solid #86EFAC; padding: 8px 16px; border-radius: 12px; text-align: center;">
+              <div style="font-family: var(--font-mono); font-size: 1.5rem; font-weight: 800; color: #15803D; line-height: 1;">
+                ${readyOrders.length}
+              </div>
+              <div style="font-family: var(--font-mono); font-size: 0.75rem; color: #166534; font-weight: 700; text-transform: uppercase;">
+                Ready at Counter
+              </div>
+            </div>
+
+            <div style="background: #FFFBEB; border: 1.5px solid #FDE68A; padding: 8px 16px; border-radius: 12px; text-align: center;">
+              <div style="font-family: var(--font-mono); font-size: 1.5rem; font-weight: 800; color: #B45309; line-height: 1;">
+                ${kitchenOrders.length}
+              </div>
+              <div style="font-family: var(--font-mono); font-size: 0.75rem; color: #92400E; font-weight: 700; text-transform: uppercase;">
+                In Kitchen
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Quick PIN / Token Search Filter -->
-        <div style="background: #FFF; border: 2px solid var(--border-light); border-radius: 12px; padding: 0.8rem 1.2rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 12px;">
+        <!-- Quick Filter Input -->
+        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 12px; padding: 0.7rem 1.2rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
           <span style="font-size: 1.2rem;">🔍</span>
           <input 
             type="text" 
             id="pickup-filter-input" 
-            placeholder="Search by 4-digit PIN, Token #, or Student Name..." 
-            value="${searchCode}"
-            style="flex: 1; border: none; outline: none; font-family: var(--font-mono); font-size: 1.05rem; font-weight: 600; color: var(--ink-primary); background: transparent;"
+            placeholder="Filter by Token #, PIN, or Student Name (optional)..." 
+            value="${searchFilter}"
+            style="flex: 1; border: none; outline: none; font-family: var(--font-mono); font-size: 1rem; font-weight: 600; color: var(--ink-primary); background: transparent;"
           />
-          ${searchCode ? `
-            <button id="clear-search-btn" style="background: var(--bg-surface); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 10px; font-family: var(--font-mono); font-size: 0.8rem; cursor: pointer;">
+          ${searchFilter ? `
+            <button id="clear-filter-btn" style="background: var(--bg-surface); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 10px; font-family: var(--font-mono); font-size: 0.8rem; cursor: pointer;">
               Clear
             </button>
           ` : ''}
         </div>
 
-        <!-- Live Orders List: One-by-One with Side Collected Button -->
-        <div style="display: flex; flex-direction: column; gap: 1rem;">
-          ${filteredOrders.length === 0 ? `
-            <div style="background: #FFF; border: 2px dashed var(--border-light); border-radius: 14px; padding: 3.5rem 1rem; text-align: center;">
-              <div style="font-size: 3rem; margin-bottom: 0.5rem;">🎉</div>
-              <h3 style="font-family: var(--font-display); font-size: 1.6rem; margin: 0; color: var(--ink-primary);">
-                NO ORDERS IN THIS QUEUE
-              </h3>
-              <p style="font-family: var(--font-sans); font-size: 0.9rem; color: var(--ink-secondary); margin-top: 4px;">
-                ${searchCode ? `No orders matching "${searchCode}". Try clearing your search.` : 'New orders placed on the student app will appear here automatically in real time.'}
-              </p>
-            </div>
-          ` : filteredOrders.map(order => {
-            const isReady = order.status === 'ready';
-            const isCollected = order.status === 'collected';
-            const isPreparing = order.status === 'preparing';
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 1: READY FOR PICKUP (PRIMARY QUEUE)                -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="margin-bottom: 2rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8rem;">
+            <h3 style="font-family: var(--font-display); font-size: 1.4rem; color: #166534; margin: 0; display: flex; align-items: center; gap: 8px;">
+              <span>🔔</span>
+              <span>READY FOR COLLECTION (${displayReady.length})</span>
+            </h3>
+            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary);">
+              Students notified · Handover ready
+            </span>
+          </div>
 
-            const cardBorderColor = isReady ? '#4F7A3C' : isCollected ? 'var(--border-light)' : '#EFA727';
-            const cardBg = isReady ? '#F9FDF7' : isCollected ? '#FAF8F5' : '#FFFDF7';
-
-            return `
-              <div class="pickup-order-row" style="background: ${cardBg}; border: 2px solid ${cardBorderColor}; border-radius: 14px; padding: 1.2rem 1.4rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.2rem; box-shadow: 0 2px 6px rgba(0,0,0,0.03); transition: all 0.2s ease;">
+          <div style="display: flex; flex-direction: column; gap: 0.9rem;">
+            ${displayReady.length === 0 ? `
+              <div style="background: #FFF; border: 2px dashed #86EFAC; border-radius: 14px; padding: 2.5rem 1rem; text-align: center;">
+                <div style="font-size: 2.5rem; margin-bottom: 0.4rem;">☕️</div>
+                <div style="font-family: var(--font-sans); font-size: 1.1rem; font-weight: 700; color: var(--ink-primary);">No Orders Waiting at Counter</div>
+                <div style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 2px;">
+                  Orders marked ready by the kitchen will appear here automatically.
+                </div>
+              </div>
+            ` : displayReady.map(order => `
+              <div class="pickup-card ready-card" style="background: #F9FDF7; border: 2.5px solid #22C55E; border-radius: 14px; padding: 1.2rem 1.4rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; box-shadow: 0 4px 12px rgba(34,197,94,0.12);">
                 
-                <!-- Left: Token Number, PIN & Student Details -->
-                <div style="display: flex; align-items: center; gap: 1.2rem; min-width: 240px;">
-                  <div>
-                    <div style="font-family: var(--font-mono); font-size: 2.2rem; font-weight: 800; color: ${isReady ? '#4F7A3C' : 'var(--brand-red)'}; line-height: 1;">
+                <!-- Left: Token Number & Verified PIN Box -->
+                <div style="display: flex; align-items: center; gap: 1.2rem; min-width: 220px;">
+                  <div style="background: #DCFCE7; border: 2px solid #22C55E; border-radius: 12px; padding: 8px 16px; text-align: center;">
+                    <div style="font-family: var(--font-mono); font-size: 2.4rem; font-weight: 900; color: #15803D; line-height: 1;">
                       ${order.tokenNumber || '#---'}
                     </div>
-                    <div style="margin-top: 4px; display: flex; align-items: center; gap: 6px;">
-                      <span style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; background: #FFF; border: 1.5px solid var(--border-light); padding: 2px 8px; border-radius: 6px; color: var(--ink-primary);">
-                        PIN: ${order.pinCode || '----'}
+                    <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #166534; margin-top: 4px; letter-spacing: 0.05em;">
+                      PIN: ${order.pinCode || '----'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style="font-family: var(--font-sans); font-size: 1.15rem; font-weight: 800; color: var(--ink-primary);">
+                      👤 ${order.studentName || 'Student (Walk-in)'}
+                    </div>
+                    <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 2px;">
+                      Roll: <strong style="color: var(--ink-primary);">${order.studentRoll || 'N/A'}</strong> · ${formatTime(order.createdAtDate)}
+                    </div>
+                    <div style="margin-top: 4px;">
+                      <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; background: #22C55E; color: #FFF; padding: 2px 8px; border-radius: 999px;">
+                        READY FOR PICKUP 🔔
                       </span>
                     </div>
                   </div>
-
-                  <div style="border-left: 1.5px solid var(--border-light); padding-left: 1rem;">
-                    <div style="font-family: var(--font-sans); font-size: 1.05rem; font-weight: 700; color: var(--ink-primary);">
-                      👤 ${order.studentName || 'Student (Walk-in)'}
-                    </div>
-                    <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary); margin-top: 2px;">
-                      Roll: ${order.studentRoll || 'N/A'} · ${formatTime(order.createdAtDate)}
-                    </div>
-                  </div>
                 </div>
 
-                <!-- Center: Items List & Total -->
-                <div style="flex: 1; min-width: 260px; background: #FFF; border: 1px solid var(--border-light); border-radius: 10px; padding: 0.8rem 1rem;">
-                  <div style="font-family: var(--font-mono); font-size: 0.95rem; font-weight: 700; color: var(--ink-primary); margin-bottom: 4px;">
-                    ${(order.items || []).map(i => `${i.quantity}x ${i.name}`).join(' · ')}
+                <!-- Center: Order Dishes Checklist -->
+                <div style="flex: 1; min-width: 260px; background: #FFF; border: 1.5px solid #BBF7D0; border-radius: 10px; padding: 0.9rem 1.1rem;">
+                  <div style="font-family: var(--font-mono); font-size: 1.05rem; font-weight: 800; color: var(--ink-primary); line-height: 1.4;">
+                    ${(order.items || []).map(i => `<span style="display: inline-block; background: #F0FDF4; padding: 2px 8px; border-radius: 6px; margin: 2px 4px 2px 0; border: 1px solid #DCFCE7;">${i.quantity}x ${i.name}</span>`).join('')}
                   </div>
-                  <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; color: var(--ink-secondary);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #DCFCE7;">
+                    <span style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--ink-secondary);">
+                      ${(order.items || []).length} item(s)
+                    </span>
+                    <span style="font-family: var(--font-mono); font-size: 1rem; font-weight: 800; color: var(--ink-primary);">
                       Total: ₹${order.totalAmount}
                     </span>
-                    <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: ${getStatusBadgeBg(order.status)}; color: ${getStatusBadgeColor(order.status)};">
-                      ${order.status.toUpperCase()}
-                    </span>
                   </div>
                 </div>
 
-                <!-- Right Side Action: Collected Button -->
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  ${isCollected ? `
-                    <div style="padding: 10px 18px; border-radius: 10px; background: #E5E7EB; color: #4B5563; font-family: var(--font-mono); font-size: 0.9rem; font-weight: 700; display: flex; align-items: center; gap: 6px;">
-                      <span>✓</span>
-                      <span>COLLECTED</span>
-                    </div>
-                  ` : `
-                    <button 
-                      class="row-collect-btn" 
-                      data-order-id="${order.id}"
-                      data-token="${order.tokenNumber}"
-                      style="padding: 14px 24px; border-radius: 10px; border: none; background: ${isReady ? '#22C55E' : '#4F7A3C'}; color: #FFF; font-family: var(--font-sans); font-size: 1rem; font-weight: 800; cursor: pointer; box-shadow: 0 4px 10px rgba(34,197,94,0.3); display: flex; align-items: center; gap: 8px; transition: transform 0.1s ease;"
-                    >
-                      <span style="font-size: 1.1rem;">✓</span>
-                      <span>Mark Collected</span>
-                    </button>
-                  `}
+                <!-- Right: Big Side-by-Side Collected Button -->
+                <div>
+                  <button 
+                    class="collect-action-btn" 
+                    data-order-id="${order.id}"
+                    data-token="${order.tokenNumber}"
+                    style="padding: 16px 28px; border-radius: 12px; border: none; background: #16A34A; color: #FFF; font-family: var(--font-sans); font-size: 1.1rem; font-weight: 900; cursor: pointer; box-shadow: 0 4px 14px rgba(22,163,74,0.35); display: flex; align-items: center; gap: 8px; transition: transform 0.1s ease;"
+                  >
+                    <span style="font-size: 1.3rem;">✓</span>
+                    <span>Mark Collected</span>
+                  </button>
                 </div>
 
               </div>
-            `;
-          }).join('')}
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 2: IN-KITCHEN / PREPARING QUEUE                    -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="margin-bottom: 2rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8rem;">
+            <h3 style="font-family: var(--font-display); font-size: 1.3rem; color: #B45309; margin: 0; display: flex; align-items: center; gap: 8px;">
+              <span>⏳</span>
+              <span>IN-KITCHEN & INCOMING ORDERS (${displayKitchen.length})</span>
+            </h3>
+            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary);">
+              Being prepared / instant handovers
+            </span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 0.8rem;">
+            ${displayKitchen.length === 0 ? `
+              <div style="background: #FFF; border: 1.5px dashed var(--border-light); border-radius: 12px; padding: 1.5rem; text-align: center; font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary);">
+                No pending kitchen orders in queue.
+              </div>
+            ` : displayKitchen.map(order => `
+              <div class="pickup-card kitchen-card" style="background: #FFFDF7; border: 1.5px solid #FDE68A; border-radius: 12px; padding: 1rem 1.2rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+                
+                <!-- Left: Token & PIN -->
+                <div style="display: flex; align-items: center; gap: 1rem; min-width: 200px;">
+                  <div style="background: #FEF3C7; border: 1.5px solid #FCD34D; border-radius: 10px; padding: 6px 12px; text-align: center;">
+                    <div style="font-family: var(--font-mono); font-size: 1.8rem; font-weight: 800; color: #B45309; line-height: 1;">
+                      ${order.tokenNumber || '#---'}
+                    </div>
+                    <div style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: #92400E; margin-top: 2px;">
+                      PIN: ${order.pinCode}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style="font-family: var(--font-sans); font-size: 1rem; font-weight: 700; color: var(--ink-primary);">
+                      👤 ${order.studentName || 'Student'}
+                    </div>
+                    <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary);">
+                      Roll: ${order.studentRoll || 'N/A'} · ${formatTime(order.createdAtDate)}
+                    </div>
+                    <div style="margin-top: 3px;">
+                      <span style="font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700; background: #FEF3C7; color: #92400E; padding: 1px 6px; border-radius: 4px;">
+                        ${order.status === 'preparing' ? '🔥 PREPARING' : '⏳ PLACED'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Center: Dishes -->
+                <div style="flex: 1; min-width: 240px; font-family: var(--font-mono); font-size: 0.9rem; font-weight: 700; color: var(--ink-primary);">
+                  ${(order.items || []).map(i => `${i.quantity}x ${i.name}`).join(' · ')}
+                </div>
+
+                <!-- Right: Quick Collect button -->
+                <div>
+                  <button 
+                    class="collect-action-btn" 
+                    data-order-id="${order.id}"
+                    data-token="${order.tokenNumber}"
+                    style="padding: 10px 18px; border-radius: 8px; border: 1.5px solid #F59E0B; background: #FEF3C7; color: #92400E; font-family: var(--font-sans); font-size: 0.9rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;"
+                    title="Direct handover for instant snacks/drinks"
+                  >
+                    <span>✓</span>
+                    <span>Quick Collect</span>
+                  </button>
+                </div>
+
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 3: COLLECTED HISTORY (COLLAPSIBLE)                  -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 12px; padding: 1.2rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" id="toggle-history-btn">
+            <h4 style="font-family: var(--font-display); font-size: 1.2rem; margin: 0; color: var(--ink-secondary); display: flex; align-items: center; gap: 8px;">
+              <span>📁</span>
+              <span>COLLECTED TODAY (${displayCollected.length})</span>
+            </h4>
+            <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--brand-red); font-weight: 600;">
+              ${showCollectedHistory ? '▲ Hide' : '▼ Show History'}
+            </span>
+          </div>
+
+          ${showCollectedHistory ? `
+            <div style="margin-top: 1rem; border-top: 1px solid var(--border-light); padding-top: 0.8rem; display: flex; flex-direction: column; gap: 6px;">
+              ${displayCollected.length === 0 ? `
+                <div style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary);">No orders collected yet today.</div>
+              ` : displayCollected.map(o => `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: var(--bg-surface); border-radius: 8px; font-family: var(--font-mono); font-size: 0.85rem;">
+                  <div>
+                    <strong style="color: var(--ink-primary); font-size: 1rem;">${o.tokenNumber}</strong>
+                    <span style="color: var(--ink-secondary); margin-left: 8px;">PIN: ${o.pinCode} · 👤 ${o.studentName || 'Student'} (${o.studentRoll || 'N/A'})</span>
+                  </div>
+                  <span style="color: #16A34A; font-weight: 700;">✓ Handed Over</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
         </div>
 
       </div>
@@ -192,37 +290,36 @@ export function renderPickupView(container) {
     const searchInput = container.querySelector('#pickup-filter-input');
     if (searchInput) {
       searchInput.addEventListener('input', (e) => {
-        searchCode = e.target.value;
+        searchFilter = e.target.value;
         render();
         const freshInput = container.querySelector('#pickup-filter-input');
         if (freshInput) {
           freshInput.focus();
-          freshInput.setSelectionRange(searchCode.length, searchCode.length);
+          freshInput.setSelectionRange(searchFilter.length, searchFilter.length);
         }
       });
     }
 
-    const clearBtn = container.querySelector('#clear-search-btn');
+    const clearBtn = container.querySelector('#clear-filter-btn');
     if (clearBtn) {
       clearBtn.addEventListener('click', () => {
-        searchCode = '';
+        searchFilter = '';
         render();
       });
     }
 
-    // Tab buttons
-    container.querySelectorAll('.pickup-tab-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        activeFilter = btn.getAttribute('data-tab');
+    const historyToggle = container.querySelector('#toggle-history-btn');
+    if (historyToggle) {
+      historyToggle.addEventListener('click', () => {
+        showCollectedHistory = !showCollectedHistory;
         render();
       });
-    });
+    }
 
-    // Side-by-side Mark Collected buttons
-    container.querySelectorAll('.row-collect-btn').forEach(btn => {
+    // Side Collected Action Buttons
+    container.querySelectorAll('.collect-action-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const orderId = btn.getAttribute('data-order-id');
-        const token = btn.getAttribute('data-token');
         btn.textContent = 'Updating...';
         btn.disabled = true;
 
@@ -240,22 +337,4 @@ export function renderPickupView(container) {
 function formatTime(date) {
   if (!date) return '';
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function getStatusBadgeBg(status) {
-  switch (status) {
-    case 'ready': return '#DCEACB';
-    case 'preparing': return '#FBE7BE';
-    case 'collected': return '#E5E7EB';
-    default: return '#FEE2E2';
-  }
-}
-
-function getStatusBadgeColor(status) {
-  switch (status) {
-    case 'ready': return '#2C4A1E';
-    case 'preparing': return '#6B4408';
-    case 'collected': return '#4B5563';
-    default: return '#991B1B';
-  }
 }
