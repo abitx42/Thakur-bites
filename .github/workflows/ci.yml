@@ -45,7 +45,7 @@ jobs:
         working-directory: functions
         run: npm run build
 
-      - name: Run Backend Invariant Security Abuse Suite (176 Tests)
+      - name: Run Backend Invariant Security Abuse Suite (179 Tests)
         working-directory: functions
         run: npm test
 

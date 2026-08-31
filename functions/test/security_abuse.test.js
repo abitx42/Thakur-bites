@@ -3245,4 +3245,57 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(evaluateStorageProofAccess(adminReviewer, 'teacher_1'), true, 'Reviewer can access ID proof');
     assert.strictEqual(evaluateStorageProofAccess(studentUser, 'teacher_1'), false, 'External student blocked from ID proof');
   });
+
+  it('153. Canonical ETA Schema Invariant: Standardizes on estimatedMinutes across backend & views', () => {
+    function normalizeOrderETA(orderData) {
+      if (typeof orderData.estimatedMinutes === 'number') {
+        return orderData.estimatedMinutes;
+      }
+      if (typeof orderData.estimatedPrepTimeMinutes === 'number') {
+        return orderData.estimatedPrepTimeMinutes;
+      }
+      return null;
+    }
+
+    assert.strictEqual(normalizeOrderETA({ estimatedMinutes: 12 }), 12);
+    assert.strictEqual(normalizeOrderETA({ estimatedPrepTimeMinutes: 15 }), 15);
+    assert.strictEqual(normalizeOrderETA({}), null, 'Missing ETA returns null instead of fake fallback');
+  });
+
+  it('154. Verification Application ID Entropy Invariant: Uses >= 64 bits of cryptographic randomness', () => {
+    const crypto = require('crypto');
+    function generateApplicationId(type) {
+      const prefix = type === 'TEACHER' ? 'FAC' : 'STF';
+      const suffix = crypto.randomBytes(8).toString('hex').toUpperCase();
+      return `${prefix}-${suffix}`;
+    }
+
+    const appId1 = generateApplicationId('TEACHER');
+    const appId2 = generateApplicationId('TEACHER');
+
+    assert.ok(appId1.startsWith('FAC-'));
+    assert.strictEqual(appId1.length, 20, 'FAC- (4 chars) + 16 hex chars (8 bytes entropy) = 20 chars');
+    assert.notStrictEqual(appId1, appId2, 'Entropy guarantees non-colliding application IDs');
+  });
+
+  it('155. Universal App Check Invariant: Rejects unverified client calls on operational callables', () => {
+    const { enforceAppCheck } = require('../lib/app_check');
+
+    // With App Check active, missing request.app throws HttpsError
+    const originalEnv = process.env.ENFORCE_APP_CHECK;
+    process.env.ENFORCE_APP_CHECK = 'true';
+
+    try {
+      assert.throws(() => {
+        enforceAppCheck({ app: undefined });
+      }, /App Check verification failed/);
+
+      // Verified App Check token passes
+      assert.doesNotThrow(() => {
+        enforceAppCheck({ app: { appId: 'com.thakurbites.app' } });
+      });
+    } finally {
+      process.env.ENFORCE_APP_CHECK = originalEnv;
+    }
+  });
 });

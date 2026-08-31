@@ -163,7 +163,7 @@ export function renderKitchenView(container) {
                         ${escapeHtml(order.tokenNumber || '#---')}
                       </div>
                       <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary); margin-top: 4px;">
-                        PIN: <strong style="color: var(--ink-primary);">${escapeHtml(order.pinCode || '----')}</strong> · 👤 ${escapeHtml(order.studentName || 'Student')}
+                        PIN: <strong style="color: var(--ink-primary);">${escapeHtml(order.pinCode || '----')}</strong> · 👤 ${escapeHtml(order.studentName || 'Student')}${order.estimatedMinutes ? ` · ⏳ Est. ~${escapeHtml(order.estimatedMinutes)}m` : ''}
                       </div>
                     </div>
 

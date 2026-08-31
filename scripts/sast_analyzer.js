@@ -125,7 +125,7 @@ if (findings.length > 0) {
 } else {
   console.log('  ✓ Zero dangerous eval(), insecure token generators, or client role injections detected.');
   console.log('\n════════════════════════════════════════════════════════════════');
-  console.log('🏆 SAST SECURITY AUDIT PASSED (100% CLEAN)');
+  console.log('🏆 CUSTOM SAST GUARDRAILS: 3/3 PASSED (100% CLEAN)');
   console.log('════════════════════════════════════════════════════════════════\n');
   process.exit(0);
 }
