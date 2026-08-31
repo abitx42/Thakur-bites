@@ -6,7 +6,7 @@ import '../providers/cart_provider.dart';
 import '../theme/app_theme.dart';
 
 /// Menu item card with Swiggy/Zomato-style morphing add-to-cart stepper.
-/// Now wired to the central CartProvider.
+/// Supports out-of-stock disabling and max stock limits.
 class MenuItemCard extends StatelessWidget {
   final MenuItem item;
 
@@ -15,20 +15,30 @@ class MenuItemCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isCooked = item.isCooked;
+    final inStock = item.isInStock;
 
-    final cardBg = isCooked ? AppColors.mustardSoft : AppColors.greenSoft;
-    final accentInk = isCooked ? AppColors.mustardInk : AppColors.greenInk;
-    final iconBg = isCooked
-        ? AppColors.mustardInk.withOpacity(0.14)
-        : AppColors.greenInk.withOpacity(0.14);
-    final badgeBg = isCooked
-        ? AppColors.mustardInk.withOpacity(0.12)
-        : AppColors.greenInk.withOpacity(0.12);
+    final cardBg = inStock
+        ? (isCooked ? AppColors.mustardSoft : AppColors.greenSoft)
+        : const Color(0xFFF3EFE8);
+    final accentInk = inStock
+        ? (isCooked ? AppColors.mustardInk : AppColors.greenInk)
+        : AppColors.inkSoft;
+    final iconBg = inStock
+        ? (isCooked
+            ? AppColors.mustardInk.withOpacity(0.14)
+            : AppColors.greenInk.withOpacity(0.14))
+        : AppColors.line;
+    final badgeBg = inStock
+        ? (isCooked
+            ? AppColors.mustardInk.withOpacity(0.12)
+            : AppColors.greenInk.withOpacity(0.12))
+        : AppColors.line;
 
     return Container(
       decoration: BoxDecoration(
         color: cardBg,
         borderRadius: BorderRadius.circular(16),
+        border: inStock ? null : Border.all(color: AppColors.line, width: 1),
       ),
       child: Stack(
         children: [
@@ -45,7 +55,7 @@ class MenuItemCard extends StatelessWidget {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                     decoration: BoxDecoration(
-                      color: badgeBg,
+                      color: inStock ? badgeBg : const Color(0xFFFEE2E2),
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
@@ -53,7 +63,7 @@ class MenuItemCard extends StatelessWidget {
                       style: AppFonts.mono(
                         fontSize: 10.5,
                         fontWeight: FontWeight.w600,
-                        color: accentInk,
+                        color: inStock ? accentInk : AppColors.red,
                       ),
                     ),
                   ),
@@ -112,6 +122,24 @@ class MenuItemCard extends StatelessWidget {
             child: Consumer<CartProvider>(
               builder: (context, cart, _) {
                 final qty = cart.getQty(item.id);
+
+                if (!inStock) {
+                  return Align(
+                    alignment: Alignment.centerRight,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEE2E2),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'Sold out',
+                        style: AppFonts.mono(fontSize: 10.5, fontWeight: FontWeight.w700, color: AppColors.red),
+                      ),
+                    ),
+                  );
+                }
+
                 return SizedBox(
                   height: 30,
                   child: qty == 0

@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/menu_item.dart';
+import '../services/firestore_service.dart';
 
 /// A single item in the cart, pairing a MenuItem with its quantity.
 class CartEntry {
@@ -9,14 +11,35 @@ class CartEntry {
   CartEntry({required this.item, this.qty = 1});
 
   double get subtotal => item.price * qty;
-  bool get isAvailable => item.available;
+  bool get isAvailable => item.isInStock;
 }
 
 /// Central cart state using ChangeNotifier (Provider pattern).
-/// Supports live stock synchronization (Zepto/Instamart style).
+/// Automatically connects to live Firestore menu items stream to maintain real-time stock sync.
 class CartProvider extends ChangeNotifier {
+  final FirestoreService _firestore = FirestoreService();
+  StreamSubscription? _menuSub;
+
   /// Map of item ID → CartEntry for O(1) lookups
   final Map<String, CartEntry> _entries = {};
+
+  CartProvider() {
+    _initLiveStockListener();
+  }
+
+  void _initLiveStockListener() {
+    _menuSub = _firestore.allMenuItemsStream().listen((catalogItems) {
+      syncAvailability(catalogItems);
+    }, onError: (e) {
+      debugPrint('Error syncing cart stock: $e');
+    });
+  }
+
+  @override
+  void dispose() {
+    _menuSub?.cancel();
+    super.dispose();
+  }
 
   // ─── Read-only accessors ──────────────────────────────────────
 
@@ -83,7 +106,15 @@ class CartProvider extends ChangeNotifier {
 
   /// Add one of this item to cart (or increment if already present)
   void addItem(MenuItem item) {
-    if (!item.available) return; // Prevent adding if out of stock
+    if (!item.isInStock) return; // Prevent adding if out of stock
+
+    // For instant items, enforce max available stock limit
+    if (item.isInstant && item.stockCount > 0) {
+      final currentQty = getQty(item.id);
+      if (currentQty >= item.stockCount) {
+        return; // Cannot add more than in-stock quantity
+      }
+    }
 
     if (_entries.containsKey(item.id)) {
       _entries[item.id]!.qty++;
@@ -130,10 +161,13 @@ class CartProvider extends ChangeNotifier {
 
     for (final entry in _entries.values) {
       final liveItem = map[entry.item.id];
-      final isNowAvailable = liveItem != null ? liveItem.available : false;
+      final isNowInStock = liveItem != null ? liveItem.isInStock : false;
 
-      if (entry.item.available != isNowAvailable) {
-        entry.item = entry.item.copyWith(available: isNowAvailable);
+      if (entry.item.available != isNowInStock || (liveItem != null && entry.item.stockCount != liveItem.stockCount)) {
+        entry.item = entry.item.copyWith(
+          available: liveItem?.available ?? false,
+          stockCount: liveItem?.stockCount ?? 0,
+        );
         hasChanged = true;
       }
     }
@@ -148,7 +182,7 @@ class CartProvider extends ChangeNotifier {
     bool hasChanged = false;
     for (final id in outOfStockIds) {
       if (_entries.containsKey(id) && _entries[id]!.item.available) {
-        _entries[id]!.item = _entries[id]!.item.copyWith(available: false);
+        _entries[id]!.item = _entries[id]!.item.copyWith(available: false, stockCount: 0);
         hasChanged = true;
       }
     }

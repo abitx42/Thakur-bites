@@ -46,7 +46,8 @@ export function subscribeOrders(callback) {
         id: doc.id,
         ...data,
         createdAtDate: data.createdAt ? data.createdAt.toDate() : new Date(),
-        readyAtDate: data.readyAt ? data.readyAt.toDate() : null
+        readyAtDate: data.readyAt ? data.readyAt.toDate() : null,
+        collectedAtDate: data.collectedAt ? data.collectedAt.toDate() : null
       };
     });
     callback(orders);
@@ -85,10 +86,22 @@ export function subscribeMenuItems(callback) {
   const menuRef = collection(db, 'menuItems');
 
   return onSnapshot(menuRef, (snapshot) => {
-    const items = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    const items = snapshot.docs.map(doc => {
+      const data = doc.data();
+      const isAvail = data.available !== false;
+      const stock = data.stockCount !== undefined ? Number(data.stockCount) : (isAvail ? 50 : 0);
+      const isInstant = data.type === 'instant';
+
+      return {
+        id: doc.id,
+        ...data,
+        price: Number(data.price || 0),
+        prepMinutes: Number(data.prepMinutes || 0),
+        stockCount: stock,
+        batchDate: data.batchDate || '',
+        available: isAvail && (!isInstant || stock > 0)
+      };
+    });
     callback(items);
   }, (error) => {
     console.error("Error subscribing to menu items:", error);
@@ -96,7 +109,7 @@ export function subscribeMenuItems(callback) {
 }
 
 /**
- * Toggle availability of a menu item in Firestore
+ * Toggle availability of a cooked menu item in Firestore
  * @param {string} itemId 
  * @param {boolean} isAvailable 
  */
@@ -106,13 +119,37 @@ export async function toggleItemAvailability(itemId, isAvailable) {
 }
 
 /**
- * Update price of a menu item
+ * Update quantity / stock count for packaged/store items in Firestore
+ * Automatically sets available = true if count > 0, or false if count <= 0.
  * @param {string} itemId 
- * @param {number} newPrice 
+ * @param {number} count 
  */
-export async function updateItemPrice(itemId, newPrice) {
+export async function updateItemStockCount(itemId, count) {
+  const newCount = Math.max(0, Number(count));
   const itemRef = doc(db, 'menuItems', itemId);
-  await updateDoc(itemRef, { price: Number(newPrice) });
+  await updateDoc(itemRef, { 
+    stockCount: newCount,
+    available: newCount > 0 
+  });
+}
+
+/**
+ * Update details of a menu item (name, price, category, batchDate, prepMinutes)
+ * @param {string} itemId 
+ * @param {Object} details 
+ */
+export async function updateItemDetails(itemId, details) {
+  const itemRef = doc(db, 'menuItems', itemId);
+  const updateData = {};
+
+  if (details.name !== undefined) updateData.name = details.name.trim();
+  if (details.price !== undefined) updateData.price = Number(details.price);
+  if (details.category !== undefined) updateData.category = details.category;
+  if (details.prepMinutes !== undefined) updateData.prepMinutes = Number(details.prepMinutes);
+  if (details.batchDate !== undefined) updateData.batchDate = details.batchDate.trim();
+  if (details.type !== undefined) updateData.type = details.type;
+
+  await updateDoc(itemRef, updateData);
 }
 
 /**
@@ -122,14 +159,18 @@ export async function updateItemPrice(itemId, newPrice) {
 export async function saveMenuItem(itemData) {
   const docId = itemData.id || itemData.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
   const itemRef = doc(db, 'menuItems', docId);
+  const isInstant = itemData.type === 'instant';
+  const initialStock = itemData.stockCount !== undefined ? Number(itemData.stockCount) : 50;
   
   await setDoc(itemRef, {
-    name: itemData.name,
+    name: itemData.name.trim(),
     price: Number(itemData.price),
     category: itemData.category,
     type: itemData.type,
     prepMinutes: Number(itemData.prepMinutes || 0),
-    available: itemData.available !== undefined ? itemData.available : true,
+    stockCount: isInstant ? initialStock : 100,
+    batchDate: itemData.batchDate || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+    available: isInstant ? initialStock > 0 : (itemData.available !== undefined ? itemData.available : true),
     imageUrl: itemData.imageUrl || '',
     iconKey: itemData.iconKey || itemData.category || ''
   }, { merge: true });

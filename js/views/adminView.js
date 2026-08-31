@@ -1,9 +1,17 @@
-// Phase 11 — Live Menu & Stock Management View
-import { subscribeMenuItems, toggleItemAvailability, updateItemPrice, saveMenuItem, deleteMenuItem } from '../firebase.js';
+// Phase 11 — Live Menu & Stock Management View with Distinct Cooked vs Store Item Logic
+import { 
+  subscribeMenuItems, 
+  toggleItemAvailability, 
+  updateItemStockCount, 
+  updateItemDetails, 
+  saveMenuItem, 
+  deleteMenuItem 
+} from '../firebase.js';
 
 let unsubscribeMenu = null;
 let currentItems = [];
 let showAddModal = false;
+let editingItem = null; // Item object currently being edited in details modal
 
 export function renderAdminView(container) {
   if (unsubscribeMenu) {
@@ -11,167 +19,423 @@ export function renderAdminView(container) {
   }
 
   function render() {
+    const cookedItems = currentItems.filter(i => i.type === 'cooked');
+    const storeItems = currentItems.filter(i => i.type === 'instant');
+
     container.innerHTML = `
-      <div class="main-wrapper" style="max-width: 1200px; margin: 0 auto; padding: 1.5rem 1rem;">
+      <div class="main-wrapper" style="max-width: 1300px; margin: 0 auto; padding: 1.5rem 1rem;">
+        
         <!-- Header -->
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
           <div>
-            <h2 style="font-family: var(--font-display); font-size: 2.2rem; letter-spacing: 0.05em; margin: 0; line-height: 1;">
-              MENU & STOCK MANAGEMENT
-            </h2>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <h2 style="font-family: var(--font-display); font-size: 2.2rem; letter-spacing: 0.05em; margin: 0; line-height: 1;">
+                MENU & INVENTORY MANAGEMENT
+              </h2>
+              <span style="background: #22C55E; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 999px;">
+                ● LIVE SYNC
+              </span>
+            </div>
             <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
-              Live canteen catalog. Toggling availability updates the student app in real time.
+              Kitchen-made items use simple in-stock toggles. Store packaged items track live unit counts & batch dates.
             </p>
           </div>
 
           <button 
             id="open-add-modal-btn"
-            style="padding: 10px 18px; border-radius: 999px; background: var(--brand-red); color: #FFF; border: none; font-family: var(--font-sans); font-size: 0.9rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;"
+            style="padding: 10px 20px; border-radius: 999px; background: var(--brand-red); color: #FFF; border: none; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(214,64,43,0.25);"
           >
             <span>+</span>
             <span>Add New Dish</span>
           </button>
         </div>
 
-        <!-- Menu Items Grid -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.2rem; margin-bottom: 2rem;">
-          ${currentItems.map(item => {
-            const isAvailable = item.available !== false;
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 1: CANTEEN KITCHEN ITEMS (COOKED - TOGGLE ONLY)     -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="margin-bottom: 2.5rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+            <h3 style="font-family: var(--font-display); font-size: 1.4rem; color: #6B4408; margin: 0; display: flex; align-items: center; gap: 8px;">
+              <span>🍳</span>
+              <span>KITCHEN PREPARED ITEMS (${cookedItems.length})</span>
+            </h3>
+            <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary);">
+              Dosa, Roti-Bhaji, Chai, Meals (Direct In-Stock Toggles)
+            </span>
+          </div>
 
-            return `
-              <div class="menu-admin-card" style="background: #FFF; border: 2px solid ${isAvailable ? 'var(--border-light)' : '#FCA5A5'}; border-radius: 12px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between; opacity: ${isAvailable ? '1' : '0.85'};">
-                <div>
-                  <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.8rem;">
-                    <div>
-                      <h4 style="font-family: var(--font-sans); font-size: 1.1rem; font-weight: 700; color: var(--ink-primary); margin: 0;">
-                        ${item.name}
-                      </h4>
-                      <div style="display: flex; gap: 6px; margin-top: 4px;">
-                        <span style="font-family: var(--font-mono); font-size: 0.75rem; background: var(--bg-surface); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-light);">
-                          ${item.category || 'general'}
-                        </span>
-                        <span style="font-family: var(--font-mono); font-size: 0.75rem; background: ${item.type === 'cooked' ? '#FBE7BE' : '#DCEACB'}; color: ${item.type === 'cooked' ? '#6B4408' : '#2C4A1E'}; padding: 2px 6px; border-radius: 4px; font-weight: 600;">
-                          ${item.type === 'cooked' ? `~${item.prepMinutes || 5} min` : 'Instant'}
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.2rem;">
+            ${cookedItems.map(item => {
+              const isAvailable = item.available !== false;
+
+              return `
+                <div class="menu-card-admin" style="background: #FFF; border: 2px solid ${isAvailable ? 'var(--border-light)' : '#FCA5A5'}; border-radius: 14px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
+                  <div>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                      <div>
+                        <h4 style="font-family: var(--font-sans); font-size: 1.15rem; font-weight: 800; color: var(--ink-primary); margin: 0;">
+                          ${item.name}
+                        </h4>
+                        <div style="display: flex; gap: 6px; margin-top: 5px;">
+                          <span style="font-family: var(--font-mono); font-size: 0.75rem; background: #FBE7BE; color: #6B4408; padding: 2px 8px; border-radius: 4px; font-weight: 700;">
+                            ~${item.prepMinutes || 5} min
+                          </span>
+                          <span style="font-family: var(--font-mono); font-size: 0.75rem; background: var(--bg-surface); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-light);">
+                            ${item.category}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style="text-align: right;">
+                        <div style="font-family: var(--font-mono); font-size: 1.3rem; font-weight: 800; color: var(--ink-primary);">
+                          ₹${item.price}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Kitchen Item Control: Big Stock Toggle & Edit -->
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 1rem; border-top: 1.5px solid var(--border-light); margin-top: 1rem;">
+                    <button 
+                      class="toggle-cooked-btn" 
+                      data-item-id="${item.id}" 
+                      data-available="${isAvailable}"
+                      style="padding: 8px 16px; border-radius: 999px; border: 1.5px solid ${isAvailable ? '#22C55E' : '#EF4444'}; background: ${isAvailable ? '#F0FDF4' : '#FEF2F2'}; color: ${isAvailable ? '#15803D' : '#B91C1C'}; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; cursor: pointer; display: flex; align-items: center; gap: 6px;"
+                    >
+                      <span>${isAvailable ? '✓' : '✕'}</span>
+                      <span>${isAvailable ? 'In Stock (Open)' : 'Out of Stock (Closed)'}</span>
+                    </button>
+
+                    <button 
+                      class="edit-item-btn" 
+                      data-item-id="${item.id}"
+                      style="background: var(--bg-surface); border: 1px solid var(--border-light); padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--ink-primary);"
+                    >
+                      ✏️ Edit
+                    </button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 2: PACKAGED STORE ITEMS (UNIT QUANTITY & BATCH)    -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="margin-bottom: 2rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+            <h3 style="font-family: var(--font-display); font-size: 1.4rem; color: #2C4A1E; margin: 0; display: flex; align-items: center; gap: 8px;">
+              <span>📦</span>
+              <span>STORE PACKAGED ITEMS & INVENTORY (${storeItems.length})</span>
+            </h3>
+            <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary);">
+              Chocolates, Cold Drinks, Chips, Biscuits (Live Available Units)
+            </span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1.2rem;">
+            ${storeItems.map(item => {
+              const stock = item.stockCount || 0;
+              const isInStock = stock > 0 && item.available !== false;
+
+              return `
+                <div class="menu-card-admin" style="background: ${isInStock ? '#FFF' : '#FFFDF7'}; border: 2px solid ${isInStock ? 'var(--border-light)' : '#FCA5A5'}; border-radius: 14px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
+                  <div>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                      <div>
+                        <h4 style="font-family: var(--font-sans); font-size: 1.15rem; font-weight: 800; color: var(--ink-primary); margin: 0;">
+                          ${item.name}
+                        </h4>
+                        <div style="display: flex; gap: 6px; margin-top: 5px; flex-wrap: wrap;">
+                          <span style="font-family: var(--font-mono); font-size: 0.75rem; background: #DCEACB; color: #2C4A1E; padding: 2px 8px; border-radius: 4px; font-weight: 700;">
+                            Store Item
+                          </span>
+                          ${item.batchDate ? `
+                            <span style="font-family: var(--font-mono); font-size: 0.75rem; background: var(--bg-surface); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-light); color: var(--ink-secondary);">
+                              📦 Batch: ${item.batchDate}
+                            </span>
+                          ` : ''}
+                        </div>
+                      </div>
+
+                      <div style="text-align: right;">
+                        <div style="font-family: var(--font-mono); font-size: 1.3rem; font-weight: 800; color: var(--ink-primary);">
+                          ₹${item.price}
+                        </div>
+                        <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: ${isInStock ? '#16A34A' : '#DC2626'};">
+                          ${isInStock ? `${stock} in stock` : '0 (Sold Out)'}
                         </span>
                       </div>
                     </div>
+                  </div>
 
-                    <!-- Price Editor -->
-                    <div style="display: flex; align-items: center; gap: 4px;">
-                      <span style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700;">₹</span>
-                      <input 
-                        type="number" 
-                        class="price-input" 
-                        data-item-id="${item.id}" 
-                        value="${item.price}" 
-                        style="width: 60px; padding: 4px 6px; border-radius: 6px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1rem; font-weight: 700; text-align: center;"
-                      />
+                  <!-- Store Item Control: Available Quantity Stepper -->
+                  <div style="padding-top: 1rem; border-top: 1.5px solid var(--border-light); margin-top: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                      <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary);">
+                        AVAILABLE QUANTITY:
+                      </span>
+                      
+                      <div style="display: flex; align-items: center; gap: 4px;">
+                        <!-- Minus Button -->
+                        <button 
+                          class="stock-step-btn minus-stock-btn" 
+                          data-item-id="${item.id}" 
+                          data-current-stock="${stock}"
+                          style="width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
+                        >
+                          –
+                        </button>
+
+                        <!-- Stock Count Display / Input -->
+                        <input 
+                          type="number" 
+                          class="stock-count-input" 
+                          data-item-id="${item.id}" 
+                          value="${stock}" 
+                          style="width: 55px; padding: 4px; border-radius: 6px; border: 1.5px solid ${isInStock ? 'var(--border-light)' : '#EF4444'}; font-family: var(--font-mono); font-size: 1.05rem; font-weight: 800; text-align: center; color: ${isInStock ? 'var(--ink-primary)' : '#DC2626'};"
+                        />
+
+                        <!-- Plus Button -->
+                        <button 
+                          class="stock-step-btn plus-stock-btn" 
+                          data-item-id="${item.id}" 
+                          data-current-stock="${stock}"
+                          style="width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
+                        >
+                          +
+                        </button>
+                      </div>
                     </div>
+
+                    <!-- Quick Restock Chips (+5, +10, +25) & Edit Button -->
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <div style="display: flex; gap: 4px;">
+                        ${[5, 10, 25].map(add => `
+                          <button 
+                            class="quick-restock-btn" 
+                            data-item-id="${item.id}" 
+                            data-current-stock="${stock}" 
+                            data-add="${add}"
+                            style="padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer; color: var(--ink-primary);"
+                          >
+                            +${add}
+                          </button>
+                        `).join('')}
+                      </div>
+
+                      <button 
+                        class="edit-item-btn" 
+                        data-item-id="${item.id}"
+                        style="background: transparent; border: 1px solid var(--border-light); padding: 4px 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--ink-primary);"
+                      >
+                        ✏️ Edit
+                      </button>
+                    </div>
+                  </div>
+
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- MODAL: EDIT ITEM DETAILS & PRICE (Infrequent changes)       -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        ${editingItem ? `
+          <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
+            <div style="background: #FFF; border-radius: 18px; width: 100%; max-width: 500px; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.25);">
+              
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <div>
+                  <h3 style="font-family: var(--font-display); font-size: 1.8rem; margin: 0; line-height: 1;">
+                    EDIT DISH DETAILS
+                  </h3>
+                  <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary);">
+                    Item ID: ${editingItem.id}
+                  </span>
+                </div>
+                <button id="close-edit-modal-btn" style="background: transparent; border: none; font-size: 1.4rem; cursor: pointer; color: var(--ink-secondary);">✕</button>
+              </div>
+
+              <form id="edit-dish-form">
+                <!-- Dish Name -->
+                <div style="margin-bottom: 1.2rem;">
+                  <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Dish Name</label>
+                  <input type="text" id="edit-name" value="${editingItem.name}" required style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 1rem; box-sizing: border-box;" />
+                </div>
+
+                <!-- Price & Prep Time -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                  <div>
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Price (₹)</label>
+                    <input type="number" id="edit-price" value="${editingItem.price}" required style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; box-sizing: border-box;" />
+                  </div>
+
+                  <div>
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Prep Time (mins)</label>
+                    <input type="number" id="edit-prep" value="${editingItem.prepMinutes || 0}" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1rem; box-sizing: border-box;" />
                   </div>
                 </div>
 
-                <!-- Footer: Availability Toggle & Delete -->
-                <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 0.8rem; border-top: 1px solid var(--border-light); margin-top: 0.8rem;">
-                  <button 
-                    class="toggle-stock-btn" 
-                    data-item-id="${item.id}" 
-                    data-available="${isAvailable}"
-                    style="padding: 6px 12px; border-radius: 999px; border: 1.5px solid ${isAvailable ? '#22C55E' : '#EF4444'}; background: ${isAvailable ? '#F0FDF4' : '#FEF2F2'}; color: ${isAvailable ? '#15803D' : '#B91C1C'}; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;"
-                  >
-                    ${isAvailable ? '✓ In Stock' : '✕ Out of Stock'}
-                  </button>
+                <!-- Category & Type -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                  <div>
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Category</label>
+                    <select id="edit-category" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
+                      <option value="dosa" ${editingItem.category === 'dosa' ? 'selected' : ''}>Dosa</option>
+                      <option value="rotibhaji" ${editingItem.category === 'rotibhaji' ? 'selected' : ''}>Roti-Bhaji</option>
+                      <option value="drinks" ${editingItem.category === 'drinks' ? 'selected' : ''}>Drinks</option>
+                      <option value="snacks" ${editingItem.category === 'snacks' ? 'selected' : ''}>Snacks</option>
+                      <option value="lunch" ${editingItem.category === 'lunch' ? 'selected' : ''}>Lunch / Meals</option>
+                      <option value="chinese" ${editingItem.category === 'chinese' ? 'selected' : ''}>Chinese</option>
+                    </select>
+                  </div>
 
-                  <button 
-                    class="delete-item-btn" 
-                    data-item-id="${item.id}"
-                    data-item-name="${item.name}"
-                    style="background: transparent; border: none; color: var(--ink-secondary); font-size: 0.8rem; cursor: pointer; padding: 4px 8px;"
-                    title="Delete Item"
-                  >
-                    🗑️ Delete
-                  </button>
+                  <div>
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Item Type</label>
+                    <select id="edit-type" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
+                      <option value="cooked" ${editingItem.type === 'cooked' ? 'selected' : ''}>🍳 Kitchen Cooked</option>
+                      <option value="instant" ${editingItem.type === 'instant' ? 'selected' : ''}>📦 Store Packaged</option>
+                    </select>
+                  </div>
                 </div>
-              </div>
-            `;
-          }).join('')}
-        </div>
 
-        <!-- Add New Dish Modal -->
+                <!-- Batch Date (for store items) -->
+                <div style="margin-bottom: 1.8rem;">
+                  <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Stock Batch / Arrival Date (Optional)</label>
+                  <input type="text" id="edit-batch" value="${editingItem.batchDate || ''}" placeholder="e.g. 31-Aug / Lot #4" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.95rem; box-sizing: border-box;" />
+                </div>
+
+                <!-- Actions -->
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <button 
+                    type="button" 
+                    id="delete-edit-item-btn"
+                    style="background: transparent; border: none; color: #DC2626; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer; padding: 8px;"
+                  >
+                    🗑️ Delete Item
+                  </button>
+
+                  <div style="display: flex; gap: 10px;">
+                    <button 
+                      type="button" 
+                      id="cancel-edit-btn"
+                      style="padding: 10px 18px; border-radius: 10px; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-sans); font-size: 0.9rem; font-weight: 600; cursor: pointer;"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="submit" 
+                      style="padding: 10px 24px; border-radius: 10px; background: var(--brand-red); color: #FFF; border: none; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; cursor: pointer;"
+                    >
+                      Save Changes
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- MODAL: ADD NEW DISH                                        -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
         ${showAddModal ? `
-          <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
-            <div style="background: #FFF; border-radius: 16px; width: 100%; max-width: 480px; padding: 1.8rem; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem;">
-                <h3 style="font-family: var(--font-display); font-size: 1.6rem; margin: 0;">ADD NEW MENU DISH</h3>
-                <button id="close-modal-btn" style="background: transparent; border: none; font-size: 1.2rem; cursor: pointer;">✕</button>
+          <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
+            <div style="background: #FFF; border-radius: 18px; width: 100%; max-width: 500px; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.25);">
+              
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h3 style="font-family: var(--font-display); font-size: 1.8rem; margin: 0; line-height: 1;">
+                  ADD NEW CANTEEN DISH
+                </h3>
+                <button id="close-add-modal-btn" style="background: transparent; border: none; font-size: 1.4rem; cursor: pointer; color: var(--ink-secondary);">✕</button>
               </div>
 
               <form id="add-dish-form">
-                <div style="margin-bottom: 1rem;">
-                  <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 600; margin-bottom: 4px;">Dish Name</label>
-                  <input type="text" id="dish-name" required placeholder="e.g. Veg Cheese Sandwich" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); box-sizing: border-box;" />
+                <div style="margin-bottom: 1.2rem;">
+                  <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Dish Name</label>
+                  <input type="text" id="add-name" required placeholder="e.g. Veg Cheese Sandwich" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 1rem; box-sizing: border-box;" />
                 </div>
 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 1rem;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
                   <div>
-                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 600; margin-bottom: 4px;">Price (₹)</label>
-                    <input type="number" id="dish-price" required placeholder="60" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); box-sizing: border-box;" />
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Price (₹)</label>
+                    <input type="number" id="add-price" required placeholder="50" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; box-sizing: border-box;" />
                   </div>
                   <div>
-                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 600; margin-bottom: 4px;">Prep Time (mins)</label>
-                    <input type="number" id="dish-prep" value="5" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); box-sizing: border-box;" />
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Initial Stock Quantity</label>
+                    <input type="number" id="add-stock" value="25" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1rem; box-sizing: border-box;" />
                   </div>
                 </div>
 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 1.5rem;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
                   <div>
-                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 600; margin-bottom: 4px;">Category</label>
-                    <select id="dish-category" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); box-sizing: border-box;">
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Category</label>
+                    <select id="add-category" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
                       <option value="dosa">Dosa</option>
                       <option value="rotibhaji">Roti-Bhaji</option>
                       <option value="drinks">Drinks</option>
                       <option value="snacks">Snacks</option>
+                      <option value="lunch">Lunch / Meals</option>
                       <option value="chinese">Chinese</option>
-                      <option value="lunch">Lunch / Thali</option>
                     </select>
                   </div>
                   <div>
-                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 600; margin-bottom: 4px;">Type</label>
-                    <select id="dish-type" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); box-sizing: border-box;">
-                      <option value="cooked">Cooked (~mins)</option>
-                      <option value="instant">Instant (Ready)</option>
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Item Type</label>
+                    <select id="add-type" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
+                      <option value="cooked">🍳 Kitchen Cooked (~mins)</option>
+                      <option value="instant">📦 Store Packaged (Unit Stock)</option>
                     </select>
                   </div>
                 </div>
 
-                <button type="submit" style="width: 100%; padding: 12px; border-radius: 10px; background: var(--brand-red); color: #FFF; border: none; font-family: var(--font-sans); font-size: 1rem; font-weight: 700; cursor: pointer;">
-                  Save to Firestore
+                <div style="margin-bottom: 1.8rem;">
+                  <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Prep Time (mins, for cooked items)</label>
+                  <input type="number" id="add-prep" value="5" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1rem; box-sizing: border-box;" />
+                </div>
+
+                <button type="submit" style="width: 100%; padding: 14px; border-radius: 12px; background: var(--brand-red); color: #FFF; border: none; font-family: var(--font-sans); font-size: 1.05rem; font-weight: 700; cursor: pointer;">
+                  Add Dish to Live Menu
                 </button>
               </form>
+
             </div>
           </div>
         ` : ''}
+
       </div>
     `;
 
-    // Listeners
+    // ─── Listeners & Interactions ───────────────────────────────────
+
+    // Open/Close Add Modal
     const openAddBtn = container.querySelector('#open-add-modal-btn');
-    if (openAddBtn) {
-      openAddBtn.addEventListener('click', () => {
-        showAddModal = true;
+    if (openAddBtn) openAddBtn.addEventListener('click', () => { showAddModal = true; render(); });
+
+    const closeAddBtn = container.querySelector('#close-add-modal-btn');
+    if (closeAddBtn) closeAddBtn.addEventListener('click', () => { showAddModal = false; render(); });
+
+    // Open/Close Edit Modal
+    container.querySelectorAll('.edit-item-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const itemId = btn.getAttribute('data-item-id');
+        editingItem = currentItems.find(i => i.id === itemId);
         render();
       });
-    }
+    });
 
-    const closeBtn = container.querySelector('#close-modal-btn');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', () => {
-        showAddModal = false;
-        render();
-      });
-    }
+    const closeEditBtn = container.querySelector('#close-edit-modal-btn');
+    if (closeEditBtn) closeEditBtn.addEventListener('click', () => { editingItem = null; render(); });
 
-    // Toggle stock
-    container.querySelectorAll('.toggle-stock-btn').forEach(btn => {
+    const cancelEditBtn = container.querySelector('#cancel-edit-btn');
+    if (cancelEditBtn) cancelEditBtn.addEventListener('click', () => { editingItem = null; render(); });
+
+    // 1. Cooked Item In-Stock Toggle
+    container.querySelectorAll('.toggle-cooked-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const itemId = btn.getAttribute('data-item-id');
         const currentAvail = btn.getAttribute('data-available') === 'true';
@@ -180,43 +444,96 @@ export function renderAdminView(container) {
       });
     });
 
-    // Inline price change
-    container.querySelectorAll('.price-input').forEach(input => {
-      input.addEventListener('change', async () => {
-        const itemId = input.getAttribute('data-item-id');
-        const newPrice = input.value;
-        if (newPrice && Number(newPrice) > 0) {
-          await updateItemPrice(itemId, newPrice);
-        }
-      });
-    });
-
-    // Delete item
-    container.querySelectorAll('.delete-item-btn').forEach(btn => {
+    // 2. Store Item Steppers (− / +)
+    container.querySelectorAll('.minus-stock-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const itemId = btn.getAttribute('data-item-id');
-        const itemName = btn.getAttribute('data-item-name');
-        if (confirm(`Are you sure you want to delete "${itemName}"?`)) {
-          await deleteMenuItem(itemId);
-        }
+        const currentStock = Number(btn.getAttribute('data-current-stock'));
+        await updateItemStockCount(itemId, Math.max(0, currentStock - 1));
       });
     });
 
-    // Add form submission
-    const form = container.querySelector('#add-dish-form');
-    if (form) {
-      form.addEventListener('submit', async (e) => {
+    container.querySelectorAll('.plus-stock-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const itemId = btn.getAttribute('data-item-id');
+        const currentStock = Number(btn.getAttribute('data-current-stock'));
+        await updateItemStockCount(itemId, currentStock + 1);
+      });
+    });
+
+    // 3. Quick Restock (+5, +10, +25)
+    container.querySelectorAll('.quick-restock-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const itemId = btn.getAttribute('data-item-id');
+        const currentStock = Number(btn.getAttribute('data-current-stock'));
+        const addAmount = Number(btn.getAttribute('data-add'));
+        await updateItemStockCount(itemId, currentStock + addAmount);
+      });
+    });
+
+    // 4. Direct Stock Count Input
+    container.querySelectorAll('.stock-count-input').forEach(input => {
+      input.addEventListener('change', async () => {
+        const itemId = input.getAttribute('data-item-id');
+        const val = Math.max(0, Number(input.value || 0));
+        await updateItemStockCount(itemId, val);
+      });
+    });
+
+    // 5. Edit Details Form Submission
+    const editForm = container.querySelector('#edit-dish-form');
+    if (editForm && editingItem) {
+      editForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const name = form.querySelector('#dish-name').value;
-        const price = form.querySelector('#dish-price').value;
-        const prepMinutes = form.querySelector('#dish-prep').value;
-        const category = form.querySelector('#dish-category').value;
-        const type = form.querySelector('#dish-type').value;
+        const name = editForm.querySelector('#edit-name').value;
+        const price = editForm.querySelector('#edit-price').value;
+        const prepMinutes = editForm.querySelector('#edit-prep').value;
+        const category = editForm.querySelector('#edit-category').value;
+        const type = editForm.querySelector('#edit-type').value;
+        const batchDate = editForm.querySelector('#edit-batch').value;
+
+        await updateItemDetails(editingItem.id, {
+          name,
+          price,
+          prepMinutes,
+          category,
+          type,
+          batchDate
+        });
+
+        editingItem = null;
+        render();
+      });
+
+      const deleteBtn = editForm.querySelector('#delete-edit-item-btn');
+      if (deleteBtn) {
+        deleteBtn.addEventListener('click', async () => {
+          if (confirm(`Are you sure you want to delete "${editingItem.name}"?`)) {
+            await deleteMenuItem(editingItem.id);
+            editingItem = null;
+            render();
+          }
+        });
+      }
+    }
+
+    // 6. Add Dish Form Submission
+    const addForm = container.querySelector('#add-dish-form');
+    if (addForm) {
+      addForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = addForm.querySelector('#add-name').value;
+        const price = addForm.querySelector('#add-price').value;
+        const stockCount = addForm.querySelector('#add-stock').value;
+        const category = addForm.querySelector('#add-category').value;
+        const type = addForm.querySelector('#add-type').value;
+        const prepMinutes = addForm.querySelector('#add-prep').value;
 
         await saveMenuItem({
           name,
           price,
-          prepMinutes: type === 'instant' ? 0 : prepMinutes,
+          stockCount: type === 'instant' ? Number(stockCount) : 100,
+          prepMinutes: type === 'instant' ? 0 : Number(prepMinutes),
           category,
           type,
           available: true
