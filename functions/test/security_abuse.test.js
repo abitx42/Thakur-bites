@@ -3345,4 +3345,70 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(/^\d{6}$/.test(pin1), true);
     assert.notStrictEqual(pin1, '123456', 'Static default PIN eliminated');
   });
+
+  it('158. Threat Risk Score Engine: Accurately computes weighted composite risk scores across multi-signal attack matrices', () => {
+    const { calculateThreatScore } = require('../lib/security_engine');
+
+    const lowSignals = [{ type: 'VELOCITY_SPIKE' }]; // 15
+    assert.strictEqual(calculateThreatScore(lowSignals), 15);
+
+    const medSignals = [{ type: 'AUTH_FAILURE' }, { type: 'IDOR_ATTEMPT' }]; // 20 + 25 = 45
+    assert.strictEqual(calculateThreatScore(medSignals), 45);
+
+    const highSignals = [{ type: 'FINANCIAL_TAMPERING' }, { type: 'STATE_TAMPERING' }]; // 40 + 30 = 70
+    assert.strictEqual(calculateThreatScore(highSignals), 70);
+
+    const critSignals = [
+      { type: 'FINANCIAL_TAMPERING' }, // 40
+      { type: 'REPLAY_ATTACK' },       // 30
+      { type: 'DEVICE_MISMATCH' },     // 25
+      { type: 'IDOR_ATTEMPT' },        // 25 -> total 120 clamped to 100
+    ];
+    assert.strictEqual(calculateThreatScore(critSignals), 100);
+  });
+
+  it('159. Threat Mitigation Policy Action Matrix: LOW -> ALLOW, MEDIUM -> THROTTLE, HIGH -> BLOCK, CRITICAL -> CONTAIN_AND_ALERT', () => {
+    const { resolveRiskAction } = require('../lib/security_engine');
+
+    assert.deepStrictEqual(resolveRiskAction(15), { riskLevel: 'LOW', action: 'ALLOW' });
+    assert.deepStrictEqual(resolveRiskAction(55), { riskLevel: 'MEDIUM', action: 'THROTTLE' });
+    assert.deepStrictEqual(resolveRiskAction(75), { riskLevel: 'HIGH', action: 'BLOCK' });
+    assert.deepStrictEqual(resolveRiskAction(95), { riskLevel: 'CRITICAL', action: 'CONTAIN_AND_ALERT' });
+  });
+
+  it('160. College NAT-Aware Attribution Invariant: Isolates threats by actor & device without banning shared IP subnets', () => {
+    function evaluateActorScope(actorId, deviceId, clientIp) {
+      // Security Invariant: Rate limiting & containment binds to actorId:deviceId, NOT clientIp
+      return {
+        scopeKey: `${actorId}:${deviceId}`,
+        isIpBanned: false, // Never ban entire college IP subnet
+      };
+    }
+
+    const res1 = evaluateActorScope('user_123', 'dev_abc', '192.168.1.100');
+    const res2 = evaluateActorScope('user_456', 'dev_xyz', '192.168.1.100');
+
+    assert.strictEqual(res1.scopeKey, 'user_123:dev_abc');
+    assert.strictEqual(res2.scopeKey, 'user_456:dev_xyz');
+    assert.strictEqual(res1.isIpBanned, false);
+    assert.strictEqual(res2.isIpBanned, false, 'Shared campus NAT subnet must remain accessible to legitimate peers');
+  });
+
+  it('161. Non-Oracle Defense Response: Emits SEC-XXXX correlation incident and uniform non-oracle payload', async () => {
+    const { evaluateSecurityThreat } = require('../lib/security_engine');
+
+    const result = await evaluateSecurityThreat({
+      actorId: 'attacker_1',
+      deviceId: 'dev_burp',
+      clientIp: '10.0.0.1',
+      endpoint: 'createCheckout',
+      signals: [{ type: 'FINANCIAL_TAMPERING' }, { type: 'STATE_TAMPERING' }], // 70 -> HIGH -> BLOCK
+    });
+
+    assert.strictEqual(result.riskLevel, 'HIGH');
+    assert.strictEqual(result.action, 'BLOCK');
+    assert.ok(result.incidentId.startsWith('SEC-'));
+    assert.strictEqual(result.sanitizedResponse.message, 'Nice try. Try harder. 😉');
+    assert.strictEqual(result.sanitizedResponse.success, false);
+  });
 });

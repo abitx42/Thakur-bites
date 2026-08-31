@@ -23,7 +23,7 @@ npm audit --audit-level=high
 cd ..
 
 echo ""
-echo "▶ Step 4: Compiling & Testing Backend Cloud Functions (181 Invariant Tests)..."
+echo "▶ Step 4: Compiling & Testing Backend Cloud Functions (185 Invariant Tests)..."
 cd functions
 npm run build
 npm test
@@ -50,7 +50,7 @@ node scripts/simulate_lunch_rush.js
 
 echo ""
 echo "══════════════════════════════════════════════════════════════════════"
-echo "🏆 ALL 8 SECURITY, SAST & INVARIANT GATES PASSED (212 TOTAL TESTS 100% GREEN)"
+echo "🏆 ALL 8 SECURITY, SAST & INVARIANT GATES PASSED (216 TOTAL TESTS 100% GREEN)"
 echo "══════════════════════════════════════════════════════════════════════"
 echo ""
 echo "📊 CATEGORICAL SECURITY & INVARIANT AUDIT REPORT:"
