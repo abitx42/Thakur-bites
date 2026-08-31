@@ -27,4 +27,10 @@ export { getKitchenOrders, getPickupOrders, getCashierOrders } from './operation
 export { scheduledSecurityIntegrityMonitor, runSecurityIntegrityScan } from './integrity_monitor';
 export { provisionUserProfile } from './user_provisioning';
 export { reorderPreviousOrder } from './reorder';
+export {
+  submitVerificationApplication,
+  reviewVerificationApplication,
+  getPendingVerificationApplications,
+} from './verification';
+
 

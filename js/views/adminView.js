@@ -8,12 +8,14 @@ import {
   saveMenuItem, 
   deleteMenuItem 
 } from '../firebase.js';
-import { doc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { doc, onSnapshot, collection, query, where } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 
 let unsubscribeMenu = null;
 let unsubscribeStatus = null;
+let unsubscribeApps = null;
 let currentItems = [];
+let currentApplications = [];
 let showAddModal = false;
 let editingItem = null; // Item object currently being edited in details modal
 let currentMode = 'NORMAL';
@@ -22,6 +24,7 @@ let modeLoading = false;
 export function renderAdminView(container) {
   if (unsubscribeMenu) unsubscribeMenu();
   if (unsubscribeStatus) unsubscribeStatus();
+  if (unsubscribeApps) unsubscribeApps();
 
   function render() {
     const cookedItems = currentItems.filter(i => i.type === 'cooked');
@@ -93,6 +96,87 @@ export function renderAdminView(container) {
             <span>+</span>
             <span>Add New Dish</span>
           </button>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 0: FACULTY & STAFF VERIFICATION (PLATFORM 2.0)      -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 16px; padding: 1.4rem; margin-bottom: 2rem; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1rem;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <h3 style="font-family: var(--font-display); font-size: 1.4rem; margin: 0; display: flex; align-items: center; gap: 6px;">
+                  <span>👨‍🏫</span>
+                  <span>FACULTY & STAFF VERIFICATION APPLICATIONS</span>
+                </h3>
+                <span style="background: ${currentApplications.length > 0 ? '#D97706' : '#16A34A'}; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 2px 10px; border-radius: 999px;">
+                  ${currentApplications.length} PENDING
+                </span>
+              </div>
+              <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
+                Review faculty ID applications. Approving grants Teacher/Staff status with Priority Kitchen Queue scheduling.
+              </p>
+            </div>
+          </div>
+
+          ${currentApplications.length === 0 ? `
+            <div style="padding: 1.2rem; background: var(--bg-surface); border-radius: 10px; border: 1px dashed var(--border-light); text-align: center;">
+              <span style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary);">
+                ✅ No pending faculty verification applications. All campus accounts up to date.
+              </span>
+            </div>
+          ` : `
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 1rem;">
+              ${currentApplications.map(app => `
+                <div style="background: var(--bg-surface); border: 1.5px solid var(--border-light); border-radius: 12px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between;">
+                  <div>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                      <div>
+                        <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; background: #FFF; border: 1px solid var(--border-light); padding: 2px 8px; border-radius: 6px; color: var(--brand-red);">
+                          ${app.applicationId || app.id}
+                        </span>
+                        <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; background: #FEF3C7; color: #92400E; padding: 2px 8px; border-radius: 6px; margin-left: 6px;">
+                          ${app.applicationType === 'TEACHER' ? '👨‍🏫 FACULTY' : '🏢 STAFF'}
+                        </span>
+                      </div>
+                      <span style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--ink-secondary);">
+                        ${app.submittedAt ? new Date(app.submittedAt.toDate ? app.submittedAt.toDate() : app.submittedAt).toLocaleDateString() : ''}
+                      </span>
+                    </div>
+
+                    <div style="margin-top: 8px;">
+                      <div style="font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; color: var(--ink-primary);">
+                        ${app.designation || 'Faculty Member'} — ${app.department || 'Department'}
+                      </div>
+                      <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary); margin-top: 2px;">
+                        Employee ID: <strong>${app.employeeId || 'N/A'}</strong>
+                      </div>
+                      <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-top: 2px;">
+                        Email: ${app.officialEmail || 'N/A'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style="display: flex; gap: 8px; margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--border-light);">
+                    <button 
+                      class="approve-app-btn" 
+                      data-app-id="${app.applicationId || app.id}"
+                      style="flex: 1; padding: 8px; border-radius: 8px; border: none; background: #16A34A; color: #FFF; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;"
+                    >
+                      ✓ Approve Faculty
+                    </button>
+                    <button 
+                      class="reject-app-btn" 
+                      data-app-id="${app.applicationId || app.id}"
+                      style="padding: 8px 12px; border-radius: 8px; border: 1px solid #DC2626; background: #FFF; color: #DC2626; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;"
+                    >
+                      ✕ Reject
+                    </button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `}
         </div>
 
         <!-- ═══════════════════════════════════════════════════════════ -->
@@ -614,6 +698,45 @@ export function renderAdminView(container) {
         }
       });
     });
+    // 8. Verification Applications Actions (Approve / Reject)
+    container.querySelectorAll('.approve-app-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const appId = btn.getAttribute('data-app-id');
+        if (!confirm(`Approve verification for application ${appId}? This will elevate the user to Teacher/Staff with Priority Queue access.`)) return;
+
+        btn.disabled = true;
+        btn.textContent = 'Approving...';
+        try {
+          const functions = getFunctions();
+          const reviewFn = httpsCallable(functions, 'reviewVerificationApplication');
+          await reviewFn({ applicationId: appId, decision: 'APPROVED' });
+        } catch (err) {
+          alert('Approval Error: ' + (err.message || err));
+          btn.disabled = false;
+          btn.textContent = '✓ Approve Faculty';
+        }
+      });
+    });
+
+    container.querySelectorAll('.reject-app-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const appId = btn.getAttribute('data-app-id');
+        const reason = prompt('Reason for rejecting verification:', 'Invalid faculty proof');
+        if (reason === null) return;
+
+        btn.disabled = true;
+        btn.textContent = 'Rejecting...';
+        try {
+          const functions = getFunctions();
+          const reviewFn = httpsCallable(functions, 'reviewVerificationApplication');
+          await reviewFn({ applicationId: appId, decision: 'REJECTED', reviewNotes: reason });
+        } catch (err) {
+          alert('Rejection Error: ' + (err.message || err));
+          btn.disabled = false;
+          btn.textContent = '✕ Reject';
+        }
+      });
+    });
   }
 
   // Subscribe to menu items
@@ -632,5 +755,22 @@ export function renderAdminView(container) {
   }, (err) => {
     console.error("Status subscription notice:", err);
   });
+
+  // Subscribe to verification applications (Platform 2.0)
+  try {
+    const appsQuery = query(
+      collection(db, 'verificationApplications'),
+      where('status', 'in', ['SUBMITTED', 'UNDER_REVIEW'])
+    );
+    unsubscribeApps = onSnapshot(appsQuery, (snap) => {
+      currentApplications = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      render();
+    }, (err) => {
+      console.warn("Verification applications subscription notice:", err);
+    });
+  } catch (err) {
+    console.warn("Could not query verification applications:", err);
+  }
 }
+
 

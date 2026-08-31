@@ -9,7 +9,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
 
 echo ""
-echo "▶ Step 1: Compiling & Testing Backend Cloud Functions (132 Invariant Tests)..."
+echo "▶ Step 1: Compiling & Testing Backend Cloud Functions (136 Invariant Tests)..."
 cd functions
 npm run build
 npm test
@@ -36,5 +36,5 @@ node scripts/simulate_lunch_rush.js
 
 echo ""
 echo "══════════════════════════════════════════════════════════════════════"
-echo "🏆 ALL 5 SECURITY & INVARIANT GATES PASSED (163 TOTAL TESTS 100% GREEN)"
+echo "🏆 ALL 5 SECURITY & INVARIANT GATES PASSED (167 TOTAL TESTS 100% GREEN)"
 echo "══════════════════════════════════════════════════════════════════════"

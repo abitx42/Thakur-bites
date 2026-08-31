@@ -11,6 +11,7 @@ import '../screens/favourites_screen.dart';
 import '../screens/login_sheet.dart';
 import '../screens/order_status_screen.dart';
 import '../screens/preferences_screen.dart';
+import '../screens/verification_screen.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/category_tabs.dart';
@@ -729,34 +730,46 @@ class _MenuScreenState extends State<MenuScreen> {
 
               // Faculty & Staff Notice
               if (student.accountType == AccountType.student || student.accountType == AccountType.visitor)
-                Container(
-                  margin: const EdgeInsets.only(bottom: 20),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: AppColors.mustardSoft.withAlpha(128),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.mustardInk.withAlpha(50)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Text('👨‍🏫', style: TextStyle(fontSize: 22)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Are you TCET Faculty or Staff?',
-                              style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.mustardInk),
-                            ),
-                            Text(
-                              'Submit faculty ID in Phase 3 for priority kitchen queue access.',
-                              style: AppFonts.body(fontSize: 11.5, color: AppColors.inkSoft),
-                            ),
-                          ],
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const VerificationScreen()),
+                    );
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 20),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.mustardSoft.withAlpha(128),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.mustardInk.withAlpha(80)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Text('👨‍🏫', style: TextStyle(fontSize: 24)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Are you TCET Faculty or Staff?',
+                                style: AppFonts.body(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.mustardInk),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                student.verificationStatus == VerificationStatus.underReview
+                                    ? 'Application submitted — Tap to view status ⏳'
+                                    : 'Apply with faculty ID for priority kitchen queue access →',
+                                style: AppFonts.body(fontSize: 11.5, color: AppColors.inkSoft),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                        const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: AppColors.mustardInk),
+                      ],
+                    ),
                   ),
                 ),
 

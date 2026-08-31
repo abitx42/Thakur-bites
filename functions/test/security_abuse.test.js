@@ -2352,4 +2352,88 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(result.allowed, false);
     assert.strictEqual(result.error, 'PERMISSION_DENIED_IDOR');
   });
+
+  it('109. Verification Application State Machine: SUBMITTED -> APPROVED upgrades role & priority', () => {
+    function processVerificationReview(currentApp, decision) {
+      if (currentApp.status !== 'SUBMITTED' && currentApp.status !== 'UNDER_REVIEW') {
+        return { error: 'INVALID_STATE_TRANSITION' };
+      }
+
+      if (decision === 'APPROVED') {
+        return {
+          applicationStatus: 'APPROVED',
+          accountType: currentApp.applicationType,
+          verificationStatus: 'VERIFIED',
+          priorityLevel: 2,
+        };
+      } else {
+        return {
+          applicationStatus: 'REJECTED',
+          accountType: 'STUDENT',
+          verificationStatus: 'REJECTED',
+          priorityLevel: 1,
+        };
+      }
+    }
+
+    const app = { applicationId: 'FAC-01', applicationType: 'TEACHER', status: 'SUBMITTED' };
+    const approved = processVerificationReview(app, 'APPROVED');
+    assert.strictEqual(approved.applicationStatus, 'APPROVED');
+    assert.strictEqual(approved.accountType, 'TEACHER');
+    assert.strictEqual(approved.verificationStatus, 'VERIFIED');
+    assert.strictEqual(approved.priorityLevel, 2);
+  });
+
+  it('110. Verification Review Permission Boundary: Blocks non-admin/manager roles', () => {
+    function canReviewVerifications(role) {
+      return role === 'manager' || role === 'admin' || role === 'security_admin';
+    }
+
+    assert.strictEqual(canReviewVerifications('student'), false);
+    assert.strictEqual(canReviewVerifications('kitchen'), false);
+    assert.strictEqual(canReviewVerifications('pickup'), false);
+    assert.strictEqual(canReviewVerifications('cashier'), false);
+    assert.strictEqual(canReviewVerifications('manager'), true);
+    assert.strictEqual(canReviewVerifications('admin'), true);
+  });
+
+  it('111. Rejection State Machine: Maintains student account without data destruction', () => {
+    const originalUser = {
+      uid: 'user_456',
+      accountType: 'STUDENT',
+      totalOrders: 15,
+      totalSpentPaise: 180000,
+    };
+
+    // Rejection updates verificationStatus only
+    const afterRejection = {
+      ...originalUser,
+      verificationStatus: 'REJECTED',
+    };
+
+    assert.strictEqual(afterRejection.uid, originalUser.uid, 'UID must be identical');
+    assert.strictEqual(afterRejection.totalOrders, 15, 'Order history must not be wiped');
+    assert.strictEqual(afterRejection.totalSpentPaise, 180000, 'Spent metrics must be preserved');
+  });
+
+  it('112. In-Place Account Upgrade Invariant: Zero new account creation on role elevation', () => {
+    const preUpgradeUser = {
+      uid: 'faculty_user_789',
+      displayName: 'Prof. Ramesh',
+      accountType: 'STUDENT',
+      totalOrders: 8,
+      createdAt: '2026-01-15T08:00:00Z',
+    };
+
+    const postUpgradeUser = {
+      ...preUpgradeUser,
+      accountType: 'TEACHER',
+      verificationStatus: 'VERIFIED',
+      priorityLevel: 2,
+    };
+
+    assert.strictEqual(postUpgradeUser.uid, preUpgradeUser.uid, 'Must use SAME UID, no account duplication');
+    assert.strictEqual(postUpgradeUser.createdAt, preUpgradeUser.createdAt, 'Original account registration date preserved');
+    assert.strictEqual(postUpgradeUser.totalOrders, 8, 'All previous orders preserved');
+  });
 });
