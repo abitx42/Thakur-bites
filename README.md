@@ -1,7 +1,7 @@
 # 🍛 Thakur Bites Platform 2.0 — Smart Campus Canteen Operating System
 
-[![Tests](https://img.shields.io/badge/tests-187%20passing-brightgreen.svg)](scripts/run_all_security_checks.sh)
-[![Security Gate](https://img.shields.io/badge/security%20invariants-132%20vectors%20passed-blue.svg)](functions/test/security_abuse.test.js)
+[![Tests](https://img.shields.io/badge/tests-247%20passing-brightgreen.svg)](scripts/run_all_security_checks.sh)
+[![Security Gate](https://img.shields.io/badge/security%20invariants-177%20vectors%20passed-blue.svg)](functions/test/security_abuse.test.js)
 [![Flutter](https://img.shields.io/badge/flutter-3.29%20Web%20%26%20Mobile-02569B.svg)](thakur_bites/)
 [![Firebase](https://img.shields.io/badge/firebase-Cloud%20Functions%20v2-FFCA28.svg)](functions/)
 
@@ -23,17 +23,18 @@ flowchart TD
         B["🍳 Kitchen KDS Display (Web Hub)"] -->|WebSocket Sync| Firestore[("Authoritative Firestore DB")]
         C["📦 Pickup Counter Station"] -->|verifyPickup (PIN / QR)| Gateway
         D["📊 Owner Executive Console"] -->|getOwnerBusinessMetrics| Gateway
-        E["🛡️ Developer Security Cockpit"] -->|simulatePermissionCheck| Gateway
+        E["🛡️ Developer Security Cockpit"] -->|executeEmergencyOperationalAction| Gateway
         F["📺 Standalone TV Board (web_tv/)"] -->|Zero-Auth Read| Firestore
     end
 
     subgraph SecurityLayer["Platform 2.0 Invariant Engines"]
         Gateway --> AU["1. Universal Identity Classifier (Student/Visitor/Teacher)"]
-        Gateway --> PQ["2. Anti-Starvation Priority Queue Scheduler"]
-        Gateway --> SP["3. Salted Shift PINs & Hardware Device Binding"]
+        Gateway --> PQ["2. Anti-Starvation Priority Queue Scheduler (Fail-Closed)"]
+        Gateway --> SP["3. PBKDF2 Shift PINs & Hardware Device Binding"]
         Gateway --> RE["4. Authoritative Live Reorder Engine"]
-        Gateway --> IV["5. Inventory Invariants (available = onHand - reserved)"]
+        Gateway --> IV["5. Two-Phase Inventory Locks (available = onHand - reserved)"]
         Gateway --> FL["6. Double-Entry Integer Paise Financial Ledgers"]
+        Gateway --> OR["7. Orphaned Payment Reconciler (Zero Cancelled Resurrections)"]
     end
 
     subgraph DefenseLayer["Continuous Defense & Automation"]
@@ -56,10 +57,10 @@ flowchart TD
 2. **⚡️ Anti-Starvation Priority Queue Scheduling**:
    - Dynamic Effective Priority formula: $P_{\text{eff}} = P_{\text{base}} + (\text{WaitMinutes} \times 5)$.
    - Every minute a student ticket waits, it gains $+5$ points, catching up to faculty tickets after 20 minutes to prevent queue stagnation.
-   - Faculty throttled to max 1 concurrent active priority order; subsequent orders drop to standard queue.
+   - Faculty throttled to max 1 concurrent active priority order inside the checkout transaction; subsequent orders drop to standard queue.
 
-3. **🔑 Salted Shift PINs & Workstation Hardware Binding**:
-   - 6-digit CSPRNG shift PINs hashed with SHA-256 and unique per-PIN salts in `shiftPins/{pinId}`.
+3. **🔑 PBKDF2 Shift PINs & Workstation Hardware Binding**:
+   - 6-digit CSPRNG shift PINs derived with PBKDF2 (10,000 iterations + salt) in `shiftPins/{pinId}`.
    - Binds each PIN to designated counter hardware tablet UUIDs (`tb_workstation_device_id`), blocking unauthorized personal device access.
    - 5-strike brute-force lockout locks workstation login for 15 minutes.
 
@@ -73,16 +74,16 @@ flowchart TD
    - Run-rate stockout forecaster: $\text{burnRate} = \frac{\text{unitsSold}}{\text{hoursElapsed}}$ and $\text{hoursRemaining} = \frac{\text{availableStock}}{\text{burnRate}}$.
    - Campus feature flags: Mobile Ordering, Faculty Priority, Cash Counter, and Rush Multiplier (1.0x to 2.5x).
 
-6. **🛡️ Developer Command Cockpit & RBAC Simulator**:
+6. **🛡️ Developer Command Cockpit & Step-Up Ephemeral Challenges**:
    - Real-time security incident stream with deterministic SHA-256 deduplication.
-   - Interactive RBAC Permission Matrix simulator to test role boundaries in 1 click.
-   - 1-Click 15-point invariant integrity scanner.
+   - Destructive emergency operations require server-issued 60-second single-use challenge nonces.
+   - Automated 15-point invariant integrity scanner and RBAC permission matrix simulator.
 
 ---
 
-## 🧪 Master Test & Verification Suite (187 Tests Total)
+## 🧪 Master Test & Verification Suite (247 Tests Total)
 
-Run all 5 enterprise security gates sequentially:
+Run all 9 enterprise security gates sequentially:
 
 ```bash
 bash scripts/run_all_security_checks.sh
@@ -90,12 +91,13 @@ bash scripts/run_all_security_checks.sh
 
 | Verification Gate | Test Count | Status | Description |
 | :--- | :---: | :---: | :--- |
-| **Backend Invariant & Security Abuse Suite** | 156 | `100% PASS` | Tests 1–132 covering identity classification, priority math, salted shift PINs, TV minimization, and RBAC simulator. |
+| **Backend Invariant & Security Abuse Suite** | 201 | `100% PASS` | Tests 1–177 covering identity classification, priority math, PBKDF2 shift PINs, TV minimization, orphaned payments, and step-up challenges. |
 | **Flutter Client Unit & Widget Suite** | 31 | `100% PASS` | Pricing models, UserProfile parser, UserPreferences, ETA Rush scaling, and CartProvider. |
-| **Flutter Static Analysis** | — | `0 Errors` | `dart analyze --fatal-infos` passing cleanly. |
-| **Automated Backup & Restore Engine** | — | `VERIFIED` | Cryptographic SHA-256 checksum and balance verification. |
-| **Platform 2.0 E2E Lifecycle Smoke Test** | 12 | `100% PASS` | Full student checkout $\to$ webhook $\to$ priority KDS $\to$ QR pickup $\to$ shift PIN $\to$ TV projection. |
+| **Flutter Static Analysis** | — | `0 Errors` | `dart analyze --fatal-infos` passing cleanly with 0 warnings. |
+| **Automated Backup & Restore Engine** | 4 | `VERIFIED` | Cryptographic SHA-256 checksum and ledger balance verification. |
+| **Platform 2.0 E2E Lifecycle Smoke Test** | 11 | `100% PASS` | Full student checkout $\to$ webhook $\to$ priority KDS $\to$ QR pickup $\to$ shift PIN $\to$ TV projection. |
 | **100-Order Peak Lunch Rush Simulator** | 100 | `100% PASS` | 100 parallel checkout requests with 0 dropped orders and 0 oversold units. |
+| **Automated Staging DAST Security Harness** | 15 | `100% PASS` | 10 attack classes tested against live cloud function signatures (100% defended). |
 
 ---
 
