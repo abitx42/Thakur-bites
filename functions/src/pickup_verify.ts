@@ -172,3 +172,73 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
     };
   });
 });
+
+/**
+ * Manager/Security Admin Audited Unlock for PIN-locked orders (P2: 22).
+ */
+export const unlockOrderPickupVerification = onCall<{ orderId: string; reason: string }>(async (request) => {
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const actorRole = (request.auth.token.role as UserRole) || 'student';
+  if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin') {
+    throw new HttpsError('permission-denied', 'Only managers or security admins can unlock locked orders.');
+  }
+
+  const { orderId, reason } = request.data;
+  if (!orderId || !reason) {
+    throw new HttpsError('invalid-argument', 'orderId and audit reason are required.');
+  }
+
+  const orderRef = db.collection('orders').doc(orderId);
+  const now = admin.firestore.Timestamp.now();
+
+  return await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(orderRef);
+    if (!snap.exists) {
+      throw new HttpsError('not-found', 'Order not found.');
+    }
+
+    const orderData = snap.data()!;
+    if (!orderData.isLockedForInvestigation && (orderData.failedPinAttempts || 0) === 0) {
+      return { success: true, message: 'Order is not locked.' };
+    }
+
+    transaction.update(orderRef, {
+      isLockedForInvestigation: false,
+      failedPinAttempts: 0,
+      unlockedByStaffId: request.auth!.uid,
+      unlockedAt: now,
+      unlockReason: reason,
+      updatedAt: now,
+    });
+
+    // Record security event
+    const secRef = db.collection('securityEvents').doc();
+    transaction.set(secRef, {
+      eventType: 'ORDER_PIN_LOCKOUT_UNLOCKED',
+      orderId,
+      actorUid: request.auth!.uid,
+      actorRole,
+      reason,
+      severity: 'warn',
+      timestamp: now,
+    });
+
+    // Record order event
+    const evtRef = db.collection('orderEvents').doc();
+    transaction.set(evtRef, {
+      orderId,
+      fromStatus: orderData.status,
+      toStatus: orderData.status,
+      actorId: request.auth!.uid,
+      actorRole,
+      timestamp: now,
+      reason: `LOCKOUT_OVERRIDDEN: ${reason}`,
+    });
+
+    return { success: true, orderId, unlocked: true };
+  });
+});
+

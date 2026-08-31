@@ -7,5 +7,12 @@ if (!admin.apps.length) {
 export { createCheckout } from './checkout';
 export { updateOrderStatus } from './order_state';
 export { assignStaffRole } from './auth_roles';
-export { verifyPickup } from './pickup_verify';
-export { createPaymentSession, verifyPayment, reconcileDailyLedger } from './payments';
+export { verifyPickup, unlockOrderPickupVerification } from './pickup_verify';
+export {
+  createPaymentSession,
+  verifyPayment,
+  recordCashPayment,
+  handlePaymentWebhook,
+  reconcileDailyLedger,
+} from './payments';
+export { processOrderRefund } from './refunds';
