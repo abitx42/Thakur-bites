@@ -18,3 +18,4 @@ export {
 } from './payments';
 export { processOrderRefund } from './refunds';
 export { adjustInventoryStock } from './inventory';
+export { createMealRating } from './ratings';

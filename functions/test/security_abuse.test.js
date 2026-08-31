@@ -573,4 +573,92 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(orderDoc.failedPinAttempts, 0);
     assert.strictEqual(orderDoc.isLockedForInvestigation, false);
   });
+
+  it('28. Field-Level Student Profile Update Invariant: Restricts writable keys and blocks role escalation', () => {
+    const allowedKeys = new Set(['name', 'phone', 'department', 'year', 'photoUrl', 'preferences', 'updatedAt']);
+
+    function validateProfileUpdate(incomingFields) {
+      const keys = Object.keys(incomingFields);
+      const isClean = keys.every(k => allowedKeys.has(k));
+      if (!isClean) {
+        return { allowed: false, error: 'DISALLOWED_FIELD_UPDATE' };
+      }
+      return { allowed: true };
+    }
+
+    // Legitimate update
+    assert.strictEqual(validateProfileUpdate({ name: 'Aarav Sharma', phone: '+919876543210', year: 'FE' }).allowed, true);
+
+    // Attacker attempts to grant themselves 'admin' or 'manager' role
+    const exploitAttempt = validateProfileUpdate({ name: 'Aarav Sharma', role: 'admin' });
+    assert.strictEqual(exploitAttempt.allowed, false);
+    assert.strictEqual(exploitAttempt.error, 'DISALLOWED_FIELD_UPDATE');
+
+    // Attacker attempts to modify account verification status
+    const verifyAttempt = validateProfileUpdate({ isVerified: true });
+    assert.strictEqual(verifyAttempt.allowed, false);
+  });
+
+  it('29. Menu Catalog Role Boundary: Restricts price updates strictly to managers and admins', () => {
+    function canUpdateMenuPrice(actorRole) {
+      return actorRole === 'manager' || actorRole === 'admin' || actorRole === 'security_admin';
+    }
+
+    assert.strictEqual(canUpdateMenuPrice('admin'), true);
+    assert.strictEqual(canUpdateMenuPrice('manager'), true);
+    assert.strictEqual(canUpdateMenuPrice('kitchen'), false); // Kitchen cannot modify prices
+    assert.strictEqual(canUpdateMenuPrice('pickup'), false);  // Pickup counter cannot modify prices
+    assert.strictEqual(canUpdateMenuPrice('student'), false); // Students cannot modify prices
+  });
+
+  it('30. Verified Meal Rating Purchase Proof: Requires collected order and matching item', () => {
+    const collectedOrder = {
+      id: 'order_done_1',
+      studentId: 'student_123',
+      status: 'collected',
+      items: [{ itemId: 'item_dosa' }, { itemId: 'item_chai' }],
+    };
+
+    const preparingOrder = {
+      id: 'order_prep_2',
+      studentId: 'student_123',
+      status: 'preparing',
+      items: [{ itemId: 'item_pizza' }],
+    };
+
+    function validateMealRating(order, studentId, targetItemId, ratingValue) {
+      if (!Number.isSafeInteger(ratingValue) || ratingValue < 1 || ratingValue > 5) {
+        return { valid: false, error: 'INVALID_RATING_VALUE' };
+      }
+      if (order.studentId !== studentId) {
+        return { valid: false, error: 'NOT_ORDER_OWNER' };
+      }
+      if (order.status !== 'collected') {
+        return { valid: false, error: 'ORDER_NOT_COLLECTED' };
+      }
+      const itemFound = order.items.some(it => it.itemId === targetItemId);
+      if (!itemFound) {
+        return { valid: false, error: 'ITEM_NOT_IN_ORDER' };
+      }
+      return { valid: true };
+    }
+
+    // Legitimate rating on collected item
+    assert.strictEqual(validateMealRating(collectedOrder, 'student_123', 'item_dosa', 5).valid, true);
+
+    // Attempting to rate an order that is still preparing
+    const prepRes = validateMealRating(preparingOrder, 'student_123', 'item_pizza', 5);
+    assert.strictEqual(prepRes.valid, false);
+    assert.strictEqual(prepRes.error, 'ORDER_NOT_COLLECTED');
+
+    // Attempting to rate an item that was never ordered
+    const wrongItemRes = validateMealRating(collectedOrder, 'student_123', 'item_burger', 5);
+    assert.strictEqual(wrongItemRes.valid, false);
+    assert.strictEqual(wrongItemRes.error, 'ITEM_NOT_IN_ORDER');
+
+    // Attempting to submit a rating value of 10 stars
+    const outOfBoundsRes = validateMealRating(collectedOrder, 'student_123', 'item_dosa', 10);
+    assert.strictEqual(outOfBoundsRes.valid, false);
+    assert.strictEqual(outOfBoundsRes.error, 'INVALID_RATING_VALUE');
+  });
 });

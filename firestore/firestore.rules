@@ -16,7 +16,7 @@ service cloud.firestore {
     }
 
     function isStaff() {
-      return isAuthenticated() && request.auth.token.role in ['kitchen', 'pickup', 'manager', 'admin', 'security_admin'];
+      return isAuthenticated() && request.auth.token.role in ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'security_admin'];
     }
 
     function isManagerOrAdmin() {
@@ -46,20 +46,20 @@ service cloud.firestore {
     }
 
     // ─── Students Profile ───────────────────────────────────────
-    // Students can read and update ONLY harmless profile fields (name, phone, department, photoUrl).
+    // Students can read and update ONLY harmless profile fields (name, phone, department, photoUrl, preferences).
     // Security fields (role, isVerified, accountDisabled, uid) are strictly protected.
     match /students/{studentId} {
       allow read: if isOwner(studentId) || isStaff();
       allow create: if isOwner(studentId);
-      allow update: if isOwner(studentId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'phone', 'department', 'year', 'photoUrl', 'updatedAt']);
+      allow update: if isOwner(studentId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'phone', 'department', 'year', 'photoUrl', 'preferences', 'updatedAt']);
       allow delete: if false;
     }
 
-    // ─── Student Feedback & Ratings ─────────────────────────────
+    // ─── Student Feedback & Verified Ratings ─────────────────────
+    // Direct client creation blocked. Must be submitted via createMealRating Cloud Function.
     match /ratings/{ratingId} {
-      allow create: if isAuthenticated() && request.resource.data.studentId == request.auth.uid;
-      allow read: if isStaff() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
-      allow update, delete: if false;
+      allow read: if true;
+      allow write: if false;
     }
 
     // ─── Staff Users (RBAC Records) ─────────────────────────────
@@ -88,8 +88,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // ─── Immutable Audit Ledgers ────────────────────────────────
-    // Client direct writes strictly denied. Append-only via backend.
+    // ─── Inventory Reservations & Audit Ledgers ─────────────────
+    match /inventoryReservations/{resId} {
+      allow read: if isStaff() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
+      allow write: if false;
+    }
+
     match /inventoryLedger/{ledgerId} {
       allow read: if isStaff();
       allow write: if false;
@@ -103,11 +107,12 @@ service cloud.firestore {
     }
 
     match /securityEvents/{eventId} {
-      allow read: if isStaff();
+      allow read: if isAdmin();
       allow write: if false;
     }
 
-    // ─── Internal System Collections ────────────────────────────
+    // ─── Internal System Tables ─────────────────────────────────
+    // Internal counters, idempotent locks, and gateway locks.
     match /counters/{counterId} {
       allow read, write: if false;
     }
