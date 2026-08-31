@@ -49,6 +49,18 @@ class FirestoreService {
     );
   }
 
+  /// Fetch a single menu item by ID
+  Future<MenuItem?> getMenuItem(String itemId) async {
+    try {
+      final doc = await _menuItems.doc(itemId).get();
+      if (!doc.exists || doc.data() == null) return null;
+      return MenuItem.fromFirestore(doc.id, doc.data()!);
+    } catch (e) {
+      debugPrint('Error fetching menu item $itemId: $e');
+      return null;
+    }
+  }
+
   /// Pre-checkout quick validation (optimistic check).
   Future<Map<String, int>> verifyItemsStockQuantity(
     List<CartEntry> entries,

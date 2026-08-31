@@ -26,3 +26,5 @@ export { scheduledDailyReconciliation } from './reconciliation_cron';
 export { getKitchenOrders, getPickupOrders, getCashierOrders } from './operational_views';
 export { scheduledSecurityIntegrityMonitor, runSecurityIntegrityScan } from './integrity_monitor';
 export { provisionUserProfile } from './user_provisioning';
+export { reorderPreviousOrder } from './reorder';
+

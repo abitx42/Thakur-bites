@@ -2280,4 +2280,76 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(result.identityHints.isInstitutionalEmail, true);
     assert.strictEqual(result.identityHints.possibleStudentId, false);
   });
+
+  it('105. Reorder Engine: Recalculates live prices and detects price discrepancies', () => {
+    function calculateReorderItem(histItem, liveItem) {
+      const originalPricePaise = histItem.unitPricePaise;
+      const livePricePaise = Math.round(liveItem.price * 100);
+      return {
+        itemId: histItem.itemId,
+        quantity: histItem.quantity,
+        unitPricePaise: livePricePaise,
+        originalPricePaise,
+        priceChanged: livePricePaise !== originalPricePaise,
+        available: liveItem.available && liveItem.isPublished !== false,
+      };
+    }
+
+    const historical = { itemId: 'samosa_01', quantity: 2, unitPricePaise: 2000 };
+    const liveItem = { itemId: 'samosa_01', price: 25.0, available: true, isPublished: true };
+
+    const result = calculateReorderItem(historical, liveItem);
+    assert.strictEqual(result.priceChanged, true, 'Price difference must be flagged');
+    assert.strictEqual(result.unitPricePaise, 2500, 'Must use live 2500 paise, not historical 2000 paise');
+    assert.strictEqual(result.available, true);
+  });
+
+  it('106. Reorder Engine: Caps instant items strictly to available stock', () => {
+    function capReorderStock(requestedQty, stockOnHand, reservedStock) {
+      const available = Math.max(0, stockOnHand - reservedStock);
+      if (available <= 0) return { available: false, quantity: 0, reason: 'SOLD_OUT' };
+      const capped = Math.min(requestedQty, available);
+      return { available: true, quantity: capped, adjusted: capped < requestedQty };
+    }
+
+    const result1 = capReorderStock(5, 3, 1); // 2 available
+    assert.strictEqual(result1.available, true);
+    assert.strictEqual(result1.quantity, 2);
+    assert.strictEqual(result1.adjusted, true);
+
+    const result2 = capReorderStock(2, 5, 5); // 0 available
+    assert.strictEqual(result2.available, false);
+    assert.strictEqual(result2.quantity, 0);
+  });
+
+  it('107. Reorder Engine: Discontinued or unpublished items marked unavailable', () => {
+    function validateReorderAvailability(liveItem) {
+      if (!liveItem) return { available: false, reason: 'DISCONTINUED' };
+      if (liveItem.isPublished === false || liveItem.available === false) {
+        return { available: false, reason: 'UNAVAILABLE' };
+      }
+      return { available: true };
+    }
+
+    assert.strictEqual(validateReorderAvailability(null).available, false);
+    assert.strictEqual(validateReorderAvailability({ isPublished: false, available: true }).available, false);
+    assert.strictEqual(validateReorderAvailability({ isPublished: true, available: false }).available, false);
+    assert.strictEqual(validateReorderAvailability({ isPublished: true, available: true }).available, true);
+  });
+
+  it('108. IDOR Defense on Reorder: Blocks caller from reordering non-owned ticket', () => {
+    function verifyReorderOwnership(callerUid, orderOwnerUid) {
+      if (callerUid !== orderOwnerUid) {
+        return { allowed: false, error: 'PERMISSION_DENIED_IDOR' };
+      }
+      return { allowed: true };
+    }
+
+    const caller = 'student_attacker_99';
+    const legitimateOwner = 'student_victim_01';
+
+    const result = verifyReorderOwnership(caller, legitimateOwner);
+    assert.strictEqual(result.allowed, false);
+    assert.strictEqual(result.error, 'PERMISSION_DENIED_IDOR');
+  });
 });

@@ -7,8 +7,10 @@ import '../models/user_profile.dart';
 import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
 import '../screens/cart_screen.dart';
+import '../screens/favourites_screen.dart';
 import '../screens/login_sheet.dart';
 import '../screens/order_status_screen.dart';
+import '../screens/preferences_screen.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/category_tabs.dart';
@@ -758,6 +760,49 @@ class _MenuScreenState extends State<MenuScreen> {
                   ),
                 ),
 
+              // Quick Actions List
+              Text('Account & Shortcuts', style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.ink)),
+              const SizedBox(height: 10),
+              Container(
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.line, width: 1.5),
+                ),
+                child: Column(
+                  children: [
+                    _buildProfileMenuTile(
+                      icon: Icons.favorite_rounded,
+                      iconColor: AppColors.red,
+                      title: 'Saved Favourites ❤️',
+                      subtitle: 'Quick 1-tap reordering for favourite canteen dishes',
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const FavouritesScreen()),
+                      ),
+                    ),
+                    const Divider(height: 1, color: AppColors.line),
+                    _buildProfileMenuTile(
+                      icon: Icons.tune_rounded,
+                      iconColor: AppColors.mustardInk,
+                      title: 'Dietary & Notification Preferences',
+                      subtitle: 'Mild spices, less sugar, eco-friendly cutlery & push alerts',
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const PreferencesScreen()),
+                      ),
+                    ),
+                    const Divider(height: 1, color: AppColors.line),
+                    _buildProfileMenuTile(
+                      icon: Icons.receipt_long_rounded,
+                      iconColor: AppColors.ink,
+                      title: 'Order History & Receipts',
+                      subtitle: 'Review past tickets, itemized receipts & repeat orders',
+                      onTap: () => setState(() => _currentNavIndex = 1),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+
               // Canteen Info
               Container(
                 padding: const EdgeInsets.all(16),
@@ -828,6 +873,33 @@ class _MenuScreenState extends State<MenuScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildProfileMenuTile({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: iconColor.withAlpha(25),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, size: 20, color: iconColor),
+      ),
+      title: Text(title, style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w600)),
+      subtitle: Text(subtitle, style: AppFonts.body(fontSize: 11.5, color: AppColors.inkSoft)),
+      trailing: const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkSoft),
     );
   }
 
@@ -1220,40 +1292,68 @@ class _OrderCard extends StatelessWidget {
     );
   }
 
-  void _handleReorder(BuildContext context) {
+  Future<void> _handleReorder(BuildContext context) async {
     HapticFeedback.selectionClick();
     final cart = context.read<CartProvider>();
+    final firestore = FirestoreService();
+
+    int addedCount = 0;
+    int unavailableCount = 0;
 
     for (final item in order.items) {
-      final isInstantItem = ['cold_drink', 'chocolate', 'chips'].contains(item.menuItemId);
-      final menuItem = MenuItem(
-        id: item.menuItemId,
-        name: item.name,
-        price: item.price,
-        category: isInstantItem ? 'snacks' : 'dosa',
-        type: isInstantItem ? 'instant' : 'cooked',
-        prepMinutes: isInstantItem ? 0 : 6,
-        stockCount: isInstantItem ? 50 : 100,
-      );
-      cart.setQty(menuItem, item.quantity);
+      final liveItem = await firestore.getMenuItem(item.menuItemId);
+      if (liveItem != null && liveItem.isInStock) {
+        cart.setQty(liveItem, item.quantity);
+        addedCount++;
+      } else if (liveItem != null) {
+        unavailableCount++;
+      } else {
+        // Fallback item definition if Firestore lookup fails
+        final isInstant = ['cold_drink', 'chocolate', 'chips'].contains(item.menuItemId);
+        final fallback = MenuItem(
+          id: item.menuItemId,
+          name: item.name,
+          price: item.price,
+          category: isInstant ? 'snacks' : 'dosa',
+          type: isInstant ? 'instant' : 'cooked',
+          prepMinutes: isInstant ? 0 : 6,
+        );
+        cart.setQty(fallback, item.quantity);
+        addedCount++;
+      }
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Reordered ${order.items.length} items to your cart! 🛒'),
-        backgroundColor: AppColors.green,
-        duration: const Duration(seconds: 2),
-        action: SnackBarAction(
-          label: 'View Cart',
-          textColor: Colors.white,
-          onPressed: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const CartScreen()),
-            );
-          },
+    if (!context.mounted) return;
+
+    if (addedCount > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            unavailableCount > 0
+                ? 'Added $addedCount items ($unavailableCount out of stock today).'
+                : 'Reordered $addedCount items with today\'s live prices! 🛒',
+          ),
+          backgroundColor: unavailableCount > 0 ? const Color(0xFFD97706) : AppColors.green,
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'View Cart',
+            textColor: Colors.white,
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const CartScreen()),
+              );
+            },
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Items from this order are currently out of stock on today\'s menu.'),
+          backgroundColor: AppColors.red,
+        ),
+      );
+    }
   }
 
   String _formatTime(DateTime dt) {

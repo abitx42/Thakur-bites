@@ -3,7 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/menu_item.dart';
+import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
+import '../screens/login_sheet.dart';
+import '../services/preferences_service.dart';
 import '../theme/app_theme.dart';
 
 /// Menu item card with availability indicators (🟢/🟡/🔴) instead of exact stock numbers.
@@ -173,6 +176,45 @@ class MenuItemCard extends StatelessWidget {
                   child: qty == 0
                       ? _buildAddButton(context)
                       : _buildStepper(context, qty),
+                );
+              },
+            ),
+          ),
+
+          // Heart / Favourite toggle button
+          Positioned(
+            top: 8,
+            right: 8,
+            child: Consumer<AuthProvider>(
+              builder: (context, auth, _) {
+                final user = auth.currentProfile;
+                final prefsService = PreferencesService();
+                final isFav = prefsService.isItemFavourited(item.id);
+
+                return GestureDetector(
+                  onTap: () async {
+                    if (user == null) {
+                      LoginSheet.show(context);
+                      return;
+                    }
+                    HapticFeedback.selectionClick();
+                    await prefsService.toggleFavourite(user.uid, item.id);
+                  },
+                  child: Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: isFav ? AppColors.red.withAlpha(25) : Colors.black.withAlpha(12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Icon(
+                        isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                        size: 15,
+                        color: isFav ? AppColors.red : accentInk.withAlpha(150),
+                      ),
+                    ),
+                  ),
                 );
               },
             ),
