@@ -1,107 +1,106 @@
-// Thakur Bites Main Application Entry Point
-import { appState } from './state.js';
-import { renderStudentView } from './views/studentView.js';
+// Thakur Bites Staff Operations Dashboard & Hub Entry Point
+import { staffAuth, renderPinPadModal } from './auth.js';
 import { renderKitchenView } from './views/kitchenView.js';
-import { renderTvDisplayView } from './views/tvDisplayView.js';
+import { renderPickupView } from './views/pickupView.js';
 import { renderAdminView } from './views/adminView.js';
+import { renderTvDisplayView } from './views/tvDisplayView.js';
 
-function initApp() {
+let currentStaffView = 'kitchen'; // 'kitchen' | 'pickup' | 'admin' | 'tv'
+
+function initStaffDashboard() {
   const root = document.getElementById('app-root');
   if (!root) return;
 
   function render() {
-    const { currentRole } = appState;
-
-    root.innerHTML = `
-      <!-- App Header -->
-      <header class="app-header">
-        <div class="header-container">
-          <div class="brand-badge">
-            <div class="brand-logo">TB</div>
-            <div class="brand-text">
-              <h1>THAKUR BITES</h1>
-              <span>TCET / TSA Canteen Hub</span>
-            </div>
-          </div>
-
-          <!-- Multi-Role Switcher -->
-          <nav class="role-switcher">
-            <button class="role-btn ${currentRole === 'student' ? 'active' : ''}" data-role="student">
-              <span>📱</span>
-              <span>Student App</span>
-            </button>
-            <button class="role-btn ${currentRole === 'kitchen' ? 'active' : ''}" data-role="kitchen">
-              <span>🍳</span>
-              <span>Kitchen KDS</span>
-            </button>
-            <button class="role-btn ${currentRole === 'tv_display' ? 'active' : ''}" data-role="tv_display">
-              <span>📺</span>
-              <span>Token TV Screen</span>
-            </button>
-            <button class="role-btn ${currentRole === 'admin' ? 'active' : ''}" data-role="admin">
-              <span>⚙️</span>
-              <span>Daily Board</span>
-            </button>
-          </nav>
-        </div>
-      </header>
-
-      <!-- Main View Mount Target -->
-      <main id="view-target"></main>
-    `;
-
-    // Attach role switcher events
-    root.querySelectorAll('.role-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const targetRole = btn.getAttribute('data-role');
-        appState.setRole(targetRole);
+    // If not authenticated, prompt for PIN
+    if (!staffAuth.isAuthenticated()) {
+      renderPinPadModal(root, () => {
+        render();
       });
-    });
-
-    // Mount active view
-    const viewTarget = document.getElementById('view-target');
-    if (currentRole === 'student') {
-      renderStudentView(viewTarget);
-    } else if (currentRole === 'kitchen') {
-      renderKitchenView(viewTarget);
-    } else if (currentRole === 'tv_display') {
-      renderTvDisplayView(viewTarget);
-    } else if (currentRole === 'admin') {
-      renderAdminView(viewTarget);
-    }
-  }
-
-  // Subscribe to reactive state updates
-  appState.subscribe(() => {
-    const viewTarget = document.getElementById('view-target');
-    if (!viewTarget) {
-      render();
       return;
     }
 
-    // Update active view
-    if (appState.currentRole === 'student') {
-      renderStudentView(viewTarget);
-    } else if (appState.currentRole === 'kitchen') {
-      renderKitchenView(viewTarget);
-    } else if (appState.currentRole === 'tv_display') {
-      renderTvDisplayView(viewTarget);
-    } else if (appState.currentRole === 'admin') {
-      renderAdminView(viewTarget);
+    root.innerHTML = `
+      <!-- Staff App Header -->
+      <header class="app-header" style="background: #FFF; border-bottom: 2px solid var(--border-light); padding: 0.8rem 1.2rem; position: sticky; top: 0; z-index: 100;">
+        <div style="max-width: 1400px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+          
+          <!-- Brand Badge -->
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 36px; height: 36px; background: var(--brand-red); color: #FFF; font-family: var(--font-display); font-size: 1.4rem; display: flex; align-items: center; justify-content: center; border-radius: 8px;">
+              TB
+            </div>
+            <div>
+              <div style="font-family: var(--font-display); font-size: 1.5rem; letter-spacing: 0.05em; line-height: 1; color: var(--ink-primary);">
+                THAKUR BITES · STAFF HUB
+              </div>
+              <div style="font-family: var(--font-mono); font-size: 0.75rem; color: #16A34A; font-weight: 700; display: flex; align-items: center; gap: 4px; margin-top: 2px;">
+                <span style="display: inline-block; width: 7px; height: 7px; background: #22C55E; border-radius: 50%;"></span>
+                ONLINE · LIVE FIRESTORE
+              </div>
+            </div>
+          </div>
+
+          <!-- Staff Role Views Switcher -->
+          <nav style="display: flex; gap: 6px; flex-wrap: wrap; background: var(--bg-surface); padding: 4px; border-radius: 999px; border: 1.5px solid var(--border-light);">
+            <button class="staff-nav-btn ${currentStaffView === 'kitchen' ? 'active' : ''}" data-view="kitchen">
+              🍳 Kitchen KDS
+            </button>
+            <button class="staff-nav-btn ${currentStaffView === 'pickup' ? 'active' : ''}" data-view="pickup">
+              🏷️ Pickup Counter
+            </button>
+            <button class="staff-nav-btn ${currentStaffView === 'admin' ? 'active' : ''}" data-view="admin">
+              📋 Menu & Stock
+            </button>
+            <button class="staff-nav-btn ${currentStaffView === 'tv' ? 'active' : ''}" data-view="tv">
+              📺 Token TV
+            </button>
+          </nav>
+
+          <!-- Lock Session Button -->
+          <button id="lock-session-btn" style="background: transparent; border: 1.5px solid var(--border-light); padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--ink-secondary);">
+            🔒 Lock PIN
+          </button>
+        </div>
+      </header>
+
+      <!-- Main View Target -->
+      <main id="staff-view-target" style="min-height: calc(100vh - 80px); background: var(--bg-primary);"></main>
+    `;
+
+    // Attach View Navigation Listeners
+    root.querySelectorAll('.staff-nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        currentStaffView = btn.getAttribute('data-view');
+        render();
+      });
+    });
+
+    const lockBtn = root.querySelector('#lock-session-btn');
+    if (lockBtn) {
+      lockBtn.addEventListener('click', () => {
+        staffAuth.lock();
+        render();
+      });
     }
 
-    // Update active role button styling in header
-    document.querySelectorAll('.role-btn').forEach(btn => {
-      if (btn.getAttribute('data-role') === appState.currentRole) {
-        btn.classList.add('active');
-      } else {
-        btn.classList.remove('active');
-      }
-    });
-  });
+    // Mount the selected view
+    const viewTarget = root.querySelector('#staff-view-target');
+    if (!viewTarget) return;
+
+    if (currentStaffView === 'kitchen') {
+      renderKitchenView(viewTarget);
+    } else if (currentStaffView === 'pickup') {
+      renderPickupView(viewTarget);
+    } else if (currentStaffView === 'admin') {
+      renderAdminView(viewTarget);
+    } else if (currentStaffView === 'tv') {
+      renderTvDisplayView(viewTarget);
+    }
+  }
 
   render();
 }
 
-// Boot on DOM ready
-document.addEventListener('DOMContentLoaded', initApp);
+// Start application
+document.addEventListener('DOMContentLoaded', initStaffDashboard);

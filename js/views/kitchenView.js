@@ -1,221 +1,278 @@
-// Kitchen Display System (KDS) & Counter Operations View
-import { appState } from '../state.js';
-import { STATIONS } from '../data/menu.js';
+// Phase 9 — Kitchen Display System (KDS) connected live to Firestore
+import { subscribeOrders, updateOrderStatus } from '../firebase.js';
 
-let selectedStationFilter = 'all';
+let unsubscribeOrders = null;
+let currentOrders = [];
+let selectedCategoryFilter = 'all';
 
 export function renderKitchenView(container) {
-  const { orders } = appState;
+  // Clean up any prior subscription
+  if (unsubscribeOrders) {
+    unsubscribeOrders();
+  }
 
-  // Filter orders by station if selected
-  const activeOrders = orders.filter(o => o.status !== 'served');
+  function renderKDS() {
+    // Filter active orders
+    const activeOrders = currentOrders.filter(o => o.status !== 'collected');
 
-  const cookQueueOrders = activeOrders.filter(o => 
-    (o.status === 'ordered' || o.status === 'cooking') && 
-    (selectedStationFilter === 'all' || o.primaryStation === selectedStationFilter)
-  );
+    // Cook Queue: placed or preparing
+    const cookOrders = activeOrders.filter(o => {
+      const isCookingState = o.status === 'placed' || o.status === 'preparing';
+      if (!isCookingState) return false;
+      if (selectedCategoryFilter === 'all') return true;
+      return o.items && o.items.some(i => i.name.toLowerCase().includes(selectedCategoryFilter));
+    });
 
-  const serveQueueOrders = activeOrders.filter(o => 
-    o.status === 'ready' || 
-    (o.tierHighest !== 'tier3_cook' && o.status === 'ordered')
-  );
+    // Ready Queue: ready for pickup
+    const readyOrders = activeOrders.filter(o => o.status === 'ready');
 
-  container.innerHTML = `
-    <div class="main-wrapper">
-      <!-- KDS Control Bar -->
-      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
-        <div>
-          <h2 style="font-family: var(--font-display); font-size: 2rem; letter-spacing: 0.05em; line-height: 1;">KITCHEN DISPATCH & COUNTER SYSTEM</h2>
-          <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary);">
-            Active Queue Load: ${activeOrders.length} orders · Auto-throttling active
-          </div>
-        </div>
-
-        <!-- Station Selector Filter -->
-        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-          <button 
-            class="station-filter-btn ${selectedStationFilter === 'all' ? 'active' : ''}"
-            data-station="all"
-            style="padding: 6px 12px; border-radius: 6px; border: 2px solid ${selectedStationFilter === 'all' ? 'var(--ink-primary)' : 'var(--border-light)'}; background: ${selectedStationFilter === 'all' ? 'var(--ink-primary)' : '#FFF'}; color: ${selectedStationFilter === 'all' ? '#FFF' : 'var(--ink-primary)'}; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;"
-          >
-            All Stations
-          </button>
-          ${STATIONS.map(st => `
-            <button 
-              class="station-filter-btn ${selectedStationFilter === st.id ? 'active' : ''}"
-              data-station="${st.id}"
-              style="padding: 6px 12px; border-radius: 6px; border: 2px solid ${selectedStationFilter === st.id ? 'var(--ink-primary)' : 'var(--border-light)'}; background: ${selectedStationFilter === st.id ? 'var(--ink-primary)' : '#FFF'}; color: ${selectedStationFilter === st.id ? '#FFF' : 'var(--ink-primary)'}; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;"
-            >
-              ${st.name.split(' ')[0]} ${st.name.split(' ')[1]}
-            </button>
-          `).join('')}
-        </div>
-      </div>
-
-      <!-- KDS Dual Columns -->
-      <div class="kds-container">
-        <!-- COLUMN 1: COOK QUEUE (Made-to-Order) -->
-        <div class="kds-column" style="border-top: 6px solid #2563EB;">
-          <div class="kds-header">
-            <h3>
-              <span>🍳 COOK QUEUE</span>
-              <span style="font-family: var(--font-mono); font-size: 1rem; background: #EFF6FF; color: #1D4ED8; padding: 2px 10px; border-radius: 9999px;">
-                ${cookQueueOrders.length} active
+    container.innerHTML = `
+      <div class="main-wrapper" style="max-width: 1300px; margin: 0 auto; padding: 1.5rem 1rem;">
+        <!-- KDS Control Bar -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
+          <div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <h2 style="font-family: var(--font-display); font-size: 2.2rem; letter-spacing: 0.05em; line-height: 1; margin: 0;">
+                KITCHEN DISPLAY SYSTEM (KDS)
+              </h2>
+              <span class="live-badge" style="background: #22C55E; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 999px;">
+                ● LIVE SYNC
               </span>
-            </h3>
-            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-muted);">Made-to-Order (Dosa/Wok/Grill)</span>
+            </div>
+            <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
+              Active Kitchen Load: ${cookOrders.length} to cook · ${readyOrders.length} ready at counter
+            </div>
           </div>
 
-          <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 1rem;">
-            ${cookQueueOrders.length === 0 ? `
-              <div style="text-align: center; padding: 3rem 1rem; color: var(--ink-muted); font-family: var(--font-mono); font-size: 0.9rem;">
-                ✓ Cook queue is clear! All active orders prepared.
-              </div>
-            ` : cookQueueOrders.map(order => {
-              const elapsedMinutes = Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 60000);
-              const isUrgent = elapsedMinutes >= 6;
-
-              return `
-                <div class="kds-card ${isUrgent ? 'urgent' : ''}">
-                  <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
-                    <div>
-                      <span style="font-family: var(--font-display); font-size: 2rem; color: var(--ink-primary); line-height: 1;">${order.tokenNumber}</span>
-                      <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-muted); margin-left: 6px;">[${order.studentName}]</span>
-                    </div>
-                    <div style="text-align: right;">
-                      <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: ${isUrgent ? 'var(--chili-red)' : 'var(--ink-secondary)'};">
-                        ⏱️ ${elapsedMinutes}m ago
-                      </span>
-                      <div style="font-size: 0.7rem; font-family: var(--font-mono); color: var(--ink-muted);">${order.pickupSlot}</div>
-                    </div>
-                  </div>
-
-                  <!-- Items list -->
-                  <div style="background: #FFFFFF; border: 1px solid var(--border-light); border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; font-family: var(--font-mono);">
-                    ${order.items.map(it => `
-                      <div style="display: flex; justify-content: space-between; font-weight: 700; font-size: 0.95rem; margin-bottom: 3px;">
-                        <span>${it.quantity}x ${it.name}</span>
-                        ${it.variant && it.variant !== 'Regular' ? `<span style="font-size: 0.75rem; color: var(--ink-muted);">[${it.variant}]</span>` : ''}
-                      </div>
-                      ${it.customOptions?.bread ? `<div style="font-size: 0.75rem; color: #B45309;">→ Bread: ${it.customOptions.bread}</div>` : ''}
-                    `).join('')}
-                  </div>
-
-                  <!-- Kitchen Action Buttons -->
-                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
-                    ${order.status === 'ordered' ? `
-                      <button 
-                        class="kds-action-btn" 
-                        data-action="start-cooking" 
-                        data-order-id="${order.id}"
-                        style="grid-column: 1 / -1; background: #2563EB; color: #FFF; border: none; padding: 8px; border-radius: 6px; font-family: var(--font-mono); font-weight: 700; font-size: 0.85rem; cursor: pointer;"
-                      >
-                        🔥 START COOKING
-                      </button>
-                    ` : `
-                      <button 
-                        class="kds-action-btn" 
-                        data-action="mark-ready" 
-                        data-order-id="${order.id}"
-                        style="grid-column: 1 / -1; background: var(--curry-green); color: #FFF; border: none; padding: 10px; border-radius: 6px; font-family: var(--font-mono); font-weight: 700; font-size: 0.95rem; cursor: pointer; box-shadow: 0 3px 0 #14532D;"
-                      >
-                        ✓ MARK COOKED & SEND TO COUNTER
-                      </button>
-                    `}
-                  </div>
-                </div>
-              `;
-            }).join('')}
-          </div>
-        </div>
-
-        <!-- COLUMN 2: SERVE QUEUE (Counter Handoff & Batch-Ready) -->
-        <div class="kds-column" style="border-top: 6px solid var(--curry-green);">
-          <div class="kds-header">
-            <h3>
-              <span>🍱 SERVE & HANDOFF QUEUE</span>
-              <span style="font-family: var(--font-mono); font-size: 1rem; background: #DCFCE7; color: #15803D; padding: 2px 10px; border-radius: 9999px;">
-                ${serveQueueOrders.length} ready
-              </span>
-            </h3>
-            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-muted);">Plating & Pickup Counter</span>
-          </div>
-
-          <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 1rem;">
-            ${serveQueueOrders.length === 0 ? `
-              <div style="text-align: center; padding: 3rem 1rem; color: var(--ink-muted); font-family: var(--font-mono); font-size: 0.9rem;">
-                Waiting for cooked dishes or new batch orders...
-              </div>
-            ` : serveQueueOrders.map(order => `
-              <div class="kds-card" style="background: #F0FDF4; border-color: var(--curry-green);">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
-                  <div>
-                    <span style="font-family: var(--font-display); font-size: 2.25rem; color: var(--curry-green); line-height: 1;">${order.tokenNumber}</span>
-                    <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-left: 6px;">${order.studentName} (${order.studentRoll})</span>
-                  </div>
-                  <div style="text-align: right;">
-                    <div style="font-family: var(--font-mono); font-weight: 800; font-size: 1.1rem; color: var(--ink-primary); background: #FFF; padding: 2px 8px; border-radius: 4px; border: 1px dashed #15803D;">
-                      PIN: ${order.pinCode}
-                    </div>
-                    <div style="font-size: 0.7rem; font-family: var(--font-mono); color: ${order.paymentStatus === 'PAID' ? 'var(--curry-green)' : '#DC2626'}; font-weight: 700;">
-                      ${order.paymentMethod} [${order.paymentStatus}]
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Items to Plate/Hand over -->
-                <div style="background: #FFFFFF; border: 1px solid #BBF7D0; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; font-family: var(--font-mono);">
-                  ${order.items.map(it => `
-                    <div style="display: flex; justify-content: space-between; font-weight: 700; font-size: 0.9rem; margin-bottom: 2px;">
-                      <span>${it.quantity}x ${it.name}</span>
-                      <span style="color: var(--ink-muted);">₹${it.price * it.quantity}</span>
-                    </div>
-                    ${it.customOptions?.bread ? `<div style="font-size: 0.75rem; color: #B45309;">→ ${it.customOptions.bread}</div>` : ''}
-                  `).join('')}
-                </div>
-
-                <!-- Handover Button -->
-                <button 
-                  class="kds-action-btn" 
-                  data-action="mark-served" 
-                  data-order-id="${order.id}"
-                  style="width: 100%; background: var(--ink-primary); color: #FFF; border: none; padding: 10px; border-radius: 6px; font-family: var(--font-mono); font-weight: 700; font-size: 0.9rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;"
-                >
-                  <span>✓ HANDED OVER TO STUDENT (CLEAR)</span>
-                </button>
-              </div>
+          <!-- Category Quick Filters -->
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            ${['all', 'dosa', 'roti', 'chai', 'snack'].map(cat => `
+              <button 
+                class="category-filter-btn ${selectedCategoryFilter === cat ? 'active' : ''}"
+                data-category="${cat}"
+                style="padding: 6px 14px; border-radius: 999px; border: 1.5px solid ${selectedCategoryFilter === cat ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedCategoryFilter === cat ? 'var(--brand-red)' : '#FFF'}; color: ${selectedCategoryFilter === cat ? '#FFF' : 'var(--ink-primary)'}; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: pointer;"
+              >
+                ${cat.toUpperCase()}
+              </button>
             `).join('')}
           </div>
         </div>
-      </div>
-    </div>
-  `;
 
-  attachKitchenViewEvents(container);
+        <!-- KDS Dual Column Grid -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 1.5rem; align-items: start;">
+          
+          <!-- COLUMN 1: TO COOK (Placed & Preparing) -->
+          <div class="kds-column" style="background: #FFF; border: 2px solid var(--border-light); border-radius: 12px; overflow: hidden; border-top: 6px solid #EFA727;">
+            <div style="padding: 1rem 1.2rem; background: #FDFBF7; border-bottom: 1.5px solid var(--border-light); display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h3 style="font-family: var(--font-display); font-size: 1.4rem; margin: 0; color: #6B4408;">
+                  🍳 COOK QUEUE (${cookOrders.length})
+                </h3>
+                <span style="font-family: var(--font-sans); font-size: 0.8rem; color: var(--ink-secondary);">Orders requiring preparation</span>
+              </div>
+              <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; background: #FBE7BE; color: #6B4408; padding: 3px 8px; border-radius: 6px;">
+                STATION ACTIVE
+              </span>
+            </div>
+
+            <div style="padding: 1rem; display: flex; flex-direction: column; gap: 1rem; max-height: 70vh; overflow-y: auto;">
+              ${cookOrders.length === 0 ? `
+                <div style="text-align: center; padding: 3rem 1rem; color: var(--ink-secondary); font-family: var(--font-sans);">
+                  <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">🎉</div>
+                  <div style="font-weight: 600; font-size: 1.1rem; color: var(--ink-primary);">Kitchen Queue Clear</div>
+                  <div style="font-size: 0.85rem; margin-top: 4px;">Incoming orders from the student app will appear here instantly.</div>
+                </div>
+              ` : cookOrders.map(order => {
+                const isPreparing = order.status === 'preparing';
+                const timeAgo = formatTimeAgo(order.createdAtDate);
+
+                return `
+                  <div class="kds-order-card" style="background: ${isPreparing ? '#FFFDF5' : '#FFF'}; border: 2px solid ${isPreparing ? '#EFA727' : 'var(--border-light)'}; border-radius: 10px; padding: 1.1rem; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
+                    <!-- Header: Token, PIN, Elapsed -->
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.8rem;">
+                      <div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                          <span style="font-family: var(--font-mono); font-size: 1.6rem; font-weight: 700; color: var(--brand-red);">
+                            ${order.tokenNumber || '#---'}
+                          </span>
+                          <span style="font-family: var(--font-mono); font-size: 0.75rem; background: var(--bg-surface); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-light);">
+                            PIN: ${order.pinCode || '----'}
+                          </span>
+                        </div>
+                        ${order.studentName ? `
+                          <div style="font-family: var(--font-sans); font-size: 0.8rem; font-weight: 600; color: var(--ink-primary); margin-top: 2px;">
+                            👤 ${order.studentName} ${order.studentRoll ? `(${order.studentRoll})` : ''}
+                          </div>
+                        ` : ''}
+                      </div>
+
+                      <div style="text-align: right;">
+                        <span style="display: inline-block; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: ${isPreparing ? '#FBE7BE' : '#FEE2E2'}; color: ${isPreparing ? '#6B4408' : '#991B1B'};">
+                          ${isPreparing ? '🔥 PREPARING' : '⏳ PLACED'}
+                        </span>
+                        <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-top: 3px;">
+                          ${timeAgo}
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Items List -->
+                    <div style="background: var(--bg-surface); border-radius: 8px; padding: 0.8rem; margin-bottom: 1rem;">
+                      ${(order.items || []).map(item => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-family: var(--font-mono); font-size: 0.95rem;">
+                          <span style="font-weight: 700; color: var(--ink-primary);">
+                            ${item.quantity}x ${item.name}
+                          </span>
+                          <span style="font-size: 0.8rem; color: var(--ink-secondary);">
+                            ₹${item.price * item.quantity}
+                          </span>
+                        </div>
+                      `).join('')}
+                    </div>
+
+                    <!-- Action Button -->
+                    <div style="display: flex; gap: 8px;">
+                      ${!isPreparing ? `
+                        <button 
+                          class="kds-action-btn start-cook-btn" 
+                          data-order-id="${order.id}"
+                          style="flex: 1; padding: 10px; background: #EFA727; color: #6B4408; border: none; border-radius: 8px; font-family: var(--font-sans); font-weight: 700; font-size: 0.9rem; cursor: pointer;"
+                        >
+                          Start Cooking 👨‍🍳
+                        </button>
+                      ` : `
+                        <button 
+                          class="kds-action-btn mark-ready-btn" 
+                          data-order-id="${order.id}"
+                          style="flex: 1; padding: 10px; background: #4F7A3C; color: #FFF; border: none; border-radius: 8px; font-family: var(--font-sans); font-weight: 700; font-size: 0.9rem; cursor: pointer;"
+                        >
+                          Mark Ready for Pickup 🔔
+                        </button>
+                      `}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+
+          <!-- COLUMN 2: READY FOR PICKUP (At Counter) -->
+          <div class="kds-column" style="background: #FFF; border: 2px solid var(--border-light); border-radius: 12px; overflow: hidden; border-top: 6px solid #4F7A3C;">
+            <div style="padding: 1rem 1.2rem; background: #F4FBF1; border-bottom: 1.5px solid var(--border-light); display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h3 style="font-family: var(--font-display); font-size: 1.4rem; margin: 0; color: #2C4A1E;">
+                  🔔 READY FOR PICKUP (${readyOrders.length})
+                </h3>
+                <span style="font-family: var(--font-sans); font-size: 0.8rem; color: var(--ink-secondary);">Waiting for student collection</span>
+              </div>
+              <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; background: #DCEACB; color: #2C4A1E; padding: 3px 8px; border-radius: 6px;">
+                COUNTER NOTIFIED
+              </span>
+            </div>
+
+            <div style="padding: 1rem; display: flex; flex-direction: column; gap: 1rem; max-height: 70vh; overflow-y: auto;">
+              ${readyOrders.length === 0 ? `
+                <div style="text-align: center; padding: 3rem 1rem; color: var(--ink-secondary); font-family: var(--font-sans);">
+                  <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">🥗</div>
+                  <div style="font-weight: 600; font-size: 1.1rem; color: var(--ink-primary);">No Orders Waiting</div>
+                  <div style="font-size: 0.85rem; margin-top: 4px;">Orders marked ready will appear here until collected.</div>
+                </div>
+              ` : readyOrders.map(order => `
+                <div class="kds-order-card" style="background: #F9FDF7; border: 2px solid #DCEACB; border-radius: 10px; padding: 1.1rem;">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.8rem;">
+                    <div>
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-family: var(--font-mono); font-size: 1.6rem; font-weight: 700; color: #4F7A3C;">
+                          ${order.tokenNumber}
+                        </span>
+                        <span style="font-family: var(--font-mono); font-size: 0.8rem; background: #FFF; padding: 2px 6px; border-radius: 4px; border: 1px solid #DCEACB; font-weight: 700;">
+                          PIN: ${order.pinCode}
+                        </span>
+                      </div>
+                      ${order.studentName ? `
+                        <div style="font-family: var(--font-sans); font-size: 0.85rem; font-weight: 600; color: var(--ink-primary); margin-top: 2px;">
+                          👤 ${order.studentName} ${order.studentRoll ? `(${order.studentRoll})` : ''}
+                        </div>
+                      ` : ''}
+                    </div>
+
+                    <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: #DCEACB; color: #2C4A1E;">
+                      ✓ READY
+                    </span>
+                  </div>
+
+                  <!-- Items Summary -->
+                  <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--ink-primary); background: #FFF; padding: 0.6rem 0.8rem; border-radius: 6px; border: 1px solid #E2EED4; margin-bottom: 0.8rem;">
+                    ${(order.items || []).map(i => `${i.quantity}x ${i.name}`).join(' · ')}
+                  </div>
+
+                  <!-- Quick Handover Button -->
+                  <button 
+                    class="kds-action-btn mark-collected-btn" 
+                    data-order-id="${order.id}"
+                    style="width: 100%; padding: 10px; background: var(--ink-primary); color: #FFF; border: none; border-radius: 8px; font-family: var(--font-sans); font-weight: 700; font-size: 0.9rem; cursor: pointer;"
+                  >
+                    Handover & Mark Collected ✓
+                  </button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+        </div>
+      </div>
+    `;
+
+    // Attach Action Listeners
+    container.querySelectorAll('.start-cook-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const orderId = btn.getAttribute('data-order-id');
+        btn.textContent = 'Updating...';
+        btn.disabled = true;
+        await updateOrderStatus(orderId, 'preparing');
+      });
+    });
+
+    container.querySelectorAll('.mark-ready-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const orderId = btn.getAttribute('data-order-id');
+        btn.textContent = 'Notifying Student...';
+        btn.disabled = true;
+        await updateOrderStatus(orderId, 'ready');
+      });
+    });
+
+    container.querySelectorAll('.mark-collected-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const orderId = btn.getAttribute('data-order-id');
+        btn.textContent = 'Closing Order...';
+        btn.disabled = true;
+        await updateOrderStatus(orderId, 'collected');
+      });
+    });
+
+    // Category Filter Buttons
+    container.querySelectorAll('.category-filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedCategoryFilter = btn.getAttribute('data-category');
+        renderKDS();
+      });
+    });
+  }
+
+  // Subscribe to live Firestore stream
+  unsubscribeOrders = subscribeOrders((orders) => {
+    currentOrders = orders;
+    renderKDS();
+  });
 }
 
-function attachKitchenViewEvents(container) {
-  // Station filter buttons
-  container.querySelectorAll('.station-filter-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      selectedStationFilter = btn.getAttribute('data-station');
-      renderKitchenView(container);
-    });
-  });
-
-  // Action buttons (Start Cooking, Mark Ready, Mark Served)
-  container.querySelectorAll('.kds-action-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const orderId = btn.getAttribute('data-order-id');
-      const action = btn.getAttribute('data-action');
-
-      if (action === 'start-cooking') {
-        appState.updateOrderStatus(orderId, 'cooking');
-      } else if (action === 'mark-ready') {
-        appState.updateOrderStatus(orderId, 'ready');
-      } else if (action === 'mark-served') {
-        appState.updateOrderStatus(orderId, 'served');
-      }
-    });
-  });
+function formatTimeAgo(date) {
+  if (!date) return '';
+  const seconds = Math.floor((new Date() - date) / 1000);
+  if (seconds < 60) return 'Just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
 }
