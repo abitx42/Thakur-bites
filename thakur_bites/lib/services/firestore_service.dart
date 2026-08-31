@@ -35,27 +35,34 @@ class FirestoreService {
   }
 
   /// Live atomic stock verification before order placement (Instamart / Zepto style).
-  /// Returns list of item IDs that are currently out of stock.
-  Future<List<String>> verifyItemsStock(List<String> itemIds) async {
-    final List<String> outOfStock = [];
+  /// Checks both availability and quantity limits.
+  /// Returns a map of itemId -> available stock count for any items that cannot fulfill the requested quantity.
+  Future<Map<String, int>> verifyItemsStockQuantity(List<CartEntry> entries) async {
+    final Map<String, int> stockIssues = {};
 
-    for (final id in itemIds) {
+    for (final entry in entries) {
       try {
-        final doc = await _menuItems.doc(id).get();
+        final doc = await _menuItems.doc(entry.item.id).get();
         if (!doc.exists || doc.data() == null) {
-          outOfStock.add(id);
+          stockIssues[entry.item.id] = 0;
         } else {
-          final isAvailable = doc.data()!['available'] ?? false;
+          final data = doc.data()!;
+          final isAvailable = data['available'] ?? false;
+          final type = data['type'] ?? 'instant';
+          final stockCount = (data['stockCount'] as num?)?.toInt() ?? (isAvailable ? 50 : 0);
+
           if (!isAvailable) {
-            outOfStock.add(id);
+            stockIssues[entry.item.id] = 0;
+          } else if (type == 'instant' && entry.qty > stockCount) {
+            stockIssues[entry.item.id] = stockCount;
           }
         }
       } catch (e) {
-        debugPrint('Error verifying stock for item $id: $e');
+        debugPrint('Error verifying stock for item ${entry.item.id}: $e');
       }
     }
 
-    return outOfStock;
+    return stockIssues;
   }
 
   Future<void> writeMenuItem(MenuItem item) async {
@@ -144,7 +151,7 @@ class FirestoreService {
   // ─── Orders ─────────────────────────────────────────────────────
 
   /// Place a new order from the current cart.
-  /// Returns the created Order object.
+  /// Automatically decrements store packaged inventory in Firestore in real time.
   Future<app.Order> placeOrder(CartProvider cart, {Student? student}) async {
     final rng = Random();
 
@@ -182,10 +189,30 @@ class FirestoreService {
       items: orderItems,
     );
 
-    // Write to Firestore
+    // 1. Write order to Firestore
     final docRef = await _orders.add(order.toFirestore());
 
-    // If student is logged in, increment their order count
+    // 2. Automatically decrement store packaged item inventory in Firestore
+    for (final entry in cart.entries) {
+      if (entry.item.isInstant) {
+        try {
+          final itemRef = _menuItems.doc(entry.item.id);
+          final docSnap = await itemRef.get();
+          if (docSnap.exists && docSnap.data() != null) {
+            final currentStock = (docSnap.data()!['stockCount'] as num?)?.toInt() ?? 0;
+            final newStock = (currentStock - entry.qty).clamp(0, 999999);
+            await itemRef.update({
+              'stockCount': newStock,
+              'available': newStock > 0,
+            });
+          }
+        } catch (e) {
+          debugPrint('Could not update inventory for ${entry.item.id}: $e');
+        }
+      }
+    }
+
+    // 3. If student is logged in, increment their order count
     if (student != null) {
       try {
         await _db.collection('students').doc(student.uid).update({

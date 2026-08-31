@@ -160,7 +160,20 @@ class MenuItemCard extends StatelessWidget {
       child: GestureDetector(
         onTap: () {
           HapticFeedback.selectionClick();
-          context.read<CartProvider>().addItem(item);
+          final added = context.read<CartProvider>().addItem(item);
+          if (!added) {
+            HapticFeedback.vibrate();
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Only ${item.stockCount} ${item.name} available in stock!'),
+                backgroundColor: AppColors.red,
+                duration: const Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            );
+          }
         },
         child: Container(
           width: 44,
@@ -222,7 +235,20 @@ class MenuItemCard extends StatelessWidget {
             GestureDetector(
               onTap: () {
                 HapticFeedback.selectionClick();
-                context.read<CartProvider>().addItem(item);
+                final added = context.read<CartProvider>().addItem(item);
+                if (!added) {
+                  HapticFeedback.vibrate();
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Only ${item.stockCount} ${item.name} available in stock!'),
+                      backgroundColor: AppColors.red,
+                      duration: const Duration(seconds: 2),
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  );
+                }
               },
               child: const SizedBox(
                 width: 44,

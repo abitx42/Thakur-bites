@@ -104,15 +104,16 @@ class CartProvider extends ChangeNotifier {
 
   // ─── Mutations ────────────────────────────────────────────────
 
-  /// Add one of this item to cart (or increment if already present)
-  void addItem(MenuItem item) {
-    if (!item.isInStock) return; // Prevent adding if out of stock
+  /// Add one of this item to cart (or increment if already present).
+  /// Returns true if successfully added, false if stock limit reached.
+  bool addItem(MenuItem item) {
+    if (!item.isInStock) return false;
 
-    // For instant items, enforce max available stock limit
+    // For instant store items, enforce available stock limit
     if (item.isInstant && item.stockCount > 0) {
       final currentQty = getQty(item.id);
       if (currentQty >= item.stockCount) {
-        return; // Cannot add more than in-stock quantity
+        return false; // Cannot add more than in-stock quantity
       }
     }
 
@@ -120,6 +121,20 @@ class CartProvider extends ChangeNotifier {
       _entries[item.id]!.qty++;
     } else {
       _entries[item.id] = CartEntry(item: item);
+    }
+    notifyListeners();
+    return true;
+  }
+
+  /// Adjust item quantity to available stock (e.g. if someone else bought items)
+  void adjustItemQuantityToStock(String itemId, int availableStock) {
+    if (!_entries.containsKey(itemId)) return;
+
+    if (availableStock <= 0) {
+      _entries[itemId]!.item = _entries[itemId]!.item.copyWith(available: false, stockCount: 0);
+    } else if (_entries[itemId]!.qty > availableStock) {
+      _entries[itemId]!.qty = availableStock;
+      _entries[itemId]!.item = _entries[itemId]!.item.copyWith(stockCount: availableStock);
     }
     notifyListeners();
   }

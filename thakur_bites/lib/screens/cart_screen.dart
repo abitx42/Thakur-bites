@@ -330,7 +330,20 @@ class _CartItemRow extends StatelessWidget {
                   GestureDetector(
                     onTap: () {
                       HapticFeedback.selectionClick();
-                      context.read<CartProvider>().addItem(item);
+                      final added = context.read<CartProvider>().addItem(item);
+                      if (!added) {
+                        HapticFeedback.vibrate();
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Only ${item.stockCount} ${item.name} available in stock!'),
+                            backgroundColor: AppColors.red,
+                            duration: const Duration(seconds: 2),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        );
+                      }
                     },
                     child: Container(
                       width: 28,
@@ -406,23 +419,24 @@ class _CartSummaryState extends State<_CartSummary> {
     HapticFeedback.mediumImpact();
 
     try {
-      // 2. Pre-Payment Background Live Stock Verification (Instamart / Zepto style)
-      final itemIds = cart.entries.map((e) => e.item.id).toList();
-      final unavailableItemIds = await _firestore.verifyItemsStock(itemIds);
+      // 2. Pre-Payment Background Live Stock & Quantity Verification (Instamart / Zepto style)
+      final stockIssues = await _firestore.verifyItemsStockQuantity(cart.entries);
 
-      if (unavailableItemIds.isNotEmpty) {
-        // Flag unavailable items in cart
-        cart.markItemsOutOfStock(unavailableItemIds);
+      if (stockIssues.isNotEmpty) {
+        // Adjust cart items to actual available stock
+        for (final entry in stockIssues.entries) {
+          cart.adjustItemQuantityToStock(entry.key, entry.value);
+        }
+
         setState(() => _isProcessing = false);
 
         if (mounted) {
-          final outOfStockList = cart.outOfStockEntries;
-          _showOutOfStockAlert(outOfStockList);
+          _showQuantityAdjustedAlert(stockIssues);
         }
         return;
       }
 
-      // 3. Place order in Firestore
+      // 3. Place order in Firestore & automatically decrement inventory
       final student = context.read<AuthProvider>().currentStudent;
       final order = await _firestore.placeOrder(cart, student: student);
 
@@ -451,6 +465,109 @@ class _CartSummaryState extends State<_CartSummary> {
         );
       }
     }
+  }
+
+  /// Alert when live stock quantity was insufficient (Zepto/Instamart style)
+  void _showQuantityAdjustedAlert(Map<String, int> stockIssues) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.all(22),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.line,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFEE2E2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.inventory_2_outlined, color: AppColors.red, size: 24),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Stock Availability Updated', style: AppFonts.display(fontSize: 20)),
+                      Text(
+                        'Live canteen inventory just changed',
+                        style: AppFonts.body(fontSize: 12, color: AppColors.inkSoft),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.surface2,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.line, width: 1),
+              ),
+              child: Text(
+                'Some items in your cart had limited stock and were adjusted to the maximum available units. Please review your updated total before completing payment.',
+                style: AppFonts.body(fontSize: 13, color: AppColors.ink),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      Navigator.of(context).pop(); // Back to menu
+                    },
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.line, width: 1.5),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: Text('Explore Menu', style: AppFonts.body(fontSize: 13.5, fontWeight: FontWeight.w600, color: AppColors.ink)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.red,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: Text('Review Cart', style: AppFonts.body(fontSize: 13.5, fontWeight: FontWeight.w700, color: Colors.white)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Instamart / Zepto style modal when items are out of stock
