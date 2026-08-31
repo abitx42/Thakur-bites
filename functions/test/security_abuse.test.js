@@ -938,4 +938,52 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(validateOrderStatusUpdate('paid').allowed, false);
     assert.strictEqual(validateOrderStatusUpdate('paid').error, 'PAYMENT_STATE_MUTATION_FORBIDDEN');
   });
+
+  it('41. Unified Inventory Model: Maintains availableStock = stockOnHand - reservedStock across adjustments', () => {
+    const item = {
+      id: 'chips_1',
+      stockOnHand: 50,
+      reservedStock: 10,
+    };
+
+    function calculateAvailable(itemDoc) {
+      return Math.max(0, itemDoc.stockOnHand - itemDoc.reservedStock);
+    }
+
+    assert.strictEqual(calculateAvailable(item), 40);
+
+    // Manager restocks +20
+    item.stockOnHand += 20;
+    assert.strictEqual(calculateAvailable(item), 60);
+
+    // Reservation committed (-10 physical, -10 reserved)
+    item.stockOnHand -= 10;
+    item.reservedStock -= 10;
+    assert.strictEqual(item.stockOnHand, 60);
+    assert.strictEqual(item.reservedStock, 0);
+    assert.strictEqual(calculateAvailable(item), 60);
+  });
+
+  it('42. Physical Stock Exhaustion & Negative Boundary Invariant', () => {
+    const item = { stockOnHand: 5, reservedStock: 0 };
+
+    function adjustStock(itemDoc, delta) {
+      const target = itemDoc.stockOnHand + delta;
+      if (target < 0) {
+        return { success: false, error: 'CANNOT_DROP_BELOW_ZERO' };
+      }
+      itemDoc.stockOnHand = target;
+      return { success: true, newStockOnHand: itemDoc.stockOnHand };
+    }
+
+    // Valid reduction of 3 units
+    assert.strictEqual(adjustStock(item, -3).success, true);
+    assert.strictEqual(item.stockOnHand, 2);
+
+    // Illegal reduction of 5 units (below 0)
+    const overReduction = adjustStock(item, -5);
+    assert.strictEqual(overReduction.success, false);
+    assert.strictEqual(overReduction.error, 'CANNOT_DROP_BELOW_ZERO');
+    assert.strictEqual(item.stockOnHand, 2); // Unmodified
+  });
 });

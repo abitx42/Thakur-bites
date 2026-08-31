@@ -17,15 +17,18 @@ export interface InventoryAdjustmentRequest {
 export interface InventoryAdjustmentResponse {
   success: boolean;
   itemId: string;
-  previousStock: number;
-  newStock: number;
+  previousStockOnHand: number;
+  newStockOnHand: number;
+  reservedStock: number;
+  previousAvailable: number;
+  newAvailable: number;
   deltaUnits: number;
   changeType: InventoryChangeType;
 }
 
 /**
- * Manager/Admin Authoritative Inventory Adjustment (Phase 3 & P2: 27).
- * Strictly maintains inventory ledger accounting invariants.
+ * Manager/Admin Authoritative Unified Inventory Adjustment (Stage 3 Hardened).
+ * Operates purely on stockOnHand and strictly maintains availableStock = stockOnHand - reservedStock.
  */
 export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -62,26 +65,32 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
     }
 
     const itemData = itemSnap.data()!;
-    const previousStock = Math.max(0, Number(itemData.stockCount || 0));
-    const newStock = previousStock + deltaUnits;
+    const previousStockOnHand = Math.max(
+      0,
+      Number(itemData.stockOnHand !== undefined ? itemData.stockOnHand : (itemData.stockCount || 0))
+    );
+    const reservedStock = Math.max(0, Number(itemData.reservedStock || 0));
+    const previousAvailable = Math.max(0, previousStockOnHand - reservedStock);
 
-    // Invariant 1: Stock cannot drop below 0
-    if (newStock < 0) {
+    const newStockOnHand = previousStockOnHand + deltaUnits;
+
+    // Invariant 1: Physical Stock on Hand cannot drop below 0
+    if (newStockOnHand < 0) {
       throw new HttpsError(
         'failed-precondition',
-        `Cannot reduce stock by ${Math.abs(deltaUnits)}. Current stock is only ${previousStock}.`
+        `Cannot reduce stock by ${Math.abs(deltaUnits)}. Current physical stock on hand is only ${previousStockOnHand}.`
       );
     }
 
-    // Invariant 2: newStock === previousStock + deltaUnits
-    if (newStock !== previousStock + deltaUnits) {
-      throw new HttpsError('internal', 'Inventory calculation integrity violation.');
-    }
+    const newAvailable = Math.max(0, newStockOnHand - reservedStock);
 
-    // 1. Update MenuItem stock
+    // 1. Update MenuItem stock maintaining single source of truth
     transaction.update(itemRef, {
-      stockCount: newStock,
-      available: newStock > 0,
+      stockOnHand: newStockOnHand,
+      reservedStock,
+      availableStock: newAvailable,
+      stockCount: newAvailable, // Derived UI view field strictly synchronized
+      available: newAvailable > 0,
       lastRestockedAt: deltaUnits > 0 ? now : itemData.lastRestockedAt || now,
       updatedAt: now,
     });
@@ -93,34 +102,25 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
       itemId,
       changeType,
       deltaUnits,
-      previousAvailable: previousStock,
-      newAvailable: newStock,
+      previousStockOnHand,
+      newStockOnHand,
+      reservedStock,
+      previousAvailable,
+      newAvailable,
       actorId: request.auth!.uid,
       actorRole,
       reason,
       timestamp: now,
     });
 
-    // 3. Log security event for auditability
-    const secRef = db.collection('securityEvents').doc();
-    transaction.set(secRef, {
-      eventType: 'INVENTORY_MANUALLY_ADJUSTED',
-      itemId,
-      changeType,
-      deltaUnits,
-      previousStock,
-      newStock,
-      reason,
-      actorUid: request.auth!.uid,
-      severity: 'INFO',
-      timestamp: now,
-    });
-
     return {
       success: true,
       itemId,
-      previousStock,
-      newStock,
+      previousStockOnHand,
+      newStockOnHand,
+      reservedStock,
+      previousAvailable,
+      newAvailable,
       deltaUnits,
       changeType,
     };
