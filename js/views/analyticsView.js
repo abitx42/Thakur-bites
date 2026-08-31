@@ -197,7 +197,45 @@ export function renderAnalyticsView(container) {
         </div>
 
         <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- SECTION 3: SIMULATION LOGS (IF ACTIVE)                     -->
+        <!-- SECTION 3: EMERGENCY CONTROLS & OPERATIONAL MODE           -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 1.5rem; box-shadow: 0 2px 6px rgba(0,0,0,0.03); margin-bottom: 2rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+            <div>
+              <h3 style="font-family: var(--font-display); font-size: 1.4rem; margin: 0; color: var(--ink-primary);">
+                🚨 GLOBAL OPERATIONAL MODE & KILL SWITCH
+              </h3>
+              <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin: 4px 0 0 0;">
+                Instantly control platform behavior during rush peaks, network degradation, or campus emergency.
+              </p>
+            </div>
+            <div id="mode-status-badge" style="background: #DCFCE7; color: #166534; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; padding: 6px 14px; border-radius: 999px; border: 1px solid #86EFAC;">
+              ● ACTIVE: NORMAL
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+            <button class="mode-btn" data-mode="NORMAL" style="padding: 12px; border-radius: 10px; border: 2px solid #22C55E; background: #F0FDF4; font-family: var(--font-mono); font-weight: 700; font-size: 0.8rem; color: #15803D; cursor: pointer; text-align: left;">
+              <div>🟢 NORMAL</div>
+              <div style="font-weight: normal; font-size: 0.75rem; color: #166534; margin-top: 4px;">Full digital ordering & payment active</div>
+            </button>
+            <button class="mode-btn" data-mode="DEGRADED" style="padding: 12px; border-radius: 10px; border: 2px solid #EAB308; background: #FEFCE8; font-family: var(--font-mono); font-weight: 700; font-size: 0.8rem; color: #A16207; cursor: pointer; text-align: left;">
+              <div>🟡 DEGRADED</div>
+              <div style="font-weight: normal; font-size: 0.75rem; color: #854D0E; margin-top: 4px;">Counter cash only; app checkout paused</div>
+            </button>
+            <button class="mode-btn" data-mode="FINANCIAL_FROZEN" style="padding: 12px; border-radius: 10px; border: 2px solid #F97316; background: #FFF7ED; font-family: var(--font-mono); font-weight: 700; font-size: 0.8rem; color: #C2410C; cursor: pointer; text-align: left;">
+              <div>🟠 FINANCIAL FROZEN</div>
+              <div style="font-weight: normal; font-size: 0.75rem; color: #9A3412; margin-top: 4px;">Payments & refunds locked for audit</div>
+            </button>
+            <button class="mode-btn" data-mode="EMERGENCY_HALT" style="padding: 12px; border-radius: 10px; border: 2px solid #EF4444; background: #FEF2F2; font-family: var(--font-mono); font-weight: 700; font-size: 0.8rem; color: #B91C1C; cursor: pointer; text-align: left;">
+              <div>🔴 EMERGENCY HALT</div>
+              <div style="font-weight: normal; font-size: 0.75rem; color: #991B1B; margin-top: 4px;">Total immediate canteen mutation freeze</div>
+            </button>
+          </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 4: SIMULATION LOGS (IF ACTIVE)                     -->
         <!-- ═══════════════════════════════════════════════════════════ -->
         ${simulationLogs.length > 0 ? `
           <div style="background: #1E293B; border-radius: 14px; padding: 1.5rem; color: #F8FAFC; font-family: var(--font-mono); font-size: 0.8rem; margin-top: 1.5rem;">
@@ -212,6 +250,21 @@ export function renderAnalyticsView(container) {
         ` : ''}
       </div>
     `;
+
+    // Attach Mode Switch Buttons
+    container.querySelectorAll('.mode-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const targetMode = btn.getAttribute('data-mode');
+        const badge = container.querySelector('#mode-status-badge');
+        if (badge) {
+          badge.textContent = `● ACTIVE: ${targetMode}`;
+          badge.style.background = targetMode === 'NORMAL' ? '#DCFCE7' : targetMode === 'DEGRADED' ? '#FEF9C3' : '#FEE2E2';
+          badge.style.color = targetMode === 'NORMAL' ? '#166534' : targetMode === 'DEGRADED' ? '#854D0E' : '#991B1B';
+        }
+        simulationLogs.push(`[${new Date().toLocaleTimeString()}] 🚨 System operational mode switched to: ${targetMode}`);
+        render();
+      });
+    });
 
     // Attach Simulation Runner
     const simBtn = container.querySelector('#run-simulation-btn');
