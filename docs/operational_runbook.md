@@ -122,3 +122,32 @@ This document defines standard operating procedures (SOPs) for Canteen Managers,
 2. **Lock Operational Day**:
    - Canteen POS day is closed in Asia/Kolkata timezone.
    - Token counter resets to `TB-001` for the next morning.
+
+---
+
+## 9. Global Operational Modes & Emergency Kill Switch
+
+Managers and Security Administrators can instantly toggle the canteen platform between 4 operational modes via `setSystemOperationalMode`:
+
+| System Mode | Impact on Students & Canteen Operations | Use Case |
+| :--- | :--- | :--- |
+| **`NORMAL`** | Full digital checkout, payments, KDS, pickup, and ratings active. | Standard operating days. |
+| **`DEGRADED`** | Online app ordering paused; counter cash and kitchen dispatch continue. | Wi-Fi outages / college network degradation. |
+| **`FINANCIAL_FROZEN`** | Checkout, payments, and refund disbursements blocked; active KDS preparation and pickup continue. | Financial audit / gateway settlement reconciliation. |
+| **`EMERGENCY_HALT`** | Immediate lockdown of all student and operational mutations. | Security incidents / campus emergency evacuations. |
+
+### Toggling Operational Mode via CLI / Cloud Function:
+```bash
+# Toggle to FINANCIAL_FROZEN during emergency audit
+firebase functions:call setSystemOperationalMode --data '{"mode": "FINANCIAL_FROZEN", "reason": "Midday accounting audit"}'
+```
+
+---
+
+## 10. Automated Nightly Financial Reconciliation (23:59 IST)
+
+The system automatically runs the `scheduledDailyReconciliation` Cloud Function every night at 23:59 IST:
+- Analyzes all orders and payments finalized during the calendar day.
+- Computes double-entry ledger totals (`debitPaise == creditPaise`).
+- If any discrepancy is flagged, automatically creates a high-severity `INCIDENT-SEC-XXXXX` event in `/securityEvents` for IT and manager investigation.
+
