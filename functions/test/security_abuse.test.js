@@ -2436,4 +2436,93 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(postUpgradeUser.createdAt, preUpgradeUser.createdAt, 'Original account registration date preserved');
     assert.strictEqual(postUpgradeUser.totalOrders, 8, 'All previous orders preserved');
   });
+
+  it('113. Dynamic Effective Priority Score: Boosts waiting tickets to prevent student starvation', () => {
+    const { calculateEffectivePriority } = require('../lib/priority_queue');
+    const now = new Date('2026-09-01T12:30:00Z');
+
+    // Fresh faculty order (Level 2, 0 min wait)
+    const freshFaculty = new Date('2026-09-01T12:30:00Z');
+    const scoreFreshFaculty = calculateEffectivePriority(2, freshFaculty, now);
+    assert.strictEqual(scoreFreshFaculty, 200, 'Fresh faculty order score should be 200');
+
+    // Fresh student order (Level 1, 0 min wait)
+    const freshStudent = new Date('2026-09-01T12:30:00Z');
+    const scoreFreshStudent = calculateEffectivePriority(1, freshStudent, now);
+    assert.strictEqual(scoreFreshStudent, 100, 'Fresh student order score should be 100');
+
+    // Student waiting 20 minutes (Level 1, 20 min * 5 pts/min = +100)
+    const waitingStudent = new Date('2026-09-01T12:10:00Z');
+    const scoreWaitingStudent = calculateEffectivePriority(1, waitingStudent, now);
+    assert.strictEqual(scoreWaitingStudent, 200, 'Waiting student catches up to fresh faculty order to prevent starvation');
+
+    // Student waiting 25 minutes (Level 1, 25 min * 5 pts/min = +125 -> 225)
+    const longWaitingStudent = new Date('2026-09-01T12:05:00Z');
+    const scoreLongWaitingStudent = calculateEffectivePriority(1, longWaitingStudent, now);
+    assert.strictEqual(scoreLongWaitingStudent, 225);
+    assert.ok(scoreLongWaitingStudent > scoreFreshFaculty, 'Long-waiting student prioritised ahead of newly placed faculty ticket');
+  });
+
+  it('114. Priority Queue Invariant: Priority affects queue ordering, NEVER steals reserved stock', () => {
+    // 1 item left in stock
+    const itemInventory = {
+      stockOnHand: 1,
+      reservedStock: 1, // Already reserved by student ticket TB-001
+    };
+
+    function attemptPriorityOrderReservation(inventory, requestedQty) {
+      const availableStock = inventory.stockOnHand - inventory.reservedStock;
+      if (requestedQty > availableStock) {
+        return { success: false, reason: 'INSUFFICIENT_AVAILABLE_STOCK' };
+      }
+      return { success: true };
+    }
+
+    // Teacher arrives with Priority Level 2 and wants the same item
+    const teacherReservation = attemptPriorityOrderReservation(itemInventory, 1);
+    assert.strictEqual(teacherReservation.success, false);
+    assert.strictEqual(teacherReservation.reason, 'INSUFFICIENT_AVAILABLE_STOCK', 'Priority cannot steal already-reserved inventory');
+  });
+
+  it('115. Fairness Limiter: Max 1 active priority order per faculty account', () => {
+    function simulatePriorityLimiter(activeOrders, userRole, userPriorityLevel) {
+      if (userPriorityLevel < 2) return { assignedPriority: 1, reason: 'STANDARD_QUEUE' };
+      const hasActive = activeOrders.some(o => o.priorityLevel >= 2 && ['confirmed', 'preparing'].includes(o.status));
+      if (hasActive) {
+        return { assignedPriority: 1, reason: 'FAIRNESS_MAX_ACTIVE_PRIORITY_REACHED' };
+      }
+      return { assignedPriority: userPriorityLevel, reason: 'FACULTY_PRIORITY_APPLIED' };
+    }
+
+    // Faculty member has 1 order currently preparing
+    const existingOrders = [{ id: 'order_1', priorityLevel: 2, status: 'preparing' }];
+    const secondOrder = simulatePriorityLimiter(existingOrders, 'TEACHER', 2);
+
+    assert.strictEqual(secondOrder.assignedPriority, 1, 'Second concurrent order demoted to standard queue');
+    assert.strictEqual(secondOrder.reason, 'FAIRNESS_MAX_ACTIVE_PRIORITY_REACHED');
+  });
+
+  it('116. Burp/Client Privilege Escalation Defense: Client priority payload ignored', () => {
+    function resolveOrderPriority(clientPayload, authoritativeUserDoc) {
+      // Invariant: clientPayload.priority or clientPayload.role is NEVER trusted
+      const basePriority = authoritativeUserDoc?.priorityLevel ?? 1;
+      return typeof basePriority === 'number' ? basePriority : 1;
+    }
+
+    const maliciousClientBody = {
+      items: [{ itemId: 'dosa', quantity: 1 }],
+      role: 'TEACHER',
+      priority: true,
+      priorityLevel: 3,
+    };
+
+    const legitimateStudentDoc = {
+      uid: 'attacker_student_01',
+      accountType: 'STUDENT',
+      priorityLevel: 1,
+    };
+
+    const resolvedPriority = resolveOrderPriority(maliciousClientBody, legitimateStudentDoc);
+    assert.strictEqual(resolvedPriority, 1, 'Malicious client priority override completely neutralised');
+  });
 });

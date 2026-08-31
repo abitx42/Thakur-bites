@@ -8,6 +8,7 @@ import { reserveInventoryInTransaction, commitInventoryInTransaction } from './i
 import { assertOperationalMode } from './kill_switch';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
+import { evaluateOrderPriorityLevel } from './priority_queue';
 
 const db = admin.firestore();
 
@@ -83,6 +84,8 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   // 2. Fetch user profile details (checks users collection first, fallback to students)
   let studentName = 'Student';
   let studentRoll = 'TCET';
+  let userAccountType: any = 'STUDENT';
+  let userPriorityLevel: any = 1;
 
   const userDoc = await db.collection('users').doc(studentId).get();
   if (userDoc.exists) {
@@ -92,6 +95,8 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
     }
     studentName = userData.displayName || 'Customer';
     studentRoll = userData.rollNo || (userData.accountType === 'TEACHER' ? 'FACULTY' : 'TCET');
+    userAccountType = userData.accountType || 'STUDENT';
+    userPriorityLevel = typeof userData.priorityLevel === 'number' ? userData.priorityLevel : 1;
   } else {
     const studentDoc = await db.collection('students').doc(studentId).get();
     const studentData = studentDoc.data() || {};
@@ -101,6 +106,13 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
     studentName = studentData.name || 'Student';
     studentRoll = studentData.rollNo || 'TCET';
   }
+
+  // Authoritative Priority Assessment & Fairness Throttling
+  const { assignedPriority, priorityReason } = await evaluateOrderPriorityLevel(
+    studentId,
+    userAccountType,
+    userPriorityLevel
+  );
 
   const now = admin.firestore.Timestamp.now();
   const nowDate = new Date();
@@ -251,6 +263,8 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         currency: 'INR',
         items: orderItemSnapshots,
         estimatedMinutes: maxPrepMinutes,
+        priorityLevel: assignedPriority,
+        priorityReason: priorityReason,
         createdAt: now,
         readyAt: admin.firestore.Timestamp.fromDate(readyAtDate),
       };

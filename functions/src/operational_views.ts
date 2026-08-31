@@ -4,10 +4,14 @@ import { UserRole } from './types';
 
 const db = admin.firestore();
 
+import { calculateEffectivePriority } from './priority_queue';
+
 export interface KitchenOrderView {
   orderId: string;
   tokenNumber: string;
   status: string;
+  priorityLevel: number;
+  effectivePriority: number;
   items: Array<{
     itemId: string;
     name: string;
@@ -43,6 +47,7 @@ export interface CashierOrderView {
 /**
  * 1. Kitchen KDS Least-Privilege Operational View.
  * Returns only station-specific items, token, and prep estimates.
+ * Dynamically ranks tickets by Effective Priority Score with anti-starvation aging.
  * Strips all student PII (email, phone, studentId) and financial gateway secrets.
  */
 export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async (request) => {
@@ -61,12 +66,19 @@ export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async 
     .limit(100)
     .get();
 
-  return snap.docs.map(doc => {
+  const now = new Date();
+  const orders = snap.docs.map(doc => {
     const data = doc.data();
+    const createdAtDate = data.createdAt?.toDate ? data.createdAt.toDate() : new Date();
+    const priorityLevel = typeof data.priorityLevel === 'number' ? data.priorityLevel : 1;
+    const effectivePriority = calculateEffectivePriority(priorityLevel, createdAtDate, now);
+
     return {
       orderId: doc.id,
       tokenNumber: data.tokenNumber || 'TB-???',
       status: data.status,
+      priorityLevel,
+      effectivePriority,
       items: (data.items || []).map((it: any) => ({
         itemId: it.itemId,
         name: it.name,
@@ -74,9 +86,19 @@ export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async 
         station: it.station || 'general',
       })),
       estimatedPrepTimeMinutes: data.estimatedPrepTimeMinutes || 0,
-      createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
+      createdAt: createdAtDate.toISOString(),
     };
   });
+
+  // Rank by effective priority descending, breaking ties by earliest createdAt
+  orders.sort((a, b) => {
+    if (b.effectivePriority !== a.effectivePriority) {
+      return b.effectivePriority - a.effectivePriority;
+    }
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+
+  return orders;
 });
 
 /**

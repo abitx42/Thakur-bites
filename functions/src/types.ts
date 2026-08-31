@@ -76,6 +76,8 @@ export interface OrderDocument {
   refundReason?: string;
   refundedByStaffId?: string;
   paidAt?: Timestamp;
+  priorityLevel?: PriorityLevel;
+  priorityReason?: string;
   updatedAt?: Timestamp;
 }
 

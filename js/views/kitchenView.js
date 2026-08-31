@@ -24,6 +24,22 @@ export function renderKitchenView(container) {
       return o.items && o.items.some(i => i.name.toLowerCase().includes(selectedCategoryFilter));
     });
 
+    // Dynamic Effective Priority Score calculation: Base + (WaitMinutes * 5)
+    function computeEffectiveScore(order) {
+      const base = (order.priorityLevel || 1) * 100;
+      const createdAtMs = order.createdAt ? new Date(order.createdAt).getTime() : Date.now();
+      const waitMinutes = Math.max(0, (Date.now() - createdAtMs) / 60000);
+      return base + Math.floor(waitMinutes * 5);
+    }
+
+    // Sort: Highest effective priority first, then earliest created
+    cookOrders.sort((a, b) => {
+      const scoreA = computeEffectiveScore(a);
+      const scoreB = computeEffectiveScore(b);
+      if (scoreB !== scoreA) return scoreB - scoreA;
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
+
     // Ready Queue: ready for pickup
     const readyOrders = activeOrders.filter(o => o.status === 'ready');
 
@@ -125,14 +141,22 @@ export function renderKitchenView(container) {
             </div>
           ` : cookOrders.map(order => {
             const isCooking = order.status === 'preparing';
+            const isPriority = (order.priorityLevel || 0) >= 2;
             const elapsedMins = Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 60000);
             const isDelayed = elapsedMins > 10;
 
             return `
-              <div class="kds-card" style="background: #FFF; border: 2px solid ${isDelayed ? 'var(--brand-red)' : (isCooking ? '#F59E0B' : 'var(--border-light)')}; border-radius: 16px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,0.04); position: relative;">
+              <div class="kds-card" style="background: #FFF; border: 2px solid ${isDelayed ? 'var(--brand-red)' : (isPriority ? '#F59E0B' : (isCooking ? '#3B82F6' : 'var(--border-light)'))}; border-radius: 16px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between; box-shadow: ${isPriority ? '0 4px 14px rgba(245,158,11,0.18)' : '0 2px 8px rgba(0,0,0,0.04)'}; position: relative;">
                 
                 <!-- Ticket Header -->
                 <div>
+                  ${isPriority ? `
+                    <div style="background: #FEF3C7; border: 1.5px solid #F59E0B; border-radius: 6px; padding: 2px 8px; margin-bottom: 8px; display: inline-flex; align-items: center; gap: 4px;">
+                      <span style="font-size: 0.9rem;">⭐️</span>
+                      <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; color: #92400E;">FACULTY PRIORITY</span>
+                    </div>
+                  ` : ''}
+
                   <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px dashed var(--border-light); padding-bottom: 0.8rem; margin-bottom: 0.8rem;">
                     <div>
                       <div style="font-family: var(--font-mono); font-size: 2.2rem; font-weight: 900; color: var(--ink-primary); line-height: 1;">
