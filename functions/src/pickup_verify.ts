@@ -2,6 +2,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { UserRole } from './types';
+import { enforceRateLimit } from './rate_limiter';
 
 const db = admin.firestore();
 
@@ -12,6 +13,8 @@ export const verifyPickup = onCall<{ orderId: string; pinCode: string }>(async (
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
+
+  await enforceRateLimit(request.auth.uid, 'pickup_verify');
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
   if (actorRole !== 'pickup' && actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin') {

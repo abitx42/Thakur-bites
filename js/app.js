@@ -4,8 +4,9 @@ import { renderKitchenView } from './views/kitchenView.js?v=4';
 import { renderPickupView } from './views/pickupView.js?v=4';
 import { renderAdminView } from './views/adminView.js?v=4';
 import { renderTvDisplayView } from './views/tvDisplayView.js?v=4';
+import { renderSecurityCenterView } from './views/securityCenterView.js?v=4';
 
-let currentStaffView = 'kitchen'; // 'kitchen' | 'pickup' | 'admin' | 'tv'
+let currentStaffView = 'kitchen'; // 'kitchen' | 'pickup' | 'admin' | 'tv' | 'security'
 
 function initStaffDashboard() {
   const root = document.getElementById('app-root');
@@ -21,6 +22,7 @@ function initStaffDashboard() {
     }
 
     const currentRole = staffAuth.getRole();
+    const canViewSecurity = currentRole === 'admin' || currentRole === 'security_admin' || currentRole === 'manager';
 
     root.innerHTML = `
       <!-- Staff App Header -->
@@ -60,6 +62,11 @@ function initStaffDashboard() {
             <button class="staff-nav-btn ${currentStaffView === 'tv' ? 'active' : ''}" data-view="tv">
               📺 Token TV
             </button>
+            ${canViewSecurity ? `
+              <button class="staff-nav-btn ${currentStaffView === 'security' ? 'active' : ''}" data-view="security">
+                🛡️ Security Center
+              </button>
+            ` : ''}
           </nav>
 
           <!-- Sign Out Button -->
@@ -101,6 +108,8 @@ function initStaffDashboard() {
       renderAdminView(viewTarget);
     } else if (currentStaffView === 'tv') {
       renderTvDisplayView(viewTarget);
+    } else if (currentStaffView === 'security') {
+      renderSecurityCenterView(viewTarget);
     }
   }
 

@@ -2,6 +2,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { CheckoutRequest, OrderDocument, OrderItemSnapshot } from './types';
+import { enforceRateLimit } from './rate_limiter';
 
 const db = admin.firestore();
 
@@ -15,6 +16,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   }
 
   const studentId = request.auth.uid;
+  await enforceRateLimit(studentId, 'checkout');
   const { idempotencyKey, items } = request.data;
 
   if (!idempotencyKey || typeof idempotencyKey !== 'string') {
