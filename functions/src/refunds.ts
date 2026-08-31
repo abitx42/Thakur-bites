@@ -75,18 +75,32 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     const nextOrderStatus = isFullRefund ? 'cancelled' : orderData.status;
 
     // 1. Write to immutable financialTransactions ledger (Double-Entry Debit/Credit)
+    const isCash = orderData.paymentMethod === 'counter_cash';
     const finTxRef = db.collection('financialTransactions').doc();
     const finRecord: FinancialTransactionRecord = {
       transactionId: finTxRef.id,
       orderId,
       type: 'REFUND_DISBURSEMENT',
       amount: refundAmountPaise / 100,
+      amountPaise: refundAmountPaise,
       currency: 'INR',
+      postings: [
+        {
+          account: 'SALES_REVENUE',
+          debitPaise: refundAmountPaise,
+          creditPaise: 0,
+        },
+        {
+          account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE',
+          debitPaise: 0,
+          creditPaise: refundAmountPaise,
+        },
+      ],
       gatewayTransactionId: refundId,
       gatewayOrderId: orderData.gatewayOrderId || 'direct',
       actorId: request.auth!.uid,
       timestamp: now,
-      status: 'settled',
+      status: 'REFUNDED',
     };
     transaction.set(finTxRef, finRecord);
 

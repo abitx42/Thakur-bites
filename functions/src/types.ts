@@ -131,17 +131,32 @@ export interface PaymentRecord {
   auditSignature: string;
 }
 
+export type LedgerAccount =
+  | 'GATEWAY_RECEIVABLE'
+  | 'SALES_REVENUE'
+  | 'CASH_ON_HAND'
+  | 'GATEWAY_FEES'
+  | 'CUSTOMER_REFUNDS';
+
+export interface LedgerPosting {
+  account: LedgerAccount;
+  debitPaise: number;
+  creditPaise: number;
+}
+
 export interface FinancialTransactionRecord {
   transactionId: string;
   orderId: string;
   type: 'PAYMENT_CAPTURE' | 'REFUND_DISBURSEMENT' | 'SETTLEMENT_CREDIT';
   amount: number;
+  amountPaise: number;
   currency: 'INR';
+  postings: LedgerPosting[];
   gatewayTransactionId: string;
   gatewayOrderId: string;
   actorId: string;
   timestamp: Timestamp;
-  status: 'settled' | 'pending' | 'disputed';
+  status: 'CAPTURED' | 'SETTLED' | 'REFUNDED';
 }
 
 export interface DailyReconciliationRecord {

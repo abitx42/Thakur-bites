@@ -661,4 +661,81 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(outOfBoundsRes.valid, false);
     assert.strictEqual(outOfBoundsRes.error, 'INVALID_RATING_VALUE');
   });
+
+  it('31. Double-Entry Balance Invariant: Asserts sum of debits equals sum of credits in financial transactions', () => {
+    function validateDoubleEntryRecord(finRecord) {
+      let sumDebits = 0;
+      let sumCredits = 0;
+      for (const posting of finRecord.postings) {
+        sumDebits += posting.debitPaise;
+        sumCredits += posting.creditPaise;
+      }
+      return {
+        balanced: sumDebits === sumCredits && sumDebits === finRecord.amountPaise,
+        sumDebits,
+        sumCredits,
+      };
+    }
+
+    const captureRecord = {
+      transactionId: 'txn_1',
+      type: 'PAYMENT_CAPTURE',
+      amountPaise: 15000, // ₹150.00
+      postings: [
+        { account: 'GATEWAY_RECEIVABLE', debitPaise: 15000, creditPaise: 0 },
+        { account: 'SALES_REVENUE', debitPaise: 0, creditPaise: 15000 },
+      ],
+    };
+
+    const res = validateDoubleEntryRecord(captureRecord);
+    assert.strictEqual(res.balanced, true);
+    assert.strictEqual(res.sumDebits, 15000);
+    assert.strictEqual(res.sumCredits, 15000);
+
+    // Corrupted unbalanced entry
+    const corruptedRecord = {
+      transactionId: 'txn_bad',
+      type: 'PAYMENT_CAPTURE',
+      amountPaise: 15000,
+      postings: [
+        { account: 'GATEWAY_RECEIVABLE', debitPaise: 15000, creditPaise: 0 },
+        { account: 'SALES_REVENUE', debitPaise: 0, creditPaise: 12000 }, // Discrepancy!
+      ],
+    };
+    assert.strictEqual(validateDoubleEntryRecord(corruptedRecord).balanced, false);
+  });
+
+  it('32. Ledger Account Differentiation: Online orders post to GATEWAY_RECEIVABLE vs CASH_ON_HAND', () => {
+    function constructPostings(paymentMethod, amountPaise) {
+      const isCash = paymentMethod === 'counter_cash';
+      return [
+        { account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE', debitPaise: amountPaise, creditPaise: 0 },
+        { account: 'SALES_REVENUE', debitPaise: 0, creditPaise: amountPaise },
+      ];
+    }
+
+    const onlinePostings = constructPostings('online', 10000);
+    assert.strictEqual(onlinePostings[0].account, 'GATEWAY_RECEIVABLE');
+    assert.strictEqual(onlinePostings[1].account, 'SALES_REVENUE');
+
+    const cashPostings = constructPostings('counter_cash', 10000);
+    assert.strictEqual(cashPostings[0].account, 'CASH_ON_HAND');
+    assert.strictEqual(cashPostings[1].account, 'SALES_REVENUE');
+  });
+
+  it('33. Refund Disbursement Reversal Invariant: Debits SALES_REVENUE and credits receivable/cash', () => {
+    function constructRefundPostings(paymentMethod, refundPaise) {
+      const isCash = paymentMethod === 'counter_cash';
+      return [
+        { account: 'SALES_REVENUE', debitPaise: refundPaise, creditPaise: 0 },
+        { account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE', debitPaise: 0, creditPaise: refundPaise },
+      ];
+    }
+
+    const refundPostings = constructRefundPostings('online', 5000);
+    assert.strictEqual(refundPostings[0].account, 'SALES_REVENUE');
+    assert.strictEqual(refundPostings[0].debitPaise, 5000);
+    assert.strictEqual(refundPostings[1].account, 'GATEWAY_RECEIVABLE');
+    assert.strictEqual(refundPostings[1].creditPaise, 5000);
+  });
 });

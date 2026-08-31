@@ -388,23 +388,24 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
     .get();
 
   let totalOrdersCount = ordersSnap.size;
-  let totalRevenueCalculated = 0;
-  let onlinePaymentsCaptured = 0;
-  let counterCashEstimated = 0;
+  let totalRevenuePaise = 0;
+  let onlinePaymentsCapturedPaise = 0;
+  let counterCashEstimatedPaise = 0;
   const auditNotes: string[] = [];
   let discrepanciesCount = 0;
 
   const capturedPaymentOrderIds = new Set<string>();
   paymentsSnap.forEach(doc => {
     const p = doc.data();
-    onlinePaymentsCaptured += Number(p.amount || 0);
+    const pAmountPaise = p.amountPaise !== undefined ? Number(p.amountPaise) : Math.round(Number(p.amount || 0) * 100);
+    onlinePaymentsCapturedPaise += pAmountPaise;
     capturedPaymentOrderIds.add(p.orderId);
   });
 
   ordersSnap.forEach(doc => {
     const order = doc.data();
-    const amount = Number(order.totalAmount || 0);
-    totalRevenueCalculated += amount;
+    const orderPaise = order.totalAmountPaise !== undefined ? Number(order.totalAmountPaise) : Math.round(Number(order.totalAmount || 0) * 100);
+    totalRevenuePaise += orderPaise;
 
     if (order.paymentStatus === 'paid' || order.paymentStatus === 'captured') {
       if (!capturedPaymentOrderIds.has(doc.id) && order.status !== 'cancelled') {
@@ -412,7 +413,7 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
         auditNotes.push(`Order ${doc.id} marked paid but missing verified payment ledger record.`);
       }
     } else {
-      counterCashEstimated += amount;
+      counterCashEstimatedPaise += orderPaise;
       if (order.status === 'collected') {
         discrepanciesCount++;
         auditNotes.push(`Order ${doc.id} marked collected but paymentStatus is unpaid/pending.`);
@@ -420,15 +421,13 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
     }
   });
 
-  const totalRevenuePaise = Math.round(totalRevenueCalculated * 100);
-
   const reconciliation: DailyReconciliationRecord = {
     date: dateStr,
     totalOrdersCount,
-    totalRevenueCalculated,
+    totalRevenueCalculated: totalRevenuePaise / 100,
     totalRevenuePaise,
-    onlinePaymentsCaptured,
-    counterCashEstimated,
+    onlinePaymentsCaptured: onlinePaymentsCapturedPaise / 100,
+    counterCashEstimated: counterCashEstimatedPaise / 100,
     discrepanciesCount,
     reconciledAt: admin.firestore.Timestamp.now(),
     status: discrepanciesCount === 0 ? 'BALANCED' : 'DISCREPANCY_FLAGGED',

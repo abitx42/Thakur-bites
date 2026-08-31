@@ -152,19 +152,33 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     };
     transaction.set(paymentRef, paymentRecord);
 
-    // 6. Create immutable financial transaction record
+    // 6. Create immutable double-entry financial transaction record (Phase 5 Invariant)
+    const isCash = source === 'cashier_counter';
     const finTxRef = db.collection('financialTransactions').doc();
     const finRecord: FinancialTransactionRecord = {
       transactionId: finTxRef.id,
       orderId,
       type: 'PAYMENT_CAPTURE',
       amount: expectedPaise / 100,
+      amountPaise: expectedPaise,
       currency: 'INR',
+      postings: [
+        {
+          account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE',
+          debitPaise: expectedPaise,
+          creditPaise: 0,
+        },
+        {
+          account: 'SALES_REVENUE',
+          debitPaise: 0,
+          creditPaise: expectedPaise,
+        },
+      ],
       gatewayTransactionId: gatewayPaymentId,
       gatewayOrderId,
       actorId,
       timestamp: now,
-      status: 'settled',
+      status: isCash ? 'SETTLED' : 'CAPTURED',
     };
     transaction.set(finTxRef, finRecord);
 
