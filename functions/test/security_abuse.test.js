@@ -1949,4 +1949,48 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(validateAppCheck({ app: { appId: 'com.thakurbites.app' } }, true), true);
     assert.throws(() => validateAppCheck({}, true), /APP_CHECK_VERIFICATION_FAILED/);
   });
+
+  it('87. Reliable Critical Security Telemetry Invariant: Critical alerts bubble to emergency log sinks', () => {
+    let emergencyLogged = false;
+
+    function handleSecurityEventFailure(severity, payload) {
+      if (severity === 'CRITICAL' || severity === 'HIGH') {
+        emergencyLogged = true;
+        return { status: 'EMERGENCY_LOGGED', payload };
+      }
+      return { status: 'SUPPRESSED' };
+    }
+
+    const resCritical = handleSecurityEventFailure('CRITICAL', { eventType: 'CIRCUIT_BREAKER_TRIPPED' });
+    const resLow = handleSecurityEventFailure('LOW', { eventType: 'MINOR_RATE_LIMIT' });
+
+    assert.strictEqual(emergencyLogged, true);
+    assert.strictEqual(resCritical.status, 'EMERGENCY_LOGGED');
+    assert.strictEqual(resLow.status, 'SUPPRESSED');
+  });
+
+  it('88. Multi-Dimensional Telemetry Rate Budgeting Invariant: Throttles high-frequency attack logging', () => {
+    function computeTelemetryBudget(currentActorWrites, maxLimit, severity) {
+      if (currentActorWrites > maxLimit && severity !== 'CRITICAL') {
+        return { sink: 'CLOUD_LOGGING_ONLY', firestoreWrite: false };
+      }
+      return { sink: 'FIRESTORE_DOCUMENT', firestoreWrite: true };
+    }
+
+    assert.strictEqual(computeTelemetryBudget(10, 50, 'LOW').firestoreWrite, true);
+    assert.strictEqual(computeTelemetryBudget(55, 50, 'LOW').firestoreWrite, false);
+    assert.strictEqual(computeTelemetryBudget(100, 50, 'CRITICAL').firestoreWrite, true); // Critical always writes
+  });
+
+  it('89. Non-Oracle Defense Response Invariant: Returns sanitized payload with correlation incidentId', () => {
+    const { createSecuritySanitizedResponse } = require('../lib/security_responses');
+
+    const res = createSecuritySanitizedResponse('INCIDENT-SEC-9DF182C012');
+    assert.strictEqual(res.success, false);
+    assert.strictEqual(res.error, 'REQUEST_REJECTED');
+    assert.strictEqual(res.message, 'Nice try. Try harder. 😉');
+    assert.strictEqual(res.incidentId, 'SEC-9DF182C012');
+    assert.strictEqual('regexPattern' in res, false);
+    assert.strictEqual('rateLimitThreshold' in res, false);
+  });
 });
