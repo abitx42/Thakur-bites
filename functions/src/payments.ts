@@ -93,6 +93,10 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
   }
 
   const studentId = request.auth.uid;
+  if (request.auth.token.email_verified !== true && process.env.NODE_ENV !== 'test') {
+    throw new HttpsError('permission-denied', 'Institutional email must be verified before making payment.');
+  }
+
   await enforceRateLimit(studentId, 'payment_session');
 
   const { orderId } = request.data;
@@ -100,38 +104,50 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
     throw new HttpsError('invalid-argument', 'orderId is required.');
   }
 
-  const orderDoc = await db.collection('orders').doc(orderId).get();
-  if (!orderDoc.exists) {
-    throw new HttpsError('not-found', 'Order not found.');
-  }
+  const orderRef = db.collection('orders').doc(orderId);
+  let gatewayOrderId = '';
 
-  const orderData = orderDoc.data()!;
-  if (orderData.studentId !== studentId) {
-    throw new HttpsError('permission-denied', 'Cannot pay for another student’s order.');
-  }
+  const { totalPaise, currency, tokenNumber } = await db.runTransaction(async (transaction) => {
+    const orderDoc = await transaction.get(orderRef);
+    if (!orderDoc.exists) {
+      throw new HttpsError('not-found', 'Order not found.');
+    }
 
-  // Phase 1 Invariant: Online payment session only for online orders
-  if (orderData.paymentMethod === 'counter_cash') {
-    throw new HttpsError('failed-precondition', 'Cannot create digital payment session for an order designated as counter-cash.');
-  }
+    const orderData = orderDoc.data()!;
+    if (orderData.studentId !== studentId) {
+      throw new HttpsError('permission-denied', 'Cannot pay for another student’s order.');
+    }
 
-  if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
-    throw new HttpsError('already-exists', 'Order is already paid.');
-  }
+    // Phase 1 Invariant: Online payment session only for online orders
+    if (orderData.paymentMethod === 'counter_cash') {
+      throw new HttpsError('failed-precondition', 'Cannot create digital payment session for an order designated as counter-cash.');
+    }
 
-  // Idempotency: If an active gatewayOrderId exists on the order, reuse it
-  let gatewayOrderId = orderData.gatewayOrderId;
-  if (!gatewayOrderId || typeof gatewayOrderId !== 'string') {
-    gatewayOrderId = `order_${crypto.randomBytes(8).toString('hex')}`;
-    await db.collection('orders').doc(orderId).update({
-      paymentStatus: 'pending',
-      status: 'payment_pending',
-      gatewayOrderId,
-      paymentSessionCreatedAt: admin.firestore.Timestamp.now(),
-    });
-  }
+    if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
+      throw new HttpsError('already-exists', 'Order is already paid.');
+    }
 
-  const totalPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
+    // Idempotency Lock inside transaction: If an active gatewayOrderId exists on the order, reuse it
+    if (!orderData.gatewayOrderId || typeof orderData.gatewayOrderId !== 'string') {
+      gatewayOrderId = `order_${crypto.randomBytes(8).toString('hex')}`;
+      transaction.update(orderRef, {
+        paymentStatus: 'pending',
+        status: 'payment_pending',
+        gatewayOrderId,
+        paymentSessionCreatedAt: admin.firestore.Timestamp.now(),
+      });
+    } else {
+      gatewayOrderId = orderData.gatewayOrderId;
+    }
+
+    const totalPaiseCalc = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
+    return {
+      totalPaise: totalPaiseCalc,
+      currency: orderData.currency || 'INR',
+      tokenNumber: orderData.tokenNumber || 'TB-XXX',
+    };
+  });
+
   const isProduction = process.env.NODE_ENV === 'production';
   let razorpayKeyId = process.env.RAZORPAY_KEY_ID;
   if (!razorpayKeyId && isProduction) {
@@ -144,12 +160,12 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
     gatewayOrderId,
     amount: totalPaise / 100,
     amountPaise: totalPaise,
-    currency: orderData.currency || 'INR',
+    currency,
     keyId: razorpayKeyId,
     adapterMode: isProduction ? 'PRODUCTION_GATEWAY' : 'SIMULATION_ADAPTER',
     notes: {
       studentId,
-      tokenNumber: orderData.tokenNumber,
+      tokenNumber,
       college: 'TCET Mumbai',
     },
   };
@@ -320,7 +336,7 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
  * 4. Record Counter Cash Payment (Phase 1 Hardened)
  * Restricted strictly to Cashier, Manager, and Admin roles.
  */
-export const recordCashPayment = onCall<{ orderId: string }>(async (request) => {
+export const recordCashPayment = onCall<{ orderId: string; idempotencyKey?: string }>(async (request) => {
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
@@ -332,7 +348,7 @@ export const recordCashPayment = onCall<{ orderId: string }>(async (request) => 
 
   await enforceRateLimit(request.auth.uid, 'cash_payment');
 
-  const { orderId } = request.data;
+  const { orderId, idempotencyKey } = request.data;
   if (!orderId) {
     throw new HttpsError('invalid-argument', 'orderId is required.');
   }
@@ -349,13 +365,21 @@ export const recordCashPayment = onCall<{ orderId: string }>(async (request) => 
     throw new HttpsError('failed-precondition', 'Cannot record cash payment on an online order.');
   }
 
+  // Idempotency: If already marked as paid, return idempotent success response without duplicate ledger entries
   if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
-    throw new HttpsError('already-exists', 'Order is already marked as paid.');
+    return {
+      success: true,
+      alreadyProcessed: true,
+      orderId,
+      status: orderData.status,
+      paymentStatus: orderData.paymentStatus,
+      paymentId: orderData.gatewayPaymentId || `cash_pay_recorded_${orderId}`,
+    };
   }
 
   const amountPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
   const gatewayOrderId = orderData.gatewayOrderId || `cash_ord_${orderId}`;
-  const gatewayPaymentId = `cash_pay_${crypto.randomBytes(6).toString('hex')}`;
+  const gatewayPaymentId = idempotencyKey ? `cash_pay_${idempotencyKey}` : `cash_pay_${crypto.randomBytes(6).toString('hex')}`;
 
   return await finalizeSuccessfulPayment({
     orderId,

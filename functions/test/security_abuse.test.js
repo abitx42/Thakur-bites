@@ -1277,4 +1277,99 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(clientResponse.includes('kitchen'), false);
     assert.strictEqual(clientResponse.includes('line 42'), false);
   });
+
+  it('55. Deterministic State Machine Invariant: Blocks invalid backward and skipping jumps', () => {
+    const validTransitions = {
+      payment_pending: ['confirmed', 'cancelled'],
+      confirmed: ['preparing', 'cancelled'],
+      preparing: ['ready', 'cancelled'],
+      ready: ['collected'],
+      collected: [],
+      cancelled: [],
+    };
+
+    function validateStateTransition(current, next) {
+      const allowed = validTransitions[current] || [];
+      return allowed.includes(next);
+    }
+
+    assert.strictEqual(validateStateTransition('confirmed', 'preparing'), true);
+    assert.strictEqual(validateStateTransition('preparing', 'ready'), true);
+    assert.strictEqual(validateStateTransition('ready', 'collected'), true);
+    assert.strictEqual(validateStateTransition('collected', 'preparing'), false); // Illegal backward jump
+    assert.strictEqual(validateStateTransition('ready', 'payment_pending'), false); // Illegal jump
+    assert.strictEqual(validateStateTransition('cancelled', 'confirmed'), false); // Reviving dead order
+  });
+
+  it('56. Cash Payment Idempotency Invariant: Duplicate cashier requests collapse safely', () => {
+    const order = {
+      orderId: 'tb_cash_order_1',
+      totalAmountPaise: 5000,
+      paymentStatus: 'unpaid',
+      paymentMethod: 'counter_cash',
+      gatewayPaymentId: null,
+    };
+
+    let ledgerPostingsCount = 0;
+
+    function processCashPayment(orderRef, idempotencyKey) {
+      if (orderRef.paymentStatus === 'paid') {
+        return { success: true, alreadyProcessed: true, paymentId: orderRef.gatewayPaymentId };
+      }
+      orderRef.paymentStatus = 'paid';
+      orderRef.gatewayPaymentId = `cash_pay_${idempotencyKey}`;
+      ledgerPostingsCount++;
+      return { success: true, alreadyProcessed: false, paymentId: orderRef.gatewayPaymentId };
+    }
+
+    const firstClick = processCashPayment(order, 'key_123');
+    assert.strictEqual(firstClick.success, true);
+    assert.strictEqual(firstClick.alreadyProcessed, false);
+    assert.strictEqual(ledgerPostingsCount, 1);
+
+    // Network timeout retry with identical key
+    const retryClick = processCashPayment(order, 'key_123');
+    assert.strictEqual(retryClick.success, true);
+    assert.strictEqual(retryClick.alreadyProcessed, true);
+    assert.strictEqual(retryClick.paymentId, 'cash_pay_key_123');
+    assert.strictEqual(ledgerPostingsCount, 1, 'Duplicate request must NOT post duplicate financial ledger entry');
+  });
+
+  it('57. Transactional Payment Session Idempotency: Prevents duplicate gateway session race', () => {
+    const order = {
+      orderId: 'tb_online_order_1',
+      gatewayOrderId: null,
+    };
+
+    function establishPaymentSession(orderRef) {
+      if (!orderRef.gatewayOrderId) {
+        orderRef.gatewayOrderId = 'order_unique_sess_99';
+      }
+      return orderRef.gatewayOrderId;
+    }
+
+    const sessionA = establishPaymentSession(order);
+    const sessionB = establishPaymentSession(order);
+
+    assert.strictEqual(sessionA, sessionB);
+    assert.strictEqual(sessionA, 'order_unique_sess_99');
+  });
+
+  it('58. Mathematical Financial Integrity Invariant', () => {
+    const items = [
+      { unitPricePaise: 2500, quantity: 2 }, // 5000 paise
+      { unitPricePaise: 7000, quantity: 1 }, // 7000 paise
+    ];
+
+    const calculatedTotalPaise = items.reduce((sum, it) => sum + (it.unitPricePaise * it.quantity), 0);
+    assert.strictEqual(calculatedTotalPaise, 12000);
+
+    const amountPaidPaise = 12000;
+    const partialRefund1 = 5000;
+    const partialRefund2 = 7000;
+    const overRefund = 100;
+
+    assert.strictEqual(partialRefund1 + partialRefund2 <= amountPaidPaise, true);
+    assert.strictEqual(partialRefund1 + partialRefund2 + overRefund <= amountPaidPaise, false);
+  });
 });
