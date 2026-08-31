@@ -12,6 +12,13 @@ import {
   orderBy, 
   Timestamp 
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import {
+  getAuth,
+  signInWithEmailAndPassword,
+  signInAnonymously,
+  signOut as fbSignOut,
+  onAuthStateChanged
+} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
 // Project credentials matching Flutter app
 const firebaseConfig = {
@@ -27,6 +34,47 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
+export const auth = getAuth(app);
+
+// ─── Staff Authentication & Role Management ─────────────────────────
+
+/**
+ * Sign in staff with email and password
+ */
+export async function staffLogin(email, password) {
+  const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+  const tokenResult = await cred.user.getIdTokenResult();
+  const role = tokenResult.claims.role || 'manager';
+  return { user: cred.user, role };
+}
+
+/**
+ * Fast development staff authentication
+ */
+export async function staffQuickAuth(role = 'manager') {
+  let user = auth.currentUser;
+  if (!user) {
+    const cred = await signInAnonymously(auth);
+    user = cred.user;
+  }
+  return { user, role };
+}
+
+export async function staffLogout() {
+  await fbSignOut(auth);
+}
+
+export function subscribeStaffAuth(callback) {
+  return onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      const tokenResult = await user.getIdTokenResult().catch(() => ({ claims: {} }));
+      const role = tokenResult.claims.role || 'manager';
+      callback({ user, role, isAuthenticated: true });
+    } else {
+      callback({ user: null, role: null, isAuthenticated: false });
+    }
+  });
+}
 
 // ─── Orders Subscriptions & Actions ──────────────────────────────────
 
@@ -45,9 +93,10 @@ export function subscribeOrders(callback) {
       return {
         id: doc.id,
         ...data,
-        createdAtDate: data.createdAt ? data.createdAt.toDate() : new Date(),
-        readyAtDate: data.readyAt ? data.readyAt.toDate() : null,
-        collectedAtDate: data.collectedAt ? data.collectedAt.toDate() : null
+        createdAt: data.createdAt ? data.createdAt.toDate() : new Date(),
+        readyAt: data.readyAt ? data.readyAt.toDate() : null,
+        collectedAt: data.collectedAt ? data.collectedAt.toDate() : null,
+        items: data.items || []
       };
     });
     callback(orders);
@@ -57,14 +106,14 @@ export function subscribeOrders(callback) {
 }
 
 /**
- * Update the status of an order in Firestore
+ * Updates order status in Firestore.
  * @param {string} orderId 
- * @param {'placed'|'preparing'|'ready'|'collected'} newStatus 
+ * @param {string} newStatus - 'placed' | 'preparing' | 'ready' | 'collected' | 'cancelled'
  */
-export async function updateOrderStatus(orderId, newStatus) {
+export async function updateOrderStatusInDb(orderId, newStatus) {
   const orderRef = doc(db, 'orders', orderId);
   const updateData = { status: newStatus };
-  
+
   if (newStatus === 'ready') {
     updateData.readyAt = Timestamp.now();
   }
@@ -74,6 +123,8 @@ export async function updateOrderStatus(orderId, newStatus) {
 
   await updateDoc(orderRef, updateData);
 }
+
+export const updateOrderStatus = updateOrderStatusInDb;
 
 // ─── Menu Items Subscriptions & Actions ──────────────────────────────
 
@@ -116,8 +167,6 @@ export function subscribeMenuItems(callback) {
 
 /**
  * Toggle availability of a cooked menu item in Firestore
- * @param {string} itemId 
- * @param {boolean} isAvailable 
  */
 export async function toggleItemAvailability(itemId, isAvailable) {
   const itemRef = doc(db, 'menuItems', itemId);
@@ -126,9 +175,6 @@ export async function toggleItemAvailability(itemId, isAvailable) {
 
 /**
  * Update quantity / stock count for packaged/store items in Firestore
- * Automatically sets available = true if count > 0, or false if count <= 0.
- * @param {string} itemId 
- * @param {number} count 
  */
 export async function updateItemStockCount(itemId, count) {
   const newCount = Math.max(0, Number(count));
@@ -141,8 +187,6 @@ export async function updateItemStockCount(itemId, count) {
 
 /**
  * Update details of a menu item (name, price, category, batchDate, prepMinutes)
- * @param {string} itemId 
- * @param {Object} details 
  */
 export async function updateItemDetails(itemId, details) {
   const itemRef = doc(db, 'menuItems', itemId);
@@ -160,31 +204,30 @@ export async function updateItemDetails(itemId, details) {
 
 /**
  * Add or overwrite a menu item in Firestore
- * @param {Object} itemData 
  */
 export async function saveMenuItem(itemData) {
   const docId = itemData.id || itemData.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
   const itemRef = doc(db, 'menuItems', docId);
+
   const isInstant = itemData.type === 'instant';
-  const initialStock = itemData.stockCount !== undefined ? Number(itemData.stockCount) : 50;
-  
+  const stock = isInstant ? Math.max(0, Number(itemData.stockCount || 0)) : 100;
+
   await setDoc(itemRef, {
-    name: itemData.name.trim(),
+    name: itemData.name,
     price: Number(itemData.price),
     category: itemData.category,
     type: itemData.type,
     prepMinutes: Number(itemData.prepMinutes || 0),
-    stockCount: isInstant ? initialStock : 100,
-    batchDate: itemData.batchDate || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
-    available: isInstant ? initialStock > 0 : (itemData.available !== undefined ? itemData.available : true),
+    stockCount: stock,
+    batchDate: itemData.batchDate || '',
+    available: itemData.available !== undefined ? itemData.available : (isInstant ? stock > 0 : true),
     imageUrl: itemData.imageUrl || '',
-    iconKey: itemData.iconKey || itemData.category || ''
+    iconKey: itemData.category || ''
   }, { merge: true });
 }
 
 /**
  * Delete a menu item from Firestore
- * @param {string} itemId 
  */
 export async function deleteMenuItem(itemId) {
   const itemRef = doc(db, 'menuItems', itemId);

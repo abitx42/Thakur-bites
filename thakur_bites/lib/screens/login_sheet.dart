@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 
-/// Modal bottom sheet for student sign in / profile registration.
+/// Modal bottom sheet for verified student sign in / profile registration.
 class LoginSheet extends StatefulWidget {
   const LoginSheet({super.key});
 
@@ -22,10 +22,19 @@ class LoginSheet extends StatefulWidget {
 }
 
 class _LoginSheetState extends State<LoginSheet> {
+  int _selectedTab = 0; // 0 = Instant Canteen Login, 1 = College Email Login
   final _formKey = GlobalKey<FormState>();
+
+  // Instant Login controllers
   final _nameController = TextEditingController();
   final _rollController = TextEditingController();
   final _phoneController = TextEditingController();
+  final _emailOptionalController = TextEditingController();
+
+  // Email Account controllers
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _isSignUpMode = false;
   bool _isSubmitting = false;
 
   @override
@@ -33,10 +42,13 @@ class _LoginSheetState extends State<LoginSheet> {
     _nameController.dispose();
     _rollController.dispose();
     _phoneController.dispose();
+    _emailOptionalController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  Future<void> _submitInstant() async {
     if (!_formKey.currentState!.validate()) return;
     if (_isSubmitting) return;
 
@@ -49,6 +61,7 @@ class _LoginSheetState extends State<LoginSheet> {
         name: _nameController.text,
         rollNo: _rollController.text,
         phone: _phoneController.text,
+        email: _emailOptionalController.text.trim().isEmpty ? null : _emailOptionalController.text.trim(),
       );
 
       if (mounted) {
@@ -68,6 +81,54 @@ class _LoginSheetState extends State<LoginSheet> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Sign in failed: $e'),
+            backgroundColor: AppColors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _submitEmailAuth() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_isSubmitting) return;
+
+    setState(() => _isSubmitting = true);
+    HapticFeedback.mediumImpact();
+
+    try {
+      final auth = context.read<AuthProvider>();
+      if (_isSignUpMode) {
+        await auth.signUpWithEmail(
+          email: _emailController.text,
+          password: _passwordController.text,
+          name: _nameController.text.trim().isEmpty ? 'Student' : _nameController.text.trim(),
+          phone: _phoneController.text.trim().isEmpty ? '0000000000' : _phoneController.text.trim(),
+          rollNo: _rollController.text.trim().isEmpty ? 'TCET' : _rollController.text.trim(),
+        );
+      } else {
+        await auth.signInWithEmail(
+          email: _emailController.text,
+          password: _passwordController.text,
+        );
+      }
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_isSignUpMode ? 'Account created successfully! 🎓' : 'Welcome back! 🎓'),
+            backgroundColor: AppColors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Authentication failed: $e'),
             backgroundColor: AppColors.red,
           ),
         );
@@ -112,10 +173,10 @@ class _LoginSheetState extends State<LoginSheet> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('STUDENT SIGN-IN', style: AppFonts.display(fontSize: 22)),
+                      Text('STUDENT ACCESS', style: AppFonts.display(fontSize: 22)),
                       const SizedBox(height: 2),
                       Text(
-                        'TCET Canteen Express Account',
+                        'TCET Canteen Identity & Orders',
                         style: AppFonts.body(fontSize: 12, color: AppColors.inkSoft),
                       ),
                     ],
@@ -125,7 +186,7 @@ class _LoginSheetState extends State<LoginSheet> {
                     child: Container(
                       width: 32,
                       height: 32,
-                      decoration: BoxDecoration(
+                      decoration: const BoxDecoration(
                         color: AppColors.surface2,
                         shape: BoxShape.circle,
                       ),
@@ -134,75 +195,226 @@ class _LoginSheetState extends State<LoginSheet> {
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
 
-              // Full Name field
-              _buildFieldLabel('Full Name'),
-              _buildInputField(
-                controller: _nameController,
-                hint: 'e.g. Aditya Bodake',
-                icon: Icons.person_outline_rounded,
-                validator: (val) =>
-                    val == null || val.trim().isEmpty ? 'Please enter your name' : null,
-              ),
-              const SizedBox(height: 14),
-
-              // Roll Number field
-              _buildFieldLabel('College Roll No / Division'),
-              _buildInputField(
-                controller: _rollController,
-                hint: 'e.g. TE-IT-42',
-                icon: Icons.badge_outlined,
-                capitalization: TextCapitalization.characters,
-                validator: (val) =>
-                    val == null || val.trim().isEmpty ? 'Please enter your roll number' : null,
-              ),
-              const SizedBox(height: 14),
-
-              // Phone field
-              _buildFieldLabel('Mobile Number (for pickup SMS/token)'),
-              _buildInputField(
-                controller: _phoneController,
-                hint: 'e.g. 9876543210',
-                icon: Icons.phone_outlined,
-                keyboardType: TextInputType.phone,
-                validator: (val) =>
-                    val == null || val.trim().length < 10 ? 'Please enter a valid 10-digit number' : null,
-              ),
-              const SizedBox(height: 24),
-
-              // Submit Button
-              SizedBox(
-                width: double.infinity,
-                child: GestureDetector(
-                  onTap: _isSubmitting ? null : _submit,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    decoration: BoxDecoration(
-                      color: _isSubmitting ? AppColors.line : AppColors.red,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    alignment: Alignment.center,
-                    child: _isSubmitting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Text(
-                            'Continue to Thakur Bites →',
+              // Mode Tabs (Instant vs College Email)
+              Container(
+                decoration: BoxDecoration(
+                  color: AppColors.surface2,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.all(4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _selectedTab = 0),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: _selectedTab == 0 ? AppColors.surface : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: _selectedTab == 0
+                                ? [const BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 1))]
+                                : null,
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            '⚡️ Instant Student',
                             style: AppFonts.body(
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: _selectedTab == 0 ? FontWeight.w700 : FontWeight.w500,
+                              color: _selectedTab == 0 ? AppColors.ink : AppColors.inkSoft,
                             ),
                           ),
-                  ),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _selectedTab = 1),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: _selectedTab == 1 ? AppColors.surface : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: _selectedTab == 1
+                                ? [const BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 1))]
+                                : null,
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            '🎓 College Email',
+                            style: AppFonts.body(
+                              fontSize: 12.5,
+                              fontWeight: _selectedTab == 1 ? FontWeight.w700 : FontWeight.w500,
+                              color: _selectedTab == 1 ? AppColors.ink : AppColors.inkSoft,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
+              const SizedBox(height: 18),
+
+              if (_selectedTab == 0) ...[
+                // Full Name field
+                _buildFieldLabel('Full Name'),
+                _buildInputField(
+                  controller: _nameController,
+                  hint: 'e.g. Aditya Bodake',
+                  icon: Icons.person_outline_rounded,
+                  validator: (val) =>
+                      val == null || val.trim().isEmpty ? 'Please enter your name' : null,
+                ),
+                const SizedBox(height: 12),
+
+                // Roll Number field
+                _buildFieldLabel('College Roll No / Division'),
+                _buildInputField(
+                  controller: _rollController,
+                  hint: 'e.g. TE-IT-42',
+                  icon: Icons.badge_outlined,
+                  capitalization: TextCapitalization.characters,
+                  validator: (val) =>
+                      val == null || val.trim().isEmpty ? 'Please enter your roll number' : null,
+                ),
+                const SizedBox(height: 12),
+
+                // Phone field
+                _buildFieldLabel('Mobile Number (for pickup SMS/token)'),
+                _buildInputField(
+                  controller: _phoneController,
+                  hint: 'e.g. 9876543210',
+                  icon: Icons.phone_outlined,
+                  keyboardType: TextInputType.phone,
+                  validator: (val) =>
+                      val == null || val.trim().length < 10 ? 'Please enter a valid 10-digit number' : null,
+                ),
+                const SizedBox(height: 12),
+
+                _buildFieldLabel('College Email (Optional)'),
+                _buildInputField(
+                  controller: _emailOptionalController,
+                  hint: 'e.g. student@thakureducation.org',
+                  icon: Icons.alternate_email_rounded,
+                  keyboardType: TextInputType.emailAddress,
+                  capitalization: TextCapitalization.none,
+                ),
+                const SizedBox(height: 22),
+
+                // Submit Instant
+                SizedBox(
+                  width: double.infinity,
+                  child: GestureDetector(
+                    onTap: _isSubmitting ? null : _submitInstant,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        color: _isSubmitting ? AppColors.line : AppColors.red,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      alignment: Alignment.center,
+                      child: _isSubmitting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : Text(
+                              'Continue to Menu →',
+                              style: AppFonts.body(fontSize: 14.5, fontWeight: FontWeight.w700, color: Colors.white),
+                            ),
+                    ),
+                  ),
+                ),
+              ] else ...[
+                // College Email Form
+                _buildFieldLabel('College Email ID'),
+                _buildInputField(
+                  controller: _emailController,
+                  hint: 'e.g. aditya.bodake@thakureducation.org',
+                  icon: Icons.school_outlined,
+                  keyboardType: TextInputType.emailAddress,
+                  capitalization: TextCapitalization.none,
+                  validator: (val) =>
+                      val == null || !val.contains('@') ? 'Enter a valid college email' : null,
+                ),
+                const SizedBox(height: 12),
+
+                _buildFieldLabel('Password'),
+                _buildInputField(
+                  controller: _passwordController,
+                  hint: '••••••••',
+                  icon: Icons.lock_outline_rounded,
+                  obscureText: true,
+                  validator: (val) =>
+                      val == null || val.length < 6 ? 'Password must be at least 6 characters' : null,
+                ),
+
+                if (_isSignUpMode) ...[
+                  const SizedBox(height: 12),
+                  _buildFieldLabel('Full Name'),
+                  _buildInputField(
+                    controller: _nameController,
+                    hint: 'e.g. Aditya Bodake',
+                    icon: Icons.person_outline_rounded,
+                    validator: (val) =>
+                        val == null || val.trim().isEmpty ? 'Enter your full name' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  _buildFieldLabel('Roll Number'),
+                  _buildInputField(
+                    controller: _rollController,
+                    hint: 'e.g. TE-IT-42',
+                    icon: Icons.badge_outlined,
+                    capitalization: TextCapitalization.characters,
+                  ),
+                ],
+
+                const SizedBox(height: 14),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    GestureDetector(
+                      onTap: () => setState(() => _isSignUpMode = !_isSignUpMode),
+                      child: Text(
+                        _isSignUpMode ? 'Already have an account? Sign In' : 'New student? Register account',
+                        style: AppFonts.body(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.red),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                // Submit Email Auth
+                SizedBox(
+                  width: double.infinity,
+                  child: GestureDetector(
+                    onTap: _isSubmitting ? null : _submitEmailAuth,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        color: _isSubmitting ? AppColors.line : AppColors.red,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      alignment: Alignment.center,
+                      child: _isSubmitting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : Text(
+                              _isSignUpMode ? 'Register College Account →' : 'Sign In to Thakur Bites →',
+                              style: AppFonts.body(fontSize: 14.5, fontWeight: FontWeight.w700, color: Colors.white),
+                            ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -224,6 +436,7 @@ class _LoginSheetState extends State<LoginSheet> {
     required TextEditingController controller,
     required String hint,
     required IconData icon,
+    bool obscureText = false,
     TextInputType keyboardType = TextInputType.text,
     TextCapitalization capitalization = TextCapitalization.words,
     String? Function(String?)? validator,
@@ -236,6 +449,7 @@ class _LoginSheetState extends State<LoginSheet> {
       ),
       child: TextFormField(
         controller: controller,
+        obscureText: obscureText,
         keyboardType: keyboardType,
         textCapitalization: capitalization,
         validator: validator,
@@ -243,7 +457,7 @@ class _LoginSheetState extends State<LoginSheet> {
         decoration: InputDecoration(
           prefixIcon: Icon(icon, size: 20, color: AppColors.inkSoft),
           hintText: hint,
-          hintStyle: AppFonts.body(fontSize: 13.5, color: AppColors.inkSoft.withOpacity(0.7)),
+          hintStyle: AppFonts.body(fontSize: 13.5, color: AppColors.inkSoft),
           border: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         ),
