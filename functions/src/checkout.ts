@@ -1,7 +1,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
-import { CheckoutRequest, OrderDocument, OrderItemSnapshot } from './types';
+import { CheckoutRequest, OrderDocument, OrderItemSnapshot, OrderSecretDoc } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
 import { reserveInventoryInTransaction, commitInventoryInTransaction } from './inventory_reservation';
@@ -245,6 +245,21 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
 
       // d. Create Order Document
       transaction.set(newOrderRef, orderDoc);
+
+      // d2. Create Isolated Order Secret Document (Stage 4 Hardened)
+      const secretRef = db.collection('orderSecrets').doc(newOrderRef.id);
+      const secretDoc: OrderSecretDoc = {
+        orderId: newOrderRef.id,
+        studentId,
+        pickupPinHash: pinHash,
+        qrNonce,
+        qrExpiresAt,
+        failedPinAttempts: 0,
+        isLockedForInvestigation: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      transaction.set(secretRef, secretDoc);
 
       // e. Create immutable Order Event
       const eventRef = db.collection('orderEvents').doc();

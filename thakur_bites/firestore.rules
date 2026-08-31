@@ -78,6 +78,11 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ─── Cryptographic Order Secrets (Isolated from Client/Staff Reads) ──
+    match /orderSecrets/{orderId} {
+      allow read, write: if false; // Backend Cloud Functions ONLY
+    }
+
     match /financialTransactions/{txnId} {
       allow read: if isStaff();
       allow write: if false;

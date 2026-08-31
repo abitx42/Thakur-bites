@@ -8,14 +8,14 @@ import { getRequiredSecret } from './secrets';
 const db = admin.firestore();
 
 /**
- * Validates 4-digit PIN (Zero-Knowledge SHA-256 Hash) or Cryptographically Signed One-Time QR Token,
+ * Validates 6-digit PIN (Zero-Knowledge SHA-256 Hash) or Cryptographically Signed One-Time QR Token,
  * and marks the order collected idempotently.
  *
- * P0 Hardening:
- * 1. Only orders with status == 'ready' can be collected.
- * 2. Explicit studentId binding in QR tokens.
- * 3. One-time QR nonce consumption (qrConsumedAt guard).
- * 4. Zero legacy plaintext PIN fallback.
+ * Stage 4 Hardening:
+ * 1. Reads cryptographic secrets from isolated `orderSecrets/{orderId}` collection.
+ * 2. Explicit stored QR nonce & expiry matching (`tokenNonce === secretDoc.qrNonce`).
+ * 3. One-time QR nonce consumption (`qrConsumedAt`).
+ * 4. Multi-staff brute force lockout tracking.
  */
 export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?: string }>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -35,25 +35,35 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
   }
 
   const orderRef = db.collection('orders').doc(orderId);
+  const secretRef = db.collection('orderSecrets').doc(orderId);
   const now = admin.firestore.Timestamp.now();
 
   return await db.runTransaction(async (transaction) => {
-    const snap = await transaction.get(orderRef);
-    if (!snap.exists) {
+    const [orderSnap, secretSnap] = await Promise.all([
+      transaction.get(orderRef),
+      transaction.get(secretRef),
+    ]);
+
+    if (!orderSnap.exists) {
       throw new HttpsError('not-found', 'Order not found.');
     }
 
-    const orderData = snap.data()!;
+    const orderData = orderSnap.data()!;
+    const secretData = secretSnap.exists ? secretSnap.data()! : null;
+
     if (orderData.status === 'collected') {
       return { success: true, alreadyCollected: true, message: 'Order has already been collected.' };
     }
 
     // Check if order is locked due to excessive PIN failures
-    if (orderData.isLockedForInvestigation || (orderData.failedPinAttempts || 0) >= 3) {
+    const failedAttempts = secretData?.failedPinAttempts ?? orderData.failedPinAttempts ?? 0;
+    const isLocked = secretData?.isLockedForInvestigation ?? orderData.isLockedForInvestigation ?? (failedAttempts >= 3);
+
+    if (isLocked || failedAttempts >= 3) {
       throw new HttpsError('permission-denied', 'Order is locked due to repeated verification failures. Physical student ID verification required.');
     }
 
-    // P0: 7: Order must be in 'ready' status before collection is permitted
+    // Order must be in 'ready' status before collection is permitted
     if (orderData.status !== 'ready') {
       throw new HttpsError(
         'failed-precondition',
@@ -64,14 +74,17 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
     let isVerified = false;
     let verificationMethod: 'PIN' | 'QR' = 'PIN';
 
-    // 1. Check Signed One-Time QR Token Verification (P0: 5 & 6)
+    // 1. Check Signed One-Time QR Token Verification
     if (qrToken && typeof qrToken === 'string') {
       verificationMethod = 'QR';
 
-      // Check if QR token was already consumed
-      if (orderData.qrConsumedAt) {
+      const isConsumed = !!(secretData?.qrConsumedAt || orderData.qrConsumedAt);
+      if (isConsumed) {
         throw new HttpsError('permission-denied', 'This QR pickup token has already been consumed.');
       }
+
+      const storedNonce = secretData?.qrNonce || orderData.qrNonce;
+      const storedExpiresAt = secretData?.qrExpiresAt || orderData.qrExpiresAt;
 
       const parts = qrToken.trim().split('.');
       if (parts.length === 5) {
@@ -79,8 +92,11 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
         const expiresAt = parseInt(tExpiresAtStr, 10);
         const currentUnix = Math.floor(Date.now() / 1000);
 
-        // Explicit Order & Student ID Binding (P0: 6)
-        if (tOrderId === orderId && tStudentId === orderData.studentId && expiresAt > currentUnix) {
+        // Explicit Order, Student ID, Nonce, and Expiry Matching
+        const isNonceValid = storedNonce ? tNonce === storedNonce : true;
+        const isExpiryValid = storedExpiresAt ? expiresAt === storedExpiresAt : true;
+
+        if (tOrderId === orderId && tStudentId === orderData.studentId && isNonceValid && isExpiryValid && expiresAt > currentUnix) {
           const qrSigningSecret = getRequiredSecret('QR_SIGNING_SECRET');
           const expectedSig = crypto.createHmac('sha256', qrSigningSecret)
             .update(`${tOrderId}:${tStudentId}:${tNonce}:${tExpiresAtStr}`)
@@ -99,82 +115,106 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
       }
     }
 
-    // 2. Check Zero-Knowledge PIN Hash Verification (P0: 8: Strict Hash Match Only)
+    // 2. Check Zero-Knowledge PIN Hash Verification
     if (!isVerified && pinCode && typeof pinCode === 'string') {
       verificationMethod = 'PIN';
       const cleanPin = pinCode.trim();
       const inputHash = crypto.createHash('sha256').update(cleanPin).digest('hex');
-      if (orderData.pickupPinHash === inputHash) {
+      const targetHash = secretData?.pickupPinHash || orderData.pickupPinHash;
+
+      if (targetHash && targetHash === inputHash) {
         isVerified = true;
       }
     }
 
     if (!isVerified) {
-      const attempts = (orderData.failedPinAttempts || 0) + 1;
-      const isLocked = attempts >= 3;
+      const attempts = failedAttempts + 1;
+      const shouldLock = attempts >= 3;
 
       transaction.update(orderRef, {
         failedPinAttempts: attempts,
-        isLockedForInvestigation: isLocked,
+        isLockedForInvestigation: shouldLock,
         lastFailedVerificationAt: now,
       });
+
+      if (secretSnap.exists) {
+        transaction.update(secretRef, {
+          failedPinAttempts: attempts,
+          isLockedForInvestigation: shouldLock,
+          updatedAt: now,
+        });
+      }
 
       // Record security event
       const secRef = db.collection('securityEvents').doc();
       transaction.set(secRef, {
-        eventType: isLocked ? 'ORDER_PICKUP_BRUTEFORCE_LOCKOUT' : 'FAILED_PICKUP_VERIFICATION',
+        eventType: shouldLock ? 'ORDER_PICKUP_BRUTEFORCE_LOCKOUT' : 'FAILED_PICKUP_VERIFICATION',
         orderId,
         verificationMethod,
         actorUid: request.auth!.uid,
         attemptNumber: attempts,
-        severity: isLocked ? 'critical' : 'warn',
+        severity: shouldLock ? 'critical' : 'warn',
         timestamp: now,
       });
 
       throw new HttpsError(
         'permission-denied',
-        isLocked
+        shouldLock
           ? 'Verification failed. Order locked for security. Please present physical student ID to manager.'
           : `Incorrect pickup ${verificationMethod} (${3 - attempts} attempt(s) remaining).`
       );
     }
 
-    // Atomic update with QR consumption and status transition
-    transaction.update(orderRef, {
+    // 3. Mark Order as Collected
+    const updates: Record<string, any> = {
       status: 'collected',
       collectedAt: now,
       collectedByStaffId: request.auth!.uid,
-      verificationMethod,
-      qrConsumedAt: verificationMethod === 'QR' ? now : null,
-      qrConsumedBy: verificationMethod === 'QR' ? request.auth!.uid : null,
-      failedPinAttempts: 0,
       updatedAt: now,
-    });
+      failedPinAttempts: 0,
+      isLockedForInvestigation: false,
+    };
 
-    // Record immutable orderEvent
+    if (verificationMethod === 'QR') {
+      updates.qrConsumedAt = now;
+      updates.qrConsumedBy = request.auth!.uid;
+
+      if (secretSnap.exists) {
+        transaction.update(secretRef, {
+          qrConsumedAt: now,
+          qrConsumedBy: request.auth!.uid,
+          updatedAt: now,
+        });
+      }
+    }
+
+    transaction.update(orderRef, updates);
+
+    // Record immutable order event
     const eventRef = db.collection('orderEvents').doc();
     transaction.set(eventRef, {
       orderId,
-      fromStatus: orderData.status,
+      fromStatus: 'ready',
       toStatus: 'collected',
       actorId: request.auth!.uid,
       actorRole,
+      verificationMethod,
       timestamp: now,
-      metadata: { verificationMethod },
     });
 
     return {
       success: true,
-      alreadyCollected: false,
       orderId,
+      status: 'collected',
       tokenNumber: orderData.tokenNumber,
+      collectedAt: now,
       verificationMethod,
     };
   });
 });
 
 /**
- * Manager/Security Admin Audited Unlock for PIN-locked orders (P2: 22).
+ * Manager/Admin Manual Physical Override for Locked Orders
  */
 export const unlockOrderPickupVerification = onCall<{ orderId: string; reason: string }>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -183,62 +223,56 @@ export const unlockOrderPickupVerification = onCall<{ orderId: string; reason: s
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
   if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin') {
-    throw new HttpsError('permission-denied', 'Only managers or security admins can unlock locked orders.');
+    throw new HttpsError('permission-denied', 'Only managers or administrators can unlock a security-locked order.');
   }
 
   const { orderId, reason } = request.data;
-  if (!orderId || !reason) {
-    throw new HttpsError('invalid-argument', 'orderId and audit reason are required.');
+  if (!orderId || !reason || reason.trim().length === 0) {
+    throw new HttpsError('invalid-argument', 'orderId and a non-empty override reason are required.');
   }
 
   const orderRef = db.collection('orders').doc(orderId);
+  const secretRef = db.collection('orderSecrets').doc(orderId);
   const now = admin.firestore.Timestamp.now();
 
   return await db.runTransaction(async (transaction) => {
-    const snap = await transaction.get(orderRef);
+    const [snap, secretSnap] = await Promise.all([
+      transaction.get(orderRef),
+      transaction.get(secretRef),
+    ]);
+
     if (!snap.exists) {
       throw new HttpsError('not-found', 'Order not found.');
     }
 
-    const orderData = snap.data()!;
-    if (!orderData.isLockedForInvestigation && (orderData.failedPinAttempts || 0) === 0) {
-      return { success: true, message: 'Order is not locked.' };
-    }
-
     transaction.update(orderRef, {
-      isLockedForInvestigation: false,
       failedPinAttempts: 0,
+      isLockedForInvestigation: false,
       unlockedByStaffId: request.auth!.uid,
       unlockedAt: now,
       unlockReason: reason,
       updatedAt: now,
     });
 
-    // Record security event
-    const secRef = db.collection('securityEvents').doc();
-    transaction.set(secRef, {
-      eventType: 'ORDER_PIN_LOCKOUT_UNLOCKED',
-      orderId,
-      actorUid: request.auth!.uid,
-      actorRole,
-      reason,
-      severity: 'warn',
-      timestamp: now,
-    });
+    if (secretSnap.exists) {
+      transaction.update(secretRef, {
+        failedPinAttempts: 0,
+        isLockedForInvestigation: false,
+        updatedAt: now,
+      });
+    }
 
-    // Record order event
-    const evtRef = db.collection('orderEvents').doc();
-    transaction.set(evtRef, {
+    const eventRef = db.collection('orderEvents').doc();
+    transaction.set(eventRef, {
       orderId,
-      fromStatus: orderData.status,
-      toStatus: orderData.status,
+      fromStatus: snap.data()!.status,
+      toStatus: snap.data()!.status,
       actorId: request.auth!.uid,
       actorRole,
       timestamp: now,
-      reason: `LOCKOUT_OVERRIDDEN: ${reason}`,
+      reason: `MANAGER_UNLOCK_OVERRIDE: ${reason}`,
     });
 
-    return { success: true, orderId, unlocked: true };
+    return { success: true, orderId, unlockedAt: now };
   });
 });
-

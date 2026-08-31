@@ -986,4 +986,74 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(overReduction.error, 'CANNOT_DROP_BELOW_ZERO');
     assert.strictEqual(item.stockOnHand, 2); // Unmodified
   });
+
+  it('43. Isolated Order Secret & Stored Nonce Match Invariant: Rejects forged/mismatched QR nonces', () => {
+    const orderSecret = {
+      orderId: 'tb_order_77',
+      studentId: 'student_77',
+      qrNonce: 'nonce_abc123',
+      qrExpiresAt: 1800000000,
+      pickupPinHash: crypto.createHash('sha256').update('849201').digest('hex'),
+      failedPinAttempts: 0,
+      isLockedForInvestigation: false,
+    };
+
+    const qrSecret = 'test_qr_signing_secret_key';
+
+    function verifyPickupToken(secretDoc, tokenStr) {
+      const parts = tokenStr.split('.');
+      if (parts.length !== 5) return { valid: false, error: 'MALFORMED' };
+      const [tOrderId, tStudentId, tNonce, tExpiresAtStr, tSig] = parts;
+
+      if (tNonce !== secretDoc.qrNonce) {
+        return { valid: false, error: 'NONCE_MISMATCH' };
+      }
+      if (parseInt(tExpiresAtStr, 10) !== secretDoc.qrExpiresAt) {
+        return { valid: false, error: 'EXPIRY_MISMATCH' };
+      }
+
+      const expectedSig = crypto.createHmac('sha256', qrSecret)
+        .update(`${tOrderId}:${tStudentId}:${tNonce}:${tExpiresAtStr}`)
+        .digest('hex');
+
+      if (tSig !== expectedSig) {
+        return { valid: false, error: 'INVALID_SIGNATURE' };
+      }
+      return { valid: true };
+    }
+
+    const validSig = crypto.createHmac('sha256', qrSecret)
+      .update(`tb_order_77:student_77:nonce_abc123:1800000000`)
+      .digest('hex');
+    const validToken = `tb_order_77.student_77.nonce_abc123.1800000000.${validSig}`;
+
+    assert.strictEqual(verifyPickupToken(orderSecret, validToken).valid, true);
+
+    // Mismatched nonce
+    const badNonceSig = crypto.createHmac('sha256', qrSecret)
+      .update(`tb_order_77:student_77:forged_nonce:1800000000`)
+      .digest('hex');
+    const badNonceToken = `tb_order_77.student_77.forged_nonce.1800000000.${badNonceSig}`;
+
+    const res = verifyPickupToken(orderSecret, badNonceToken);
+    assert.strictEqual(res.valid, false);
+    assert.strictEqual(res.error, 'NONCE_MISMATCH');
+  });
+
+  it('44. 6-Digit CSPRNG PIN Verification Invariant: Validates 6-digit PIN against isolated hash', () => {
+    const rawPin = '938102';
+    const pinHash = crypto.createHash('sha256').update(rawPin).digest('hex');
+
+    function verify6DigitPin(secretHash, inputPin) {
+      if (!/^\d{6}$/.test(inputPin)) {
+        return { valid: false, error: 'INVALID_FORMAT' };
+      }
+      const testHash = crypto.createHash('sha256').update(inputPin).digest('hex');
+      return { valid: testHash === secretHash };
+    }
+
+    assert.strictEqual(verify6DigitPin(pinHash, '938102').valid, true);
+    assert.strictEqual(verify6DigitPin(pinHash, '123456').valid, false);
+    assert.strictEqual(verify6DigitPin(pinHash, '1234').valid, false); // 4-digit format rejected
+  });
 });

@@ -86,6 +86,20 @@ export interface OrderDocument {
   updatedAt?: Timestamp;
 }
 
+export interface OrderSecretDoc {
+  orderId: string;
+  studentId: string;
+  pickupPinHash: string;
+  qrNonce: string;
+  qrExpiresAt: number;
+  failedPinAttempts: number;
+  isLockedForInvestigation: boolean;
+  qrConsumedAt?: Timestamp;
+  qrConsumedBy?: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 export interface CheckoutResponse {
   orderId: string;
   order: OrderDocument;

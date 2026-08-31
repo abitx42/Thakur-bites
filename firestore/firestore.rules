@@ -42,7 +42,12 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         resource.data.studentId == request.auth.uid || isStaff()
       );
-      allow create, update, delete: if false;
+      allow write: if false; // All mutations strictly through Cloud Functions
+    }
+
+    // ─── Cryptographic Order Secrets (Isolated from Client/Staff Reads) ──
+    match /orderSecrets/{orderId} {
+      allow read, write: if false; // Backend Cloud Functions ONLY
     }
 
     // ─── Students Profile ───────────────────────────────────────
