@@ -1,9 +1,9 @@
 // Thakur Bites Staff Operations Dashboard & Hub Entry Point
-import { staffAuth, renderPinPadModal } from './auth.js?v=2';
-import { renderKitchenView } from './views/kitchenView.js?v=2';
-import { renderPickupView } from './views/pickupView.js?v=2';
-import { renderAdminView } from './views/adminView.js?v=2';
-import { renderTvDisplayView } from './views/tvDisplayView.js?v=2';
+import { staffAuth, renderPinPadModal } from './auth.js?v=3';
+import { renderKitchenView } from './views/kitchenView.js?v=3';
+import { renderPickupView } from './views/pickupView.js?v=3';
+import { renderAdminView } from './views/adminView.js?v=3';
+import { renderTvDisplayView } from './views/tvDisplayView.js?v=3';
 
 let currentStaffView = 'kitchen'; // 'kitchen' | 'pickup' | 'admin' | 'tv'
 

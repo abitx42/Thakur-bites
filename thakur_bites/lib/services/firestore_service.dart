@@ -108,6 +108,8 @@ class FirestoreService {
         category: 'drinks',
         type: 'instant',
         prepMinutes: 0,
+        stockCount: 20,
+        batchDate: '31-Aug',
         iconKey: 'bottle',
       ),
       MenuItem(
@@ -117,6 +119,8 @@ class FirestoreService {
         category: 'snacks',
         type: 'instant',
         prepMinutes: 0,
+        stockCount: 15,
+        batchDate: '31-Aug',
         iconKey: 'choc',
       ),
       MenuItem(
@@ -126,6 +130,8 @@ class FirestoreService {
         category: 'snacks',
         type: 'instant',
         prepMinutes: 0,
+        stockCount: 25,
+        batchDate: '31-Aug',
         iconKey: 'chips',
       ),
     ];
