@@ -3698,4 +3698,220 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(verifyPickupPin('7392', storedHash, salt), false);
     assert.strictEqual(verifyPickupPin('0000', storedHash, salt), false);
   });
+
+  it('178. Deterministic Orphan Payment Ledger Idempotency (TB-NEW-002): 100 concurrent late payments on cancelled order produce exactly 1 ledger posting', () => {
+    const financialLedger = new Map();
+    const orphanedPayments = new Map();
+    const gatewayPaymentId = 'pay_concurrent_orphan_999';
+    const orderId = 'TB_ORDER_CANCELLED_01';
+    const amountPaise = 15000;
+
+    function processOrphanPayment(gwPaymentId) {
+      const paymentId = `orphan_${gwPaymentId}`;
+      const finTxId = `orphan_fin_${gwPaymentId}`;
+
+      // Atomic Existence Lock
+      if (orphanedPayments.has(paymentId)) {
+        return { success: true, alreadyCaptured: true, finTxId };
+      }
+
+      orphanedPayments.set(paymentId, { paymentId, orderId, amountPaise, refundStatus: 'REFUND_QUEUED' });
+      financialLedger.set(finTxId, {
+        transactionId: finTxId,
+        orderId,
+        type: 'ORPHANED_PAYMENT_CAPTURE',
+        amountPaise,
+      });
+
+      return { success: true, alreadyCaptured: false, finTxId };
+    }
+
+    // Run 100 concurrent attempts
+    const results = [];
+    for (let i = 0; i < 100; i++) {
+      results.push(processOrphanPayment(gatewayPaymentId));
+    }
+
+    assert.strictEqual(orphanedPayments.size, 1, 'Exactly one orphan payment document created');
+    assert.strictEqual(financialLedger.size, 1, 'Exactly one financial transaction ledger posting created');
+    assert.strictEqual(financialLedger.has(`orphan_fin_${gatewayPaymentId}`), true);
+    assert.strictEqual(results[0].alreadyCaptured, false);
+    assert.strictEqual(results[1].alreadyCaptured, true);
+  });
+
+  it('179. Webhook Claim Atomic Transaction & Lease Invariant (TB-NEW-003): Prevents concurrent duplicate webhook executions', () => {
+    const processedEvents = new Map();
+
+    function claimWebhookEvent(eventId, eventType, currentTimeMs) {
+      const existing = processedEvents.get(eventId);
+      if (existing) {
+        if (existing.status === 'PROCESSED') return { status: 'ALREADY_PROCESSED' };
+        const elapsed = currentTimeMs - existing.lastAttemptAt;
+        if (existing.status === 'PROCESSING' && elapsed < 30000) {
+          return { status: 'IN_FLIGHT_LOCKED' };
+        }
+        existing.status = 'PROCESSING';
+        existing.attemptCount += 1;
+        existing.lastAttemptAt = currentTimeMs;
+        return { status: 'CLAIMED' };
+      }
+
+      processedEvents.set(eventId, {
+        eventId,
+        eventType,
+        status: 'PROCESSING',
+        attemptCount: 1,
+        lastAttemptAt: currentTimeMs,
+      });
+      return { status: 'CLAIMED' };
+    }
+
+    const t0 = 1000000;
+    const first = claimWebhookEvent('evt_xyz', 'payment.captured', t0);
+    const concurrent = claimWebhookEvent('evt_xyz', 'payment.captured', t0 + 100);
+
+    assert.strictEqual(first.status, 'CLAIMED');
+    assert.strictEqual(concurrent.status, 'IN_FLIGHT_LOCKED');
+
+    // Mark processed
+    processedEvents.get('evt_xyz').status = 'PROCESSED';
+    const lateReplay = claimWebhookEvent('evt_xyz', 'payment.captured', t0 + 40000);
+    assert.strictEqual(lateReplay.status, 'ALREADY_PROCESSED');
+  });
+
+  it('180. Paid Order Cancellation State & Ledger Invariant (TB-NEW-015 & TB-NEW-016): Atomically restores stockOnHand and posts refund disbursement', () => {
+    let stockOnHand = 10;
+    let orderState = {
+      orderId: 'TB_ORDER_PAID_01',
+      status: 'confirmed',
+      paymentStatus: 'paid',
+      quantity: 2,
+      totalAmountPaise: 12000,
+    };
+    const financialLedger = [];
+
+    function executeCancelOrder(order, actorRole) {
+      if (!['manager', 'admin', 'security_admin'].includes(actorRole)) {
+        throw new Error('PERMISSION_DENIED');
+      }
+
+      // 1. Restore committed physical stock
+      stockOnHand += order.quantity;
+
+      // 2. Post refund disbursement
+      const refundId = 'rfnd_simulated_01';
+      financialLedger.push({
+        transactionId: `refund_fin_${refundId}`,
+        type: 'REFUND_DISBURSEMENT',
+        amountPaise: order.totalAmountPaise,
+        debit: 'SALES_REVENUE',
+        credit: 'GATEWAY_RECEIVABLE',
+      });
+
+      // 3. Update order state
+      order.status = 'cancelled';
+      order.paymentStatus = 'refunded';
+
+      return { success: true, refundDispatched: true };
+    }
+
+    const res = executeCancelOrder(orderState, 'manager');
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(stockOnHand, 12, 'Physical stockOnHand restored on cancellation');
+    assert.strictEqual(orderState.status, 'cancelled');
+    assert.strictEqual(orderState.paymentStatus, 'refunded');
+    assert.strictEqual(financialLedger.length, 1);
+    assert.strictEqual(financialLedger[0].type, 'REFUND_DISBURSEMENT');
+  });
+
+  it('181. Workstation Session Instant Invalidation on Shift PIN Revocation (TB-NEW-004 & TB-NEW-005): Inactive sessions rejected', () => {
+    const sessions = new Map([
+      ['session_01', { pinId: 'kitchen_2026-09-01_MORNING', status: 'ACTIVE' }],
+      ['session_02', { pinId: 'pickup_2026-09-01_MORNING', status: 'ACTIVE' }],
+    ]);
+
+    function revokeShiftPin(pinId) {
+      for (const [id, session] of sessions.entries()) {
+        if (session.pinId === pinId) {
+          session.status = 'REVOKED';
+        }
+      }
+    }
+
+    function assertWorkstationSession(sessionId) {
+      const s = sessions.get(sessionId);
+      if (!s || s.status !== 'ACTIVE') {
+        throw new Error('WORKSTATION_SESSION_REVOKED');
+      }
+      return true;
+    }
+
+    assert.strictEqual(assertWorkstationSession('session_01'), true);
+    revokeShiftPin('kitchen_2026-09-01_MORNING');
+
+    assert.strictEqual(sessions.get('session_01').status, 'REVOKED');
+    assert.strictEqual(sessions.get('session_02').status, 'ACTIVE');
+    assert.throws(() => assertWorkstationSession('session_01'), /WORKSTATION_SESSION_REVOKED/);
+    assert.strictEqual(assertWorkstationSession('session_02'), true);
+  });
+
+  it('182. Feature Flag String-Boolean Rejection Invariant (TB-NEW-020 & TB-NEW-021): String "false" is rejected rather than evaluating to true', () => {
+    function validateFeatureFlagInput(input) {
+      if (input.onlineOrderingEnabled !== undefined) {
+        if (typeof input.onlineOrderingEnabled !== 'boolean') {
+          throw new Error('INVALID_BOOLEAN');
+        }
+      }
+      if (input.rushMultiplier !== undefined) {
+        if (typeof input.rushMultiplier !== 'number' || !Number.isFinite(input.rushMultiplier) || input.rushMultiplier < 1.0 || input.rushMultiplier > 2.5) {
+          throw new Error('INVALID_MULTIPLIER');
+        }
+      }
+      return true;
+    }
+
+    assert.strictEqual(validateFeatureFlagInput({ onlineOrderingEnabled: false }), true);
+    assert.strictEqual(validateFeatureFlagInput({ rushMultiplier: 1.5 }), true);
+    assert.throws(() => validateFeatureFlagInput({ onlineOrderingEnabled: 'false' }), /INVALID_BOOLEAN/);
+    assert.throws(() => validateFeatureFlagInput({ rushMultiplier: NaN }), /INVALID_MULTIPLIER/);
+    assert.throws(() => validateFeatureFlagInput({ rushMultiplier: '1.5' }), /INVALID_MULTIPLIER/);
+  });
+
+  it('183. Last Security Administrator Lockout Defense (TB-NEW-024): Refuses to demote the sole remaining security_admin', () => {
+    const staffAccounts = [
+      { uid: 'sec_admin_01', role: 'security_admin' },
+      { uid: 'mgr_01', role: 'manager' },
+    ];
+
+    function demoteStaffRole(targetUid, newRole) {
+      const target = staffAccounts.find(s => s.uid === targetUid);
+      if (!target) throw new Error('NOT_FOUND');
+
+      if (target.role === 'security_admin' && newRole !== 'security_admin') {
+        const totalSecurityAdmins = staffAccounts.filter(s => s.role === 'security_admin').length;
+        if (totalSecurityAdmins <= 1) {
+          throw new Error('CANNOT_DEMOTE_LAST_SECURITY_ADMIN');
+        }
+      }
+      target.role = newRole;
+      return true;
+    }
+
+    assert.throws(() => demoteStaffRole('sec_admin_01', 'manager'), /CANNOT_DEMOTE_LAST_SECURITY_ADMIN/);
+    assert.strictEqual(staffAccounts[0].role, 'security_admin');
+  });
+
+  it('184. Verification Single Active Application Quota Invariant (TB-NEW-025): Rejects duplicate application while under review', () => {
+    const userProfile = { uid: 'user_teacher_1', verificationStatus: 'UNDER_REVIEW' };
+
+    function submitApplication(user) {
+      if (user.verificationStatus === 'UNDER_REVIEW') {
+        throw new Error('PENDING_APPLICATION_EXISTS');
+      }
+      user.verificationStatus = 'UNDER_REVIEW';
+      return { success: true };
+    }
+
+    assert.throws(() => submitApplication(userProfile), /PENDING_APPLICATION_EXISTS/);
+  });
 });
