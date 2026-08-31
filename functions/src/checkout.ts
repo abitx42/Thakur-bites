@@ -8,12 +8,7 @@ import { getRequiredSecret } from './secrets';
 const db = admin.firestore();
 
 /**
- * Creates an authoritative, idempotent checkout order with atomic inventory reservation.
- * Top 5 Hardening:
- * 1. Checkout state initialized to payment_pending (or confirmed if counter_cash).
- * 2. Cryptographic CSPRNG PIN generation (crypto.randomInt).
- * 3. Zero-Knowledge PIN: Stores ONLY pickupPinHash in Firestore. Raw PIN is returned transiently to student only.
- * 4. Short-lived cryptographically signed QR token.
+ * Creates an authoritative, idempotent checkout order with atomic inventory reservation and integer paise pricing.
  */
 export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   // 1. Authenticate student
@@ -25,45 +20,41 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   await enforceRateLimit(studentId, 'checkout');
   const { idempotencyKey, items, paymentMethod = 'online' } = request.data;
 
-  if (!idempotencyKey || typeof idempotencyKey !== 'string') {
-    throw new HttpsError('invalid-argument', 'Valid idempotencyKey is required.');
+  if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0) {
+    throw new HttpsError('invalid-argument', 'Valid non-empty idempotencyKey is required.');
   }
 
   if (!items || !Array.isArray(items) || items.length === 0) {
     throw new HttpsError('invalid-argument', 'Cart items cannot be empty.');
   }
 
-  // Deduplicate & Aggregate item quantities by itemId
+  // 1b. Strict Quantity & Format Validation (P1: Reject invalid input rather than silent clamping)
   const aggregatedItemsMap = new Map<string, number>();
   for (const item of items) {
-    if (!item.itemId || typeof item.quantity !== 'number' || item.quantity <= 0) {
-      throw new HttpsError('invalid-argument', 'Invalid item format or quantity.');
+    if (!item.itemId || typeof item.itemId !== 'string') {
+      throw new HttpsError('invalid-argument', 'Item ID must be a non-empty string.');
+    }
+    if (!Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 99) {
+      throw new HttpsError('invalid-argument', `Invalid quantity for item ${item.itemId}. Must be an integer between 1 and 99.`);
     }
     const current = aggregatedItemsMap.get(item.itemId) || 0;
-    aggregatedItemsMap.set(item.itemId, current + Math.min(99, item.quantity));
+    const nextTotal = current + item.quantity;
+    if (nextTotal > 99) {
+      throw new HttpsError('invalid-argument', `Total quantity for ${item.itemId} exceeds maximum 99 items.`);
+    }
+    aggregatedItemsMap.set(item.itemId, nextTotal);
   }
+
   const consolidatedItems = Array.from(aggregatedItemsMap.entries()).map(([itemId, quantity]) => ({
     itemId,
     quantity,
   }));
 
-  // 2. Check for existing order with same idempotencyKey (True Idempotency)
-  const existingOrders = await db.collection('orders')
-    .where('idempotencyKey', '==', idempotencyKey)
-    .where('studentId', '==', studentId)
-    .limit(1)
-    .get();
+  // Deterministic Idempotency Key Lock Document
+  const idempotencyHash = crypto.createHash('sha256').update(`${studentId}_${idempotencyKey.trim()}`).digest('hex');
+  const idempotencyLockRef = db.collection('checkoutRequests').doc(idempotencyHash);
 
-  if (!existingOrders.empty) {
-    const existingDoc = existingOrders.docs[0];
-    return {
-      orderId: existingDoc.id,
-      order: existingDoc.data(),
-      isReplay: true,
-    };
-  }
-
-  // 3. Fetch student profile details
+  // 2. Fetch student profile details
   const studentDoc = await db.collection('students').doc(studentId).get();
   const studentData = studentDoc.data() || {};
   const studentName = studentData.name || 'Student';
@@ -81,15 +72,30 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   try {
     return await db.runTransaction(async (transaction) => {
       // ═════════════════════════════════════════════════════════════
-      // ALL READS FIRST (Strict Transaction Invariant)
+      // 1. ALL READS FIRST (Strict Transaction Invariant)
       // ═════════════════════════════════════════════════════════════
+      const idempotencySnap = await transaction.get(idempotencyLockRef);
+      if (idempotencySnap.exists) {
+        const existingOrderId = idempotencySnap.data()?.orderId;
+        if (existingOrderId) {
+          const existingOrderDoc = await transaction.get(db.collection('orders').doc(existingOrderId));
+          if (existingOrderDoc.exists) {
+            return {
+              orderId: existingOrderId,
+              order: existingOrderDoc.data(),
+              isReplay: true,
+            };
+          }
+        }
+      }
+
       const itemSnapshots = await Promise.all(itemRefs.map(ref => transaction.get(ref)));
       const counterSnap = await transaction.get(counterRef);
 
       // ═════════════════════════════════════════════════════════════
-      // VALIDATE PRICING & INVENTORY LIMITS
+      // 2. VALIDATE PRICING & INVENTORY LIMITS (IN INTEGER PAISE)
       // ═════════════════════════════════════════════════════════════
-      let calculatedTotal = 0;
+      let calculatedTotalPaise = 0;
       let maxPrepMinutes = 0;
       const orderItemSnapshots: OrderItemSnapshot[] = [];
 
@@ -105,7 +111,13 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         const isAvail = menuData.available !== false;
         const type = menuData.type || 'instant';
         const stockCount = Math.max(0, Number(menuData.stockCount !== undefined ? menuData.stockCount : (isAvail ? 50 : 0)));
-        const unitPrice = Number(menuData.price || 0);
+        
+        // Strict Integer Paise Calculation (P0: 4)
+        const unitPricePaise = Math.round(Number(menuData.price || 0) * 100);
+        if (!Number.isSafeInteger(unitPricePaise) || unitPricePaise < 0 || unitPricePaise > 1000000) {
+          throw new HttpsError('internal', `Corrupt price definition for item ${menuData.name}.`);
+        }
+
         const prepMinutes = Number(menuData.prepMinutes || 0);
 
         if (!isAvail) {
@@ -120,8 +132,8 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
           );
         }
 
-        const subtotal = unitPrice * req.quantity;
-        calculatedTotal += subtotal;
+        const subtotalPaise = unitPricePaise * req.quantity;
+        calculatedTotalPaise += subtotalPaise;
         if (prepMinutes > maxPrepMinutes) {
           maxPrepMinutes = prepMinutes;
         }
@@ -130,15 +142,17 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
           itemId: req.itemId,
           name: menuData.name,
           quantity: req.quantity,
-          unitPrice,
-          subtotal,
+          unitPrice: unitPricePaise / 100,
+          unitPricePaise,
+          subtotal: subtotalPaise / 100,
+          subtotalPaise,
           type,
           station: menuData.category || 'general',
         });
       }
 
       // ═════════════════════════════════════════════════════════════
-      // GENERATE DAILY SEQUENTIAL TOKEN (TB-001, TB-002, ...)
+      // 3. GENERATE DAILY SEQUENTIAL TOKEN (TB-001, TB-002, ...)
       // ═════════════════════════════════════════════════════════════
       let nextSeq = 1;
       if (counterSnap.exists) {
@@ -175,7 +189,8 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         studentRoll,
         status: isCounterCash ? 'confirmed' : 'payment_pending',
         paymentStatus: isCounterCash ? 'unpaid' : 'pending',
-        totalAmount: calculatedTotal,
+        totalAmount: calculatedTotalPaise / 100,
+        totalAmountPaise: calculatedTotalPaise,
         currency: 'INR',
         items: orderItemSnapshots,
         estimatedMinutes: maxPrepMinutes,
@@ -184,7 +199,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       };
 
       // ═════════════════════════════════════════════════════════════
-      // ALL WRITES AFTER READS
+      // 4. ALL WRITES AFTER READS
       // ═════════════════════════════════════════════════════════════
 
       // a. Decrement instant store items
@@ -222,10 +237,18 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         lastUpdatedAt: now,
       }, { merge: true });
 
-      // c. Create Order Document
+      // c. Reserve Idempotency Lock
+      transaction.set(idempotencyLockRef, {
+        orderId: newOrderRef.id,
+        studentId,
+        idempotencyKey,
+        createdAt: now,
+      });
+
+      // d. Create Order Document
       transaction.set(newOrderRef, orderDoc);
 
-      // d. Create immutable Order Event
+      // e. Create immutable Order Event
       const eventRef = db.collection('orderEvents').doc();
       transaction.set(eventRef, {
         orderId: newOrderRef.id,

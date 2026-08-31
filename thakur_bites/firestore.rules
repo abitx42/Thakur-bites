@@ -19,15 +19,19 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.role in ['kitchen', 'pickup', 'manager', 'admin', 'security_admin'];
     }
 
+    function isManagerOrAdmin() {
+      return isAuthenticated() && request.auth.token.role in ['manager', 'admin', 'security_admin'];
+    }
+
     function isAdmin() {
       return isAuthenticated() && request.auth.token.role in ['admin', 'security_admin'];
     }
 
     // ─── Menu Items ─────────────────────────────────────────────
-    // Public read for live canteen catalog. Direct writes restricted to staff.
+    // Public read for live canteen catalog. Direct writes restricted to Managers/Admins only.
     match /menuItems/{itemId} {
       allow read: if true;
-      allow write: if isStaff();
+      allow write: if isManagerOrAdmin();
     }
 
     // ─── Orders ─────────────────────────────────────────────────
@@ -42,12 +46,16 @@ service cloud.firestore {
     }
 
     // ─── Students Profile ───────────────────────────────────────
-    // Students can read and update only their own profile.
+    // Students can read and update ONLY harmless profile fields (name, phone, department, photoUrl).
+    // Security fields (role, isVerified, accountDisabled, uid) are strictly protected.
     match /students/{studentId} {
-      allow read, write: if isOwner(studentId);
+      allow read: if isOwner(studentId) || isStaff();
+      allow create: if isOwner(studentId);
+      allow update: if isOwner(studentId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'phone', 'department', 'year', 'photoUrl', 'updatedAt']);
+      allow delete: if false;
     }
 
-    // ─── Student Feedback & Ratings (Fix 12) ─────────────────────
+    // ─── Student Feedback & Ratings ─────────────────────────────
     match /ratings/{ratingId} {
       allow create: if isAuthenticated() && request.resource.data.studentId == request.auth.uid;
       allow read: if isStaff() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
@@ -67,6 +75,11 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         resource.data.studentId == request.auth.uid || isStaff()
       );
+      allow write: if false;
+    }
+
+    match /financialTransactions/{txnId} {
+      allow read: if isStaff();
       allow write: if false;
     }
 
@@ -94,12 +107,20 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // ─── Rate Limits & Daily Counters (Sequential Tokens) ───────
+    // ─── Internal System Collections ────────────────────────────
     match /counters/{counterId} {
       allow read, write: if false;
     }
 
     match /rateLimits/{limitId} {
+      allow read, write: if false;
+    }
+
+    match /processedGatewayEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /checkoutRequests/{reqId} {
       allow read, write: if false;
     }
   }

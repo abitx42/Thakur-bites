@@ -30,7 +30,9 @@ export interface OrderItemSnapshot {
   name: string;
   quantity: number;
   unitPrice: number;
+  unitPricePaise: number; // Integer paise representation
   subtotal: number;
+  subtotalPaise: number; // Integer paise representation
   type: 'cooked' | 'instant';
   station: string;
 }
@@ -39,16 +41,19 @@ export interface OrderDocument {
   id: string;
   idempotencyKey: string;
   tokenNumber: string;
-  pickupPinHash: string; // Zero-knowledge: Stored as SHA-256 hash only
+  pickupPinHash: string; // Zero-knowledge SHA-256 hash only
   qrNonce?: string;
   qrExpiresAt?: number;
-  pickupPin?: string; // Only populated transiently during student dispatch
+  qrConsumedAt?: Timestamp; // One-time QR consumption guard
+  qrConsumedBy?: string;
+  pickupPin?: string; // Only delivered transiently to student at checkout
   studentId: string;
   studentName: string;
   studentRoll: string;
   status: OrderStatus;
   paymentStatus: PaymentStatus;
   totalAmount: number;
+  totalAmountPaise: number; // Integer paise representation (e.g. 12000 = ₹120.00)
   currency: 'INR';
   items: OrderItemSnapshot[];
   estimatedMinutes: number;
@@ -61,6 +66,8 @@ export interface OrderDocument {
   verificationMethod?: 'PIN' | 'QR';
   failedPinAttempts?: number;
   isLockedForInvestigation?: boolean;
+  paidAt?: Timestamp;
+  updatedAt?: Timestamp;
 }
 
 export interface PaymentSessionRequest {
@@ -72,6 +79,7 @@ export interface PaymentSessionResponse {
   orderId: string;
   gatewayOrderId: string;
   amount: number;
+  amountPaise: number;
   currency: string;
   keyId: string;
   adapterMode: 'PRODUCTION_GATEWAY' | 'SIMULATION_ADAPTER';
@@ -116,6 +124,7 @@ export interface DailyReconciliationRecord {
   date: string;
   totalOrdersCount: number;
   totalRevenueCalculated: number;
+  totalRevenuePaise: number;
   onlinePaymentsCaptured: number;
   counterCashEstimated: number;
   discrepanciesCount: number;

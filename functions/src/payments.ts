@@ -7,10 +7,11 @@ import {
   PaymentVerificationRequest,
   PaymentRecord,
   DailyReconciliationRecord,
-  FinancialTransactionRecord,
+  UserRole,
 } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
+import { finalizeSuccessfulPayment } from './payment_finalize';
 
 const db = admin.firestore();
 
@@ -125,11 +126,14 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
     });
   }
 
+  const totalPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
   const isProduction = process.env.NODE_ENV === 'production';
+
   const response: PaymentSessionResponse = {
     orderId,
     gatewayOrderId,
-    amount: orderData.totalAmount,
+    amount: totalPaise / 100,
+    amountPaise: totalPaise,
     currency: orderData.currency || 'INR',
     keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_tcet_canteen',
     adapterMode: isProduction ? 'PRODUCTION_GATEWAY' : 'SIMULATION_ADAPTER',
@@ -144,8 +148,7 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
 });
 
 /**
- * 2. Cryptographically verifies payment signature, captures transaction,
- * and transitions order state from payment_pending -> confirmed.
+ * 2. Cryptographically verifies payment signature and delegates to single authoritative payment finalizer.
  */
 export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -160,9 +163,6 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
   const adapter = new RazorpayPaymentAdapter();
   const isValid = adapter.verifyPaymentSignature(gatewayOrderId, gatewayPaymentId, gatewaySignature);
 
-  const now = admin.firestore.Timestamp.now();
-  const orderRef = db.collection('orders').doc(orderId);
-
   if (!isValid) {
     await db.collection('securityEvents').doc().set({
       eventType: 'PAYMENT_SIGNATURE_MISMATCH',
@@ -171,91 +171,41 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
       gatewayPaymentId,
       actorUid: request.auth.uid,
       severity: 'critical',
-      timestamp: now,
+      timestamp: admin.firestore.Timestamp.now(),
     });
 
     throw new HttpsError('permission-denied', 'Payment verification failed: Invalid cryptographic signature.');
   }
 
-  return await db.runTransaction(async (transaction) => {
-    const snap = await transaction.get(orderRef);
-    if (!snap.exists) {
-      throw new HttpsError('not-found', 'Order not found.');
-    }
+  // Fetch order to get authoritative amountPaise and currency
+  const orderDoc = await db.collection('orders').doc(orderId).get();
+  if (!orderDoc.exists) {
+    throw new HttpsError('not-found', 'Order not found.');
+  }
+  const orderData = orderDoc.data()!;
+  const amountPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
 
-    const orderData = snap.data()!;
-    if (orderData.paymentStatus === 'paid') {
-      return { success: true, alreadyCaptured: true, orderId };
-    }
-
-    // 1. Immutable payments collection record
-    const paymentId = `pay_${crypto.randomBytes(8).toString('hex')}`;
-    const paymentRef = db.collection('payments').doc(paymentId);
-    const paymentRecord: PaymentRecord = {
-      paymentId,
+  // Single authoritative payment finalization (P0: 1)
+  try {
+    const result = await finalizeSuccessfulPayment({
       orderId,
-      studentId: request.auth!.uid,
-      gateway: 'razorpay',
       gatewayOrderId,
       gatewayPaymentId,
-      amount: orderData.totalAmount,
+      amountPaise,
       currency: orderData.currency || 'INR',
-      status: 'captured',
-      verifiedAt: now,
-      auditSignature: gatewaySignature,
-    };
-    transaction.set(paymentRef, paymentRecord);
-
-    // 2. Double-Entry Financial Ledger entry
-    const finTxRef = db.collection('financialTransactions').doc();
-    const finRecord: FinancialTransactionRecord = {
-      transactionId: finTxRef.id,
-      orderId,
-      type: 'PAYMENT_CAPTURE',
-      amount: orderData.totalAmount,
-      currency: 'INR',
-      gatewayTransactionId: gatewayPaymentId,
-      gatewayOrderId,
-      actorId: request.auth!.uid,
-      timestamp: now,
-      status: 'settled',
-    };
-    transaction.set(finTxRef, finRecord);
-
-    // 3. Update Order State Machine: payment_pending -> confirmed
-    transaction.update(orderRef, {
-      paymentStatus: 'paid',
-      status: 'confirmed',
-      gatewayPaymentId,
-      paidAt: now,
-      updatedAt: now,
+      source: 'client_verification',
+      actorId: request.auth.uid,
+      signatureOrRef: gatewaySignature,
     });
 
-    // 4. Immutable orderEvent
-    const eventRef = db.collection('orderEvents').doc();
-    transaction.set(eventRef, {
-      orderId,
-      fromStatus: 'payment_pending',
-      toStatus: 'confirmed',
-      actorId: request.auth!.uid,
-      actorRole: 'student',
-      timestamp: now,
-      metadata: { gatewayPaymentId, amount: orderData.totalAmount },
-    });
-
-    return {
-      success: true,
-      alreadyCaptured: false,
-      orderId,
-      tokenNumber: orderData.tokenNumber,
-      amount: orderData.totalAmount,
-      status: 'confirmed',
-    };
-  });
+    return result;
+  } catch (error: any) {
+    throw new HttpsError('internal', error.message);
+  }
 });
 
 /**
- * 3. Server-to-Server Razorpay Webhook Handler with Idempotency & Amount Cross-Verification
+ * 3. Server-to-Server Razorpay Webhook Handler with Retry-Safe Idempotency & Gateway Order Cross-Validation
  */
 export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) => {
   if (req.method !== 'POST') {
@@ -287,35 +237,30 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
   const eventId = eventPayload.id || `evt_${crypto.randomBytes(8).toString('hex')}`;
   const eventType = eventPayload.event;
 
-  // Webhook Idempotency: processedGatewayEvents collection
-  const eventProcessedRef = db.collection('processedGatewayEvents').doc(eventId);
+  const eventDocRef = db.collection('processedGatewayEvents').doc(eventId);
   const now = admin.firestore.Timestamp.now();
 
   try {
-    const isAlreadyProcessed = await db.runTransaction(async (transaction) => {
-      const eventSnap = await transaction.get(eventProcessedRef);
-      if (eventSnap.exists) {
-        return true;
-      }
-
-      transaction.set(eventProcessedRef, {
-        eventId,
-        eventType,
-        receivedAt: now,
-      });
-      return false;
-    });
-
-    if (isAlreadyProcessed) {
+    // Check if already processed
+    const eventSnap = await eventDocRef.get();
+    if (eventSnap.exists && eventSnap.data()?.status === 'PROCESSED') {
       res.status(200).json({ received: true, alreadyProcessed: true });
       return;
     }
 
+    // Mark event as PROCESSING (P0: 2: Never permanently consume event before business effect succeeds)
+    await eventDocRef.set({
+      eventId,
+      eventType,
+      status: 'PROCESSING',
+      attemptCount: admin.firestore.FieldValue.increment(1),
+      lastAttemptAt: now,
+    }, { merge: true });
+
     if (eventType === 'payment.captured') {
       const paymentEntity = eventPayload.payload?.payment?.entity;
       if (!paymentEntity) {
-        res.status(400).send('Invalid payment payload.');
-        return;
+        throw new Error('Invalid payment payload in captured event.');
       }
 
       const orderId = paymentEntity.notes?.orderId;
@@ -325,107 +270,89 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
       const gatewayPaymentId = paymentEntity.id;
 
       if (!orderId) {
-        res.status(400).send('Missing orderId in payment notes.');
-        return;
+        throw new Error('Missing orderId in payment notes.');
       }
 
-      const orderRef = db.collection('orders').doc(orderId);
-
-      await db.runTransaction(async (transaction) => {
-        const orderSnap = await transaction.get(orderRef);
-        if (!orderSnap.exists) {
-          throw new Error(`Order ${orderId} not found.`);
-        }
-
-        const orderData = orderSnap.data()!;
-        const expectedPaise = Math.round(Number(orderData.totalAmount || 0) * 100);
-
-        // Strict Amount & Currency Cross-Verification
-        if (gatewayPaymentAmountPaise !== expectedPaise || gatewayCurrency !== (orderData.currency || 'INR')) {
-          const secRef = db.collection('securityEvents').doc();
-          transaction.set(secRef, {
-            eventType: 'PAYMENT_AMOUNT_TAMPERING_FLAGGED',
-            orderId,
-            expectedPaise,
-            receivedPaise: gatewayPaymentAmountPaise,
-            expectedCurrency: orderData.currency || 'INR',
-            receivedCurrency: gatewayCurrency,
-            severity: 'critical',
-            timestamp: now,
-          });
-          throw new Error('Payment amount mismatch between gateway and database snapshot.');
-        }
-
-        if (orderData.paymentStatus !== 'paid') {
-          // 1. Create payment record
-          const paymentId = `pay_${gatewayPaymentId}`;
-          const paymentRef = db.collection('payments').doc(paymentId);
-          transaction.set(paymentRef, {
-            paymentId,
-            orderId,
-            studentId: orderData.studentId,
-            gateway: 'razorpay_webhook',
-            gatewayOrderId,
-            gatewayPaymentId,
-            amount: orderData.totalAmount,
-            currency: gatewayCurrency,
-            status: 'captured',
-            verifiedAt: now,
-            auditSignature: webhookSignature,
-          });
-
-          // 2. Double-entry financial transaction
-          const finTxRef = db.collection('financialTransactions').doc();
-          transaction.set(finTxRef, {
-            transactionId: finTxRef.id,
-            orderId,
-            type: 'PAYMENT_CAPTURE',
-            amount: orderData.totalAmount,
-            currency: gatewayCurrency,
-            gatewayTransactionId: gatewayPaymentId,
-            gatewayOrderId,
-            actorId: 'system_webhook',
-            timestamp: now,
-            status: 'settled',
-          });
-
-          // 3. Update order state: payment_pending -> confirmed
-          transaction.update(orderRef, {
-            paymentStatus: 'paid',
-            status: 'confirmed',
-            gatewayPaymentId,
-            paidAt: now,
-            updatedAt: now,
-          });
-
-          // 4. Immutable orderEvent
-          const eventRef = db.collection('orderEvents').doc();
-          transaction.set(eventRef, {
-            orderId,
-            fromStatus: 'payment_pending',
-            toStatus: 'confirmed',
-            actorId: 'system_webhook',
-            actorRole: 'system',
-            timestamp: now,
-            reason: 'WEBHOOK_PAYMENT_CAPTURED',
-          });
-        }
+      // Delegate to single authoritative payment finalizer
+      await finalizeSuccessfulPayment({
+        orderId,
+        gatewayOrderId,
+        gatewayPaymentId,
+        amountPaise: gatewayPaymentAmountPaise,
+        currency: gatewayCurrency,
+        source: 'webhook',
+        actorId: 'system_webhook',
+        signatureOrRef: webhookSignature,
       });
     }
+
+    // Mark event as successfully PROCESSED
+    await eventDocRef.update({
+      status: 'PROCESSED',
+      processedAt: admin.firestore.Timestamp.now(),
+    });
 
     res.status(200).json({ received: true, processed: true });
   } catch (err: any) {
     console.error('Webhook processing error:', err);
+    // Mark as FAILED / RETRYABLE so gateway retries can be processed
+    await eventDocRef.set({
+      status: 'FAILED',
+      errorMessage: err.message,
+      failedAt: admin.firestore.Timestamp.now(),
+    }, { merge: true }).catch(() => {});
+
     res.status(500).json({ error: err.message });
   }
 });
 
 /**
- * 4. Authoritative Daily Financial Reconciliation Engine
+ * 4. Record Counter Cash Payment (P0: 9)
+ * Restricted to cashier, manager, and admin roles.
+ */
+export const recordCashPayment = onCall<{ orderId: string }>(async (request) => {
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const actorRole = (request.auth.token.role as UserRole) || 'student';
+  if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin' && actorRole !== 'pickup') {
+    throw new HttpsError('permission-denied', 'Only authorized cashiers and managers can record cash payments.');
+  }
+
+  const { orderId } = request.data;
+  if (!orderId) {
+    throw new HttpsError('invalid-argument', 'orderId is required.');
+  }
+
+  const orderDoc = await db.collection('orders').doc(orderId).get();
+  if (!orderDoc.exists) {
+    throw new HttpsError('not-found', 'Order not found.');
+  }
+
+  const orderData = orderDoc.data()!;
+  const amountPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
+  const gatewayOrderId = orderData.gatewayOrderId || `cash_ord_${orderId}`;
+  const gatewayPaymentId = `cash_pay_${crypto.randomBytes(6).toString('hex')}`;
+
+  return await finalizeSuccessfulPayment({
+    orderId,
+    gatewayOrderId,
+    gatewayPaymentId,
+    amountPaise,
+    currency: orderData.currency || 'INR',
+    source: 'cashier_counter',
+    actorId: request.auth.uid,
+    signatureOrRef: `CASH_VERIFIED_BY_${request.auth.uid}`,
+  });
+});
+
+/**
+ * 5. Authoritative Daily Financial Reconciliation Engine
  */
 export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconciliationRecord> {
-  const startOfDay = new Date(`${dateStr}T00:00:00Z`);
-  const endOfDay = new Date(`${dateStr}T23:59:59Z`);
+  const startOfDay = new Date(`${dateStr}T00:00:00+05:30`);
+  const endOfDay = new Date(`${dateStr}T23:59:59+05:30`);
 
   const startTimestamp = admin.firestore.Timestamp.fromDate(startOfDay);
   const endTimestamp = admin.firestore.Timestamp.fromDate(endOfDay);
@@ -473,10 +400,13 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
     }
   });
 
+  const totalRevenuePaise = Math.round(totalRevenueCalculated * 100);
+
   const reconciliation: DailyReconciliationRecord = {
     date: dateStr,
     totalOrdersCount,
     totalRevenueCalculated,
+    totalRevenuePaise,
     onlinePaymentsCaptured,
     counterCashEstimated,
     discrepanciesCount,

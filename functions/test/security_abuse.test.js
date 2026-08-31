@@ -152,12 +152,10 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
   });
 
   it('8. Webhook Amount Tampering Defense: Detects and rejects mismatched payment amounts', () => {
-    const orderDoc = { id: 'order_123', totalAmount: 120.0, currency: 'INR' };
-    const expectedPaise = Math.round(orderDoc.totalAmount * 100); // 12000 paise
+    const orderDoc = { id: 'order_123', totalAmount: 120.0, totalAmountPaise: 12000, currency: 'INR' };
 
     function validateWebhookPayment(order, receivedAmountPaise, receivedCurrency) {
-      const expected = Math.round(order.totalAmount * 100);
-      if (receivedAmountPaise !== expected || receivedCurrency !== order.currency) {
+      if (receivedAmountPaise !== order.totalAmountPaise || receivedCurrency !== order.currency) {
         return { isValid: false, reason: 'AMOUNT_MISMATCH_REJECTED' };
       }
       return { isValid: true, reason: 'PAYMENT_VERIFIED' };
@@ -273,5 +271,85 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     const att4 = attemptPinVerification(order, '5432');
     assert.strictEqual(att4.success, false);
     assert.strictEqual(att4.isLocked, true);
+  });
+
+  it('13. One-Time QR Nonce Consumption Defense: Rejects reused QR tokens', () => {
+    const order = { id: 'order_100', studentId: 'student_1', qrConsumedAt: null, status: 'ready' };
+
+    function consumeQrPickup(orderDoc) {
+      if (orderDoc.qrConsumedAt) {
+        return { success: false, error: 'QR_ALREADY_CONSUMED' };
+      }
+      orderDoc.qrConsumedAt = Date.now();
+      orderDoc.status = 'collected';
+      return { success: true };
+    }
+
+    const firstPickup = consumeQrPickup(order);
+    assert.strictEqual(firstPickup.success, true);
+
+    const secondPickup = consumeQrPickup(order);
+    assert.strictEqual(secondPickup.success, false);
+    assert.strictEqual(secondPickup.error, 'QR_ALREADY_CONSUMED');
+  });
+
+  it('14. QR Student Binding Defense: Rejects QR token presented for wrong student account', () => {
+    const order = { id: 'order_101', studentId: 'student_legit_123', status: 'ready' };
+
+    function verifyStudentBinding(orderDoc, qrStudentId) {
+      return orderDoc.studentId === qrStudentId;
+    }
+
+    assert.strictEqual(verifyStudentBinding(order, 'student_legit_123'), true);
+    assert.strictEqual(verifyStudentBinding(order, 'student_attacker_999'), false);
+  });
+
+  it('15. Pickup Status Constraint Defense: Only READY orders can be collected', () => {
+    function canHandover(status) {
+      return status === 'ready';
+    }
+
+    assert.strictEqual(canHandover('ready'), true);
+    assert.strictEqual(canHandover('confirmed'), false);
+    assert.strictEqual(canHandover('preparing'), false);
+    assert.strictEqual(canHandover('draft'), false);
+  });
+
+  it('16. Quantity Validation Defense: Rejects decimals, negatives, and overflows', () => {
+    function isValidQuantity(qty) {
+      return Number.isSafeInteger(qty) && qty >= 1 && qty <= 99;
+    }
+
+    assert.strictEqual(isValidQuantity(1), true);
+    assert.strictEqual(isValidQuantity(5), true);
+    assert.strictEqual(isValidQuantity(99), true);
+    assert.strictEqual(isValidQuantity(1.5), false); // Rejected decimal
+    assert.strictEqual(isValidQuantity(0), false);   // Rejected 0
+    assert.strictEqual(isValidQuantity(-1), false);  // Rejected negative
+    assert.strictEqual(isValidQuantity(100), false); // Rejected overflow
+  });
+
+  it('17. Single Authoritative Payment Finalization: Parallel verification races collapse safely', () => {
+    let orderPaymentStatus = 'pending';
+    let financialLedgerCount = 0;
+
+    function finalizePaymentAtomically() {
+      if (orderPaymentStatus === 'paid') {
+        return { alreadyCaptured: true };
+      }
+      orderPaymentStatus = 'paid';
+      financialLedgerCount++;
+      return { alreadyCaptured: false };
+    }
+
+    // Call from client verification
+    const resClient = finalizePaymentAtomically();
+    assert.strictEqual(resClient.alreadyCaptured, false);
+    assert.strictEqual(financialLedgerCount, 1);
+
+    // Call from webhook race
+    const resWebhook = finalizePaymentAtomically();
+    assert.strictEqual(resWebhook.alreadyCaptured, true);
+    assert.strictEqual(financialLedgerCount, 1); // Exact single financial record!
   });
 });

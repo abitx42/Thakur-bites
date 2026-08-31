@@ -8,8 +8,14 @@ import { getRequiredSecret } from './secrets';
 const db = admin.firestore();
 
 /**
- * Validates 4-digit PIN (Zero-Knowledge SHA-256 Hash) or Cryptographically Signed QR Token,
+ * Validates 4-digit PIN (Zero-Knowledge SHA-256 Hash) or Cryptographically Signed One-Time QR Token,
  * and marks the order collected idempotently.
+ *
+ * P0 Hardening:
+ * 1. Only orders with status == 'ready' can be collected.
+ * 2. Explicit studentId binding in QR tokens.
+ * 3. One-time QR nonce consumption (qrConsumedAt guard).
+ * 4. Zero legacy plaintext PIN fallback.
  */
 export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?: string }>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -47,23 +53,34 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
       throw new HttpsError('permission-denied', 'Order is locked due to repeated verification failures. Physical student ID verification required.');
     }
 
-    if (orderData.status !== 'ready' && orderData.status !== 'confirmed' && orderData.status !== 'preparing') {
-      throw new HttpsError('failed-precondition', `Order is currently in status: ${orderData.status}.`);
+    // P0: 7: Order must be in 'ready' status before collection is permitted
+    if (orderData.status !== 'ready') {
+      throw new HttpsError(
+        'failed-precondition',
+        `Cannot hand over order. Order is currently in '${orderData.status}' status (must be 'ready').`
+      );
     }
 
     let isVerified = false;
     let verificationMethod: 'PIN' | 'QR' = 'PIN';
 
-    // 1. Check Signed QR Token Verification
+    // 1. Check Signed One-Time QR Token Verification (P0: 5 & 6)
     if (qrToken && typeof qrToken === 'string') {
       verificationMethod = 'QR';
+
+      // Check if QR token was already consumed
+      if (orderData.qrConsumedAt) {
+        throw new HttpsError('permission-denied', 'This QR pickup token has already been consumed.');
+      }
+
       const parts = qrToken.trim().split('.');
       if (parts.length === 5) {
         const [tOrderId, tStudentId, tNonce, tExpiresAtStr, tSignature] = parts;
         const expiresAt = parseInt(tExpiresAtStr, 10);
         const currentUnix = Math.floor(Date.now() / 1000);
 
-        if (tOrderId === orderId && expiresAt > currentUnix) {
+        // Explicit Order & Student ID Binding (P0: 6)
+        if (tOrderId === orderId && tStudentId === orderData.studentId && expiresAt > currentUnix) {
           const qrSigningSecret = getRequiredSecret('QR_SIGNING_SECRET');
           const expectedSig = crypto.createHmac('sha256', qrSigningSecret)
             .update(`${tOrderId}:${tStudentId}:${tNonce}:${tExpiresAtStr}`)
@@ -82,12 +99,12 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
       }
     }
 
-    // 2. Check Zero-Knowledge PIN Hash Verification
+    // 2. Check Zero-Knowledge PIN Hash Verification (P0: 8: Strict Hash Match Only)
     if (!isVerified && pinCode && typeof pinCode === 'string') {
       verificationMethod = 'PIN';
       const cleanPin = pinCode.trim();
       const inputHash = crypto.createHash('sha256').update(cleanPin).digest('hex');
-      if (orderData.pickupPinHash === inputHash || orderData.pickupPin === cleanPin) {
+      if (orderData.pickupPinHash === inputHash) {
         isVerified = true;
       }
     }
@@ -117,16 +134,19 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
       throw new HttpsError(
         'permission-denied',
         isLocked
-          ? 'Verification failed. Order locked for security. Please present physical ID.'
+          ? 'Verification failed. Order locked for security. Please present physical student ID to manager.'
           : `Incorrect pickup ${verificationMethod} (${3 - attempts} attempt(s) remaining).`
       );
     }
 
+    // Atomic update with QR consumption and status transition
     transaction.update(orderRef, {
       status: 'collected',
       collectedAt: now,
       collectedByStaffId: request.auth!.uid,
       verificationMethod,
+      qrConsumedAt: verificationMethod === 'QR' ? now : null,
+      qrConsumedBy: verificationMethod === 'QR' ? request.auth!.uid : null,
       failedPinAttempts: 0,
       updatedAt: now,
     });
