@@ -189,6 +189,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         studentRoll,
         status: isCounterCash ? 'confirmed' : 'payment_pending',
         paymentStatus: isCounterCash ? 'unpaid' : 'pending',
+        paymentMethod: isCounterCash ? 'counter_cash' : 'online',
         totalAmount: calculatedTotalPaise / 100,
         totalAmountPaise: calculatedTotalPaise,
         currency: 'INR',

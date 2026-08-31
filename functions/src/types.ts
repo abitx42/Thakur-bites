@@ -1,6 +1,6 @@
 import { Timestamp } from 'firebase-admin/firestore';
 
-export type UserRole = 'student' | 'kitchen' | 'pickup' | 'manager' | 'admin' | 'security_admin' | 'system';
+export type UserRole = 'student' | 'kitchen' | 'pickup' | 'cashier' | 'manager' | 'admin' | 'security_admin' | 'system';
 
 export type OrderStatus =
   | 'draft'
@@ -12,7 +12,15 @@ export type OrderStatus =
   | 'collected'
   | 'cancelled';
 
-export type PaymentStatus = 'unpaid' | 'pending' | 'paid' | 'refunded';
+export type PaymentStatus =
+  | 'unpaid'
+  | 'pending'
+  | 'captured'
+  | 'settled'
+  | 'refunded'
+  | 'partially_refunded';
+
+export type PaymentMethod = 'online' | 'counter_cash';
 
 export interface CheckoutRequestItem {
   itemId: string;
@@ -22,7 +30,7 @@ export interface CheckoutRequestItem {
 export interface CheckoutRequest {
   idempotencyKey: string;
   items: CheckoutRequestItem[];
-  paymentMethod?: 'online' | 'counter_cash';
+  paymentMethod?: PaymentMethod;
 }
 
 export interface OrderItemSnapshot {
@@ -46,12 +54,12 @@ export interface OrderDocument {
   qrExpiresAt?: number;
   qrConsumedAt?: Timestamp; // One-time QR consumption guard
   qrConsumedBy?: string;
-  pickupPin?: string; // Only delivered transiently to student at checkout
   studentId: string;
   studentName: string;
   studentRoll: string;
   status: OrderStatus;
   paymentStatus: PaymentStatus;
+  paymentMethod: PaymentMethod;
   totalAmount: number;
   totalAmountPaise: number; // Integer paise representation (e.g. 12000 = ₹120.00)
   currency: 'INR';
@@ -66,8 +74,24 @@ export interface OrderDocument {
   verificationMethod?: 'PIN' | 'QR';
   failedPinAttempts?: number;
   isLockedForInvestigation?: boolean;
+  unlockedByStaffId?: string;
+  unlockedAt?: Timestamp;
+  unlockReason?: string;
+  refundId?: string;
+  refundedAt?: Timestamp;
+  refundedAmountPaise?: number;
+  refundReason?: string;
+  refundedByStaffId?: string;
   paidAt?: Timestamp;
   updatedAt?: Timestamp;
+}
+
+export interface CheckoutResponse {
+  orderId: string;
+  order: OrderDocument;
+  rawPin: string; // Delivered transiently in memory to student only
+  signedQrPayload: string;
+  isReplay: boolean;
 }
 
 export interface PaymentSessionRequest {
@@ -102,7 +126,7 @@ export interface PaymentRecord {
   gatewayPaymentId: string;
   amount: number;
   currency: string;
-  status: 'captured' | 'failed' | 'refunded';
+  status: 'captured' | 'settled' | 'failed' | 'refunded' | 'partially_refunded';
   verifiedAt: Timestamp;
   auditSignature: string;
 }

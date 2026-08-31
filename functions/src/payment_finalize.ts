@@ -25,13 +25,13 @@ export interface FinalizePaymentResult {
 
 /**
  * ═══════════════════════════════════════════════════════════════════
- * SINGLE AUTHORITATIVE PAYMENT FINALIZATION ENGINE
+ * SINGLE AUTHORITATIVE PAYMENT FINALIZATION ENGINE (Phase 1 Hardened)
  * ═══════════════════════════════════════════════════════════════════
- * Atomically guarantees:
- * 1. Exactly one payment capture record
- * 2. Exactly one double-entry financial ledger entry
- * 3. Strict amount (paise), currency, and gateway order matching
- * 4. Authoritative order state transition: payment_pending -> confirmed
+ * Invariant Guarantee:
+ * 1. Validate payment method: Counter-cash cannot settle online orders & vice-versa.
+ * 2. Validate gatewayOrderId, integer amount (paise), and currency.
+ * 3. ONLY THEN return idempotent success if already paid.
+ * 4. Atomically post exactly one payment and one financial ledger transaction.
  */
 export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): Promise<FinalizePaymentResult> {
   const {
@@ -56,16 +56,31 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
 
     const orderData = orderSnap.data()!;
 
-    // 1. Idempotency check: If already paid, return safely with zero duplicate writes
-    if (orderData.paymentStatus === 'paid') {
-      return {
-        success: true,
-        alreadyCaptured: true,
+    // 1. Strict Payment Method Cross-Validation (Phase 1 Fix: Cash cannot settle online orders)
+    if (source === 'cashier_counter' && orderData.paymentMethod !== 'counter_cash') {
+      const secRef = db.collection('securityEvents').doc();
+      transaction.set(secRef, {
+        eventType: 'CASH_SETTLEMENT_ATTEMPTED_ON_ONLINE_ORDER',
         orderId,
-        tokenNumber: orderData.tokenNumber || '',
-        amountPaise: orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100),
-        status: 'confirmed' as const,
-      };
+        actorUid: actorId,
+        source,
+        severity: 'critical',
+        timestamp: now,
+      });
+      throw new Error(`Invalid payment flow: Order ${orderId} was placed as an online payment order and cannot be settled as counter-cash.`);
+    }
+
+    if (source !== 'cashier_counter' && orderData.paymentMethod === 'counter_cash') {
+      const secRef = db.collection('securityEvents').doc();
+      transaction.set(secRef, {
+        eventType: 'GATEWAY_PAYMENT_ATTEMPTED_ON_CASH_ORDER',
+        orderId,
+        actorUid: actorId,
+        source,
+        severity: 'critical',
+        timestamp: now,
+      });
+      throw new Error(`Invalid payment flow: Order ${orderId} is a counter-cash order and cannot be verified via digital gateway.`);
     }
 
     // 2. Strict Gateway Order ID Validation
@@ -106,7 +121,19 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       throw new Error(`Payment amount or currency mismatch. Expected ${expectedPaise} ${expectedCurrency}, received ${amountPaise} ${currency}.`);
     }
 
-    // 4. Create immutable payments collection record
+    // 4. Idempotency check: Evaluated AFTER all immutable validations pass (Phase 1 Fix)
+    if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
+      return {
+        success: true,
+        alreadyCaptured: true,
+        orderId,
+        tokenNumber: orderData.tokenNumber || '',
+        amountPaise: expectedPaise,
+        status: 'confirmed' as const,
+      };
+    }
+
+    // 5. Create immutable payments collection record
     const paymentId = `pay_${gatewayPaymentId}`;
     const paymentRef = db.collection('payments').doc(paymentId);
     const paymentRecord: PaymentRecord = {
@@ -124,7 +151,7 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     };
     transaction.set(paymentRef, paymentRecord);
 
-    // 5. Create immutable double-entry financial ledger entry
+    // 6. Create immutable financial transaction record
     const finTxRef = db.collection('financialTransactions').doc();
     const finRecord: FinancialTransactionRecord = {
       transactionId: finTxRef.id,
@@ -140,7 +167,7 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     };
     transaction.set(finTxRef, finRecord);
 
-    // 6. Update order state machine: payment_pending -> confirmed
+    // 7. Update order state machine: payment_pending -> confirmed
     transaction.update(orderRef, {
       paymentStatus: 'paid',
       status: 'confirmed',
@@ -149,14 +176,14 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       updatedAt: now,
     });
 
-    // 7. Create immutable orderEvent
+    // 8. Create immutable orderEvent
     const eventRef = db.collection('orderEvents').doc();
     transaction.set(eventRef, {
       orderId,
       fromStatus: orderData.status || 'payment_pending',
       toStatus: 'confirmed',
       actorId,
-      actorRole: source === 'webhook' ? 'system' : (source === 'cashier_counter' ? 'manager' : 'student'),
+      actorRole: source === 'webhook' ? 'system' : (source === 'cashier_counter' ? 'cashier' : 'student'),
       timestamp: now,
       reason: `PAYMENT_FINALIZED_${source.toUpperCase()}`,
       metadata: { gatewayPaymentId, amountPaise: expectedPaise },

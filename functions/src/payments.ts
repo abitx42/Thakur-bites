@@ -5,7 +5,6 @@ import {
   PaymentSessionRequest,
   PaymentSessionResponse,
   PaymentVerificationRequest,
-  PaymentRecord,
   DailyReconciliationRecord,
   UserRole,
 } from './types';
@@ -110,7 +109,12 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
     throw new HttpsError('permission-denied', 'Cannot pay for another student’s order.');
   }
 
-  if (orderData.paymentStatus === 'paid') {
+  // Phase 1 Invariant: Online payment session only for online orders
+  if (orderData.paymentMethod === 'counter_cash') {
+    throw new HttpsError('failed-precondition', 'Cannot create digital payment session for an order designated as counter-cash.');
+  }
+
+  if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
     throw new HttpsError('already-exists', 'Order is already paid.');
   }
 
@@ -128,6 +132,11 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
 
   const totalPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
   const isProduction = process.env.NODE_ENV === 'production';
+  let razorpayKeyId = process.env.RAZORPAY_KEY_ID;
+  if (!razorpayKeyId && isProduction) {
+    throw new Error('FATAL: RAZORPAY_KEY_ID is missing in production environment.');
+  }
+  razorpayKeyId = razorpayKeyId || 'rzp_test_tcet_canteen';
 
   const response: PaymentSessionResponse = {
     orderId,
@@ -135,7 +144,7 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
     amount: totalPaise / 100,
     amountPaise: totalPaise,
     currency: orderData.currency || 'INR',
-    keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_tcet_canteen',
+    keyId: razorpayKeyId,
     adapterMode: isProduction ? 'PRODUCTION_GATEWAY' : 'SIMULATION_ADAPTER',
     notes: {
       studentId,
@@ -185,7 +194,7 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
   const orderData = orderDoc.data()!;
   const amountPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
 
-  // Single authoritative payment finalization (P0: 1)
+  // Single authoritative payment finalization (Phase 1 Hardened)
   try {
     const result = await finalizeSuccessfulPayment({
       orderId,
@@ -307,8 +316,8 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
 });
 
 /**
- * 4. Record Counter Cash Payment (P0: 9)
- * Restricted to cashier, manager, and admin roles.
+ * 4. Record Counter Cash Payment (Phase 1 Hardened)
+ * Restricted strictly to Cashier, Manager, and Admin roles.
  */
 export const recordCashPayment = onCall<{ orderId: string }>(async (request) => {
   if (!request.auth || !request.auth.uid) {
@@ -316,7 +325,7 @@ export const recordCashPayment = onCall<{ orderId: string }>(async (request) => 
   }
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin' && actorRole !== 'pickup') {
+  if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin' && actorRole !== 'cashier') {
     throw new HttpsError('permission-denied', 'Only authorized cashiers and managers can record cash payments.');
   }
 
@@ -331,6 +340,16 @@ export const recordCashPayment = onCall<{ orderId: string }>(async (request) => 
   }
 
   const orderData = orderDoc.data()!;
+
+  // Phase 1 Invariants: Cash payment only on counter_cash orders that are unpaid
+  if (orderData.paymentMethod !== 'counter_cash') {
+    throw new HttpsError('failed-precondition', 'Cannot record cash payment on an online order.');
+  }
+
+  if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
+    throw new HttpsError('already-exists', 'Order is already marked as paid.');
+  }
+
   const amountPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
   const gatewayOrderId = orderData.gatewayOrderId || `cash_ord_${orderId}`;
   const gatewayPaymentId = `cash_pay_${crypto.randomBytes(6).toString('hex')}`;
@@ -348,7 +367,7 @@ export const recordCashPayment = onCall<{ orderId: string }>(async (request) => 
 });
 
 /**
- * 5. Authoritative Daily Financial Reconciliation Engine
+ * 5. Authoritative Daily Financial Reconciliation Engine (Asia/Kolkata Timezone)
  */
 export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconciliationRecord> {
   const startOfDay = new Date(`${dateStr}T00:00:00+05:30`);
@@ -376,7 +395,7 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
 
   const capturedPaymentOrderIds = new Set<string>();
   paymentsSnap.forEach(doc => {
-    const p = doc.data() as PaymentRecord;
+    const p = doc.data();
     onlinePaymentsCaptured += Number(p.amount || 0);
     capturedPaymentOrderIds.add(p.orderId);
   });
@@ -386,7 +405,7 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
     const amount = Number(order.totalAmount || 0);
     totalRevenueCalculated += amount;
 
-    if (order.paymentStatus === 'paid') {
+    if (order.paymentStatus === 'paid' || order.paymentStatus === 'captured') {
       if (!capturedPaymentOrderIds.has(doc.id) && order.status !== 'cancelled') {
         discrepanciesCount++;
         auditNotes.push(`Order ${doc.id} marked paid but missing verified payment ledger record.`);

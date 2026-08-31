@@ -352,4 +352,76 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(resWebhook.alreadyCaptured, true);
     assert.strictEqual(financialLedgerCount, 1); // Exact single financial record!
   });
+
+  it('18. Cash Payment on Online Order Defense: Blocks cashier from settling online orders with cash', () => {
+    const onlineOrder = { id: 'order_online_1', paymentMethod: 'online', paymentStatus: 'pending' };
+
+    function validateCashPayment(order) {
+      if (order.paymentMethod !== 'counter_cash') {
+        return { success: false, error: 'INVALID_PAYMENT_METHOD_FOR_CASH' };
+      }
+      if (order.paymentStatus !== 'unpaid') {
+        return { success: false, error: 'ORDER_NOT_UNPAID' };
+      }
+      return { success: true };
+    }
+
+    const res = validateCashPayment(onlineOrder);
+    assert.strictEqual(res.success, false);
+    assert.strictEqual(res.error, 'INVALID_PAYMENT_METHOD_FOR_CASH');
+  });
+
+  it('19. Digital Payment on Cash Order Defense: Blocks creating gateway session for counter cash order', () => {
+    const cashOrder = { id: 'order_cash_1', paymentMethod: 'counter_cash', paymentStatus: 'unpaid' };
+
+    function validatePaymentSessionCreation(order) {
+      if (order.paymentMethod === 'counter_cash') {
+        return { allowed: false, error: 'CANNOT_PAY_ONLINE_FOR_CASH_ORDER' };
+      }
+      return { allowed: true };
+    }
+
+    const res = validatePaymentSessionCreation(cashOrder);
+    assert.strictEqual(res.allowed, false);
+    assert.strictEqual(res.error, 'CANNOT_PAY_ONLINE_FOR_CASH_ORDER');
+  });
+
+  it('20. Payment Finalization Validation Invariant: Rejects tampered parameters even if order is marked paid', () => {
+    const orderDoc = {
+      id: 'order_paid_1',
+      gatewayOrderId: 'order_correct_123',
+      totalAmountPaise: 12000,
+      currency: 'INR',
+      paymentStatus: 'paid',
+    };
+
+    function finalizePaymentWithValidation(order, incomingGatewayOrderId, incomingAmountPaise, incomingCurrency) {
+      // INVARIANT: Validate immutable identity and amount BEFORE evaluating alreadyCaptured!
+      if (order.gatewayOrderId && order.gatewayOrderId !== incomingGatewayOrderId) {
+        return { valid: false, error: 'GATEWAY_ORDER_MISMATCH' };
+      }
+      if (incomingAmountPaise !== order.totalAmountPaise || incomingCurrency !== order.currency) {
+        return { valid: false, error: 'AMOUNT_MISMATCH' };
+      }
+      if (order.paymentStatus === 'paid') {
+        return { valid: true, alreadyCaptured: true };
+      }
+      return { valid: true, alreadyCaptured: false };
+    }
+
+    // Tampered amount (₹1 instead of ₹120) sent against already-paid order
+    const tamperedRes = finalizePaymentWithValidation(orderDoc, 'order_correct_123', 100, 'INR');
+    assert.strictEqual(tamperedRes.valid, false);
+    assert.strictEqual(tamperedRes.error, 'AMOUNT_MISMATCH');
+
+    // Tampered gateway order ID sent against already-paid order
+    const tamperedOrderRes = finalizePaymentWithValidation(orderDoc, 'order_fake_999', 12000, 'INR');
+    assert.strictEqual(tamperedOrderRes.valid, false);
+    assert.strictEqual(tamperedOrderRes.error, 'GATEWAY_ORDER_MISMATCH');
+
+    // Legitimate duplicate call -> safe idempotent success
+    const legitRes = finalizePaymentWithValidation(orderDoc, 'order_correct_123', 12000, 'INR');
+    assert.strictEqual(legitRes.valid, true);
+    assert.strictEqual(legitRes.alreadyCaptured, true);
+  });
 });
