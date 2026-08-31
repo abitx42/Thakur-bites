@@ -47,19 +47,20 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.accountType == 'TEACHER';
     }
 
-    // ─── Menu Items ─────────────────────────────────────────────
-    // Public read for live canteen catalog. Direct writes restricted to Managers/Admins only.
+    // ─── Menu Items (Server Authority Architecture) ───────────────
+    // Public read for live canteen catalog. Direct client/manager writes FORBIDDEN.
+    // Inventory and price updates must execute through audited Cloud Functions.
     match /menuItems/{itemId} {
       allow read: if true;
-      allow write: if isManagerOrAdmin();
+      allow write: if false; // Cloud Functions ONLY
     }
 
-    // ─── Orders ─────────────────────────────────────────────────
-    // Students can ONLY read their own orders. Operational staff can read orders for operations.
-    // DIRECT CLIENT WRITES ARE BLOCKED: All mutations execute through trusted Cloud Functions.
+    // ─── Orders (Least-Privilege Isolation) ───────────────────────
+    // Students read their own orders. Managers/Admins can inspect raw records.
+    // Kitchen & Pickup MUST read station-filtered data through getKitchenOrders/getPickupOrders.
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (
-        resource.data.studentId == request.auth.uid || isOperationalStaff()
+        resource.data.studentId == request.auth.uid || isManagerOrAdmin()
       );
       allow write: if false; // All mutations strictly through Cloud Functions
     }
@@ -73,7 +74,7 @@ service cloud.firestore {
     // Profile creation is restricted strictly to backend Cloud Functions (provisionStudentProfile).
     // Students can update ONLY validated profile fields (name, phone, department, year, photoUrl, preferences).
     match /students/{studentId} {
-      allow read: if isOwner(studentId) || isOperationalStaff();
+      allow read: if isOwner(studentId) || isManagerOrAdmin();
       allow create: if false; // Backend Cloud Function ONLY
       allow update: if isOwner(studentId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'phone', 'department', 'year', 'photoUrl', 'preferences', 'updatedAt'])
@@ -109,10 +110,10 @@ service cloud.firestore {
     }
 
     // ─── Payments & Financial Records (Least-Privilege Isolation) ─
-    // Students can read their own receipts. Cashiers/Kitchen CANNOT browse double-entry ledgers.
+    // Students can read their own receipts. Cashiers/Kitchen CANNOT browse payment ledger docs.
     match /payments/{paymentId} {
       allow read: if isAuthenticated() && (
-        resource.data.studentId == request.auth.uid || isOperationalStaff()
+        resource.data.studentId == request.auth.uid || isAdmin() || isSecurityAdmin()
       );
       allow write: if false;
     }
@@ -129,7 +130,7 @@ service cloud.firestore {
 
     // ─── Inventory Reservations & Audit Ledgers ─────────────────
     match /inventoryReservations/{resId} {
-      allow read: if isOperationalStaff() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
+      allow read: if isManagerOrAdmin() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
       allow write: if false;
     }
 
@@ -140,7 +141,7 @@ service cloud.firestore {
 
     match /orderEvents/{eventId} {
       allow read: if isAuthenticated() && (
-        resource.data.actorId == request.auth.uid || isOperationalStaff()
+        resource.data.actorId == request.auth.uid || isManagerOrAdmin()
       );
       allow write: if false;
     }
@@ -182,7 +183,7 @@ service cloud.firestore {
 
     // ─── Universal Users (Platform 2.0) ──────────────────────────
     match /users/{userId} {
-      allow read: if isOwner(userId) || isOperationalStaff();
+      allow read: if isOwner(userId) || isManagerOrAdmin();
       allow create: if false; // Backend Cloud Function ONLY
       allow update: if isOwner(userId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phone', 'department', 'year', 'photoURL', 'preferences', 'updatedAt'])
@@ -201,7 +202,7 @@ service cloud.firestore {
     match /userFavourites/{userId} {
       allow read: if isOwner(userId);
       allow write: if isOwner(userId)
-        && request.resource.data.keys().hasOnly(['items', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['items', 'updatedAt'])\
         && request.resource.data.items is list
         && request.resource.data.items.size() <= 50;
     }
@@ -226,19 +227,24 @@ service cloud.firestore {
       allow write: if false; // Backend Cloud Function ONLY
     }
 
-    // ─── Staff Shift PINs ─────────────────────────────────────────
+    // ─── Workstation Shift PINs ───────────────────────────────────
     match /shiftPins/{pinId} {
-      allow read: if isManagerOrAdmin();
-      allow write: if false; // Backend Cloud Function ONLY
+      allow read, write: if false; // Backend Cloud Function ONLY
     }
 
-    // ─── Public Live Queue (TV Display Zero-PII Ephemeral Projection) ───
+    // ─── TV Ephemeral Public Projection (Single Document Isolation) ─
     match /publicLiveQueue/current {
-      allow read: if true; // Public read for cafeteria wall monitors
-      allow write: if false; // Backend Cloud Function ONLY
+      allow read: if true;
+      allow write: if false;
     }
+
     match /publicLiveQueue/{otherDoc} {
-      allow read, write: if false; // Deny arbitrary collection scanning or token enumeration
+      allow read, write: if false;
+    }
+
+    // ─── Default Deny ────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

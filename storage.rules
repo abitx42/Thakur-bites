@@ -1,0 +1,40 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isManagerOrAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'manager' ||
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'security_admin'
+      );
+    }
+
+    // Faculty Verification ID Proofs (Private & Encrypted at Rest)
+    match /verification_proofs/{userId}/{fileName} {
+      allow create: if isOwner(userId)
+        && request.resource.size <= 5 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
+      allow read: if isOwner(userId) || isManagerOrAdmin();
+      allow update, delete: if isManagerOrAdmin();
+    }
+
+    // Public Menu Images
+    match /menu_images/{fileName} {
+      allow read: if true;
+      allow write: if isManagerOrAdmin();
+    }
+
+    // Default Deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

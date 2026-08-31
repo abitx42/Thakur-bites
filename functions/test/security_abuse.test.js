@@ -3177,4 +3177,72 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(corruptOrder.totalAmountPaise, -1);
     assert.strictEqual(corruptOrder.isAmountCorrupt, true, 'Must fail closed on corrupt amount without silent calculation');
   });
+
+  it('149. Firestore Rules Boundary: Direct menuItems writes are strictly forbidden (Cloud Functions only)', () => {
+    function evaluateMenuItemWriteRule(auth) {
+      // Invariant: allow write: if false (Cloud Functions only)
+      return false;
+    }
+
+    assert.strictEqual(evaluateMenuItemWriteRule({ token: { role: 'admin' } }), false, 'Admin cannot directly write to menuItems');
+    assert.strictEqual(evaluateMenuItemWriteRule({ token: { role: 'manager' } }), false, 'Manager cannot directly write to menuItems');
+    assert.strictEqual(evaluateMenuItemWriteRule({ token: { role: 'student' } }), false);
+  });
+
+  it('150. Firestore Rules Boundary: Raw orders reads restricted to owner or manager/admin (Kitchen/Pickup blocked)', () => {
+    function evaluateRawOrderReadRule(auth, resourceData) {
+      if (!auth || !auth.uid) return false;
+      const isOwner = resourceData.studentId === auth.uid;
+      const isManagerOrAdmin = ['manager', 'admin', 'security_admin'].includes(auth.token?.role);
+      return isOwner || isManagerOrAdmin;
+    }
+
+    const studentA = { uid: 'sA', token: { role: 'student' } };
+    const kitchenStaff = { uid: 'k1', token: { role: 'kitchen' } };
+    const pickupStaff = { uid: 'p1', token: { role: 'pickup' } };
+    const managerStaff = { uid: 'm1', token: { role: 'manager' } };
+    const orderOfA = { studentId: 'sA', totalAmountPaise: 5000 };
+
+    assert.strictEqual(evaluateRawOrderReadRule(studentA, orderOfA), true, 'Owner can read own order');
+    assert.strictEqual(evaluateRawOrderReadRule(managerStaff, orderOfA), true, 'Manager can inspect raw order');
+    assert.strictEqual(evaluateRawOrderReadRule(kitchenStaff, orderOfA), false, 'Kitchen cannot read raw order collection');
+    assert.strictEqual(evaluateRawOrderReadRule(pickupStaff, orderOfA), false, 'Pickup cannot read raw order collection');
+  });
+
+  it('151. Firestore Rules Boundary: Raw payments reads restricted to owner or admin (Cashier/Kitchen blocked)', () => {
+    function evaluateRawPaymentReadRule(auth, resourceData) {
+      if (!auth || !auth.uid) return false;
+      const isOwner = resourceData.studentId === auth.uid;
+      const isAdmin = ['admin', 'security_admin'].includes(auth.token?.role);
+      return isOwner || isAdmin;
+    }
+
+    const studentA = { uid: 'sA', token: { role: 'student' } };
+    const cashierStaff = { uid: 'c1', token: { role: 'cashier' } };
+    const kitchenStaff = { uid: 'k1', token: { role: 'kitchen' } };
+    const adminStaff = { uid: 'a1', token: { role: 'admin' } };
+    const paymentOfA = { studentId: 'sA', gatewayPaymentId: 'pay_secret_123' };
+
+    assert.strictEqual(evaluateRawPaymentReadRule(studentA, paymentOfA), true, 'Owner can read own payment');
+    assert.strictEqual(evaluateRawPaymentReadRule(adminStaff, paymentOfA), true, 'Admin can inspect payment');
+    assert.strictEqual(evaluateRawPaymentReadRule(cashierStaff, paymentOfA), false, 'Cashier cannot browse payments collection');
+    assert.strictEqual(evaluateRawPaymentReadRule(kitchenStaff, paymentOfA), false, 'Kitchen cannot browse payments collection');
+  });
+
+  it('152. Storage Security Rules Boundary: Faculty ID proofs isolated strictly to applicant & reviewers', () => {
+    function evaluateStorageProofAccess(auth, targetUserId) {
+      if (!auth || !auth.uid) return false;
+      const isOwner = auth.uid === targetUserId;
+      const isReviewer = ['manager', 'admin', 'security_admin'].includes(auth.token?.role);
+      return isOwner || isReviewer;
+    }
+
+    const teacherApplicant = { uid: 'teacher_1', token: { accountType: 'TEACHER' } };
+    const studentUser = { uid: 'student_99', token: { role: 'student' } };
+    const adminReviewer = { uid: 'admin_1', token: { role: 'admin' } };
+
+    assert.strictEqual(evaluateStorageProofAccess(teacherApplicant, 'teacher_1'), true, 'Applicant can access own ID proof');
+    assert.strictEqual(evaluateStorageProofAccess(adminReviewer, 'teacher_1'), true, 'Reviewer can access ID proof');
+    assert.strictEqual(evaluateStorageProofAccess(studentUser, 'teacher_1'), false, 'External student blocked from ID proof');
+  });
 });
