@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/menu_item.dart';
 import '../models/order.dart' as app;
-import '../models/student.dart';
 import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
 import '../screens/cart_screen.dart';

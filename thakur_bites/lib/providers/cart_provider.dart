@@ -22,23 +22,31 @@ class CartEntry {
 /// Stock is checked ONLY at checkout time by the backend (Firestore).
 /// First student to successfully place the order gets the stock.
 class CartProvider extends ChangeNotifier {
-  final FirestoreService _firestore = FirestoreService();
+  final FirestoreService? _firestore;
   StreamSubscription? _menuSub;
 
   /// Map of item ID → CartEntry for O(1) lookups
   final Map<String, CartEntry> _entries = {};
 
-  CartProvider() {
-    _initLiveStockListener();
+  CartProvider({FirestoreService? firestoreService, bool listenToLiveStock = true})
+      : _firestore = firestoreService {
+    if (listenToLiveStock) {
+      _initLiveStockListener();
+    }
   }
 
   /// Listen to live catalog changes so we know when items go completely unavailable
   void _initLiveStockListener() {
-    _menuSub = _firestore.allMenuItemsStream().listen((catalogItems) {
-      syncAvailability(catalogItems);
-    }, onError: (e) {
-      debugPrint('Error syncing cart stock: $e');
-    });
+    try {
+      final service = _firestore ?? FirestoreService();
+      _menuSub = service.allMenuItemsStream().listen((catalogItems) {
+        syncAvailability(catalogItems);
+      }, onError: (e) {
+        debugPrint('Error syncing cart stock: $e');
+      });
+    } catch (e) {
+      debugPrint('Live stock listener skipped: $e');
+    }
   }
 
   @override

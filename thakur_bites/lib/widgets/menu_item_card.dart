@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+
 import '../models/menu_item.dart';
 import '../providers/cart_provider.dart';
 import '../theme/app_theme.dart';
@@ -27,8 +28,8 @@ class MenuItemCard extends StatelessWidget {
     final iconBg = !inStock
         ? AppColors.line
         : (isCooked
-            ? AppColors.mustardInk.withOpacity(0.14)
-            : AppColors.greenInk.withOpacity(0.14));
+              ? AppColors.mustardInk.withOpacity(0.14)
+              : AppColors.greenInk.withOpacity(0.14));
 
     // Badge colors based on availability level
     Color badgeBg;
@@ -64,8 +65,10 @@ class MenuItemCard extends StatelessWidget {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: badgeBg,
                       borderRadius: BorderRadius.circular(999),
@@ -83,8 +86,8 @@ class MenuItemCard extends StatelessWidget {
                               color: !inStock
                                   ? AppColors.red
                                   : level == AvailabilityLevel.limited
-                                      ? const Color(0xFFD97706)
-                                      : const Color(0xFF16A34A),
+                                  ? const Color(0xFFD97706)
+                                  : const Color(0xFF16A34A),
                             ),
                           ),
                           const SizedBox(width: 4),
@@ -103,22 +106,7 @@ class MenuItemCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
 
-                // Icon circle
-                Container(
-                  width: 58,
-                  height: 58,
-                  decoration: BoxDecoration(
-                    color: iconBg,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Center(
-                    child: Icon(
-                      _iconForKey(item.iconKey),
-                      size: 26,
-                      color: accentInk,
-                    ),
-                  ),
-                ),
+                _buildMenuVisual(iconBg, accentInk),
                 const SizedBox(height: 10),
 
                 // Item name
@@ -160,14 +148,21 @@ class MenuItemCard extends StatelessWidget {
                   return Align(
                     alignment: Alignment.centerRight,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: const Color(0xFFFEE2E2),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
                         'Sold out',
-                        style: AppFonts.mono(fontSize: 10.5, fontWeight: FontWeight.w700, color: AppColors.red),
+                        style: AppFonts.mono(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.red,
+                        ),
                       ),
                     ),
                   );
@@ -183,6 +178,33 @@ class MenuItemCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMenuVisual(Color iconBg, Color accentInk) {
+    if (item.imageUrl.startsWith('assets/')) {
+      return SizedBox(
+        width: 88,
+        height: 68,
+        child: Image.asset(
+          item.imageUrl,
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => _buildIconFallback(iconBg, accentInk),
+        ),
+      );
+    }
+
+    return _buildIconFallback(iconBg, accentInk);
+  }
+
+  Widget _buildIconFallback(Color iconBg, Color accentInk) {
+    return Container(
+      width: 58,
+      height: 58,
+      decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
+      child: Center(
+        child: Icon(_iconForKey(item.iconKey), size: 26, color: accentInk),
       ),
     );
   }
@@ -240,17 +262,22 @@ class MenuItemCard extends StatelessWidget {
                 width: 44,
                 height: 44,
                 child: Center(
-                  child: Text('–',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500)),
+                  child: Text(
+                    '–',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                 ),
               ),
             ),
             // Qty
-            Text('$qty',
-                style: AppFonts.mono(fontSize: 12.5, color: Colors.white)),
+            Text(
+              '$qty',
+              style: AppFonts.mono(fontSize: 12.5, color: Colors.white),
+            ),
             // Plus — no stock limit on cart, student can add freely
             GestureDetector(
               onTap: () {
@@ -261,11 +288,14 @@ class MenuItemCard extends StatelessWidget {
                 width: 44,
                 height: 44,
                 child: Center(
-                  child: Text('+',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500)),
+                  child: Text(
+                    '+',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                 ),
               ),
             ),

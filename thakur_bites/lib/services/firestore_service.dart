@@ -1,6 +1,8 @@
 import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+
 import '../models/menu_item.dart';
 import '../models/order.dart' as app;
 import '../models/student.dart';
@@ -32,22 +34,26 @@ class FirestoreService {
     return _menuItems
         .where('available', isEqualTo: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => MenuItem.fromFirestore(doc.id, doc.data()))
-            .toList());
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => MenuItem.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
   }
 
   /// Real-time stream of ALL menu items including out-of-stock items (for cart live stock sync).
   Stream<List<MenuItem>> allMenuItemsStream() {
-    return _menuItems
-        .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => MenuItem.fromFirestore(doc.id, doc.data()))
-            .toList());
+    return _menuItems.snapshots().map(
+      (snapshot) => snapshot.docs
+          .map((doc) => MenuItem.fromFirestore(doc.id, doc.data()))
+          .toList(),
+    );
   }
 
   /// Pre-checkout quick validation (optimistic check).
-  Future<Map<String, int>> verifyItemsStockQuantity(List<CartEntry> entries) async {
+  Future<Map<String, int>> verifyItemsStockQuantity(
+    List<CartEntry> entries,
+  ) async {
     final Map<String, int> stockIssues = {};
 
     for (final entry in entries) {
@@ -103,14 +109,15 @@ class FirestoreService {
         iconKey: 'dosa',
       ),
       MenuItem(
-        id: 'roti_bhaji',
-        name: 'Roti-Bhaji',
-        price: 40,
+        id: 'pav_bhaji',
+        name: 'Pav Bhaji',
+        price: 45,
         category: 'rotibhaji',
         type: 'cooked',
-        prepMinutes: 8,
+        prepMinutes: 7,
         stockCount: 100,
-        iconKey: 'roti',
+        imageUrl: 'assets/menu/pav_bhaji.png',
+        iconKey: 'pav_bhaji',
       ),
       MenuItem(
         id: 'masala_chai',
@@ -142,6 +149,7 @@ class FirestoreService {
         prepMinutes: 0,
         stockCount: 15,
         batchDate: '31-Aug',
+        imageUrl: 'assets/menu/chocolate.png',
         iconKey: 'choc',
       ),
       MenuItem(
@@ -176,7 +184,8 @@ class FirestoreService {
     String? idempotencyKey,
   }) async {
     final now = DateTime.now();
-    final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final dateStr =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     final sequenceDocRef = _db.collection('counters').doc('orders_$dateStr');
     final newOrderRef = _orders.doc();
 
@@ -232,7 +241,11 @@ class FirestoreService {
         }
 
         if (type == 'instant' && entry.qty > currentStock) {
-          throw InsufficientStockException(entry.item.id, entry.item.name, currentStock);
+          throw InsufficientStockException(
+            entry.item.id,
+            entry.item.name,
+            currentStock,
+          );
         }
       }
 
@@ -252,12 +265,16 @@ class FirestoreService {
       final pinCode = '$pin';
 
       final estimatedMins = cart.maxPrepMinutes;
-      final orderItems = cart.entries.map((e) => app.OrderItem(
-            menuItemId: e.item.id,
-            name: e.item.name,
-            quantity: e.qty,
-            price: e.item.price,
-          )).toList();
+      final orderItems = cart.entries
+          .map(
+            (e) => app.OrderItem(
+              menuItemId: e.item.id,
+              name: e.item.name,
+              quantity: e.qty,
+              price: e.item.price,
+            ),
+          )
+          .toList();
 
       final order = app.Order(
         id: newOrderRef.id,
@@ -295,15 +312,11 @@ class FirestoreService {
       }
 
       // b. Update daily sequence counter
-      transaction.set(
-        sequenceDocRef,
-        {
-          'date': dateStr,
-          'count': nextSequence,
-          'lastUpdatedAt': Timestamp.now(),
-        },
-        SetOptions(merge: true),
-      );
+      transaction.set(sequenceDocRef, {
+        'date': dateStr,
+        'count': nextSequence,
+        'lastUpdatedAt': Timestamp.now(),
+      }, SetOptions(merge: true));
 
       // c. Create order document
       final orderMap = order.toFirestore();
@@ -314,10 +327,9 @@ class FirestoreService {
 
       // d. Increment student order count
       if (studentDocRef != null) {
-        final currentTotal = (studentSnap?.data()?['totalOrders'] as num?)?.toInt() ?? 0;
-        transaction.update(studentDocRef, {
-          'totalOrders': currentTotal + 1,
-        });
+        final currentTotal =
+            (studentSnap?.data()?['totalOrders'] as num?)?.toInt() ?? 0;
+        transaction.update(studentDocRef, {'totalOrders': currentTotal + 1});
       }
 
       return order;
@@ -337,9 +349,11 @@ class FirestoreService {
     return _orders
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => app.Order.fromFirestore(doc.id, doc.data()))
-            .toList());
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => app.Order.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
   }
 
   /// Get orders for a specific student (most recent first)
@@ -348,8 +362,10 @@ class FirestoreService {
         .where('studentId', isEqualTo: studentId)
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => app.Order.fromFirestore(doc.id, doc.data()))
-            .toList());
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => app.Order.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
   }
 }

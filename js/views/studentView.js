@@ -133,6 +133,7 @@ export function renderStudentView(container) {
                   <span class="tier-badge ${tierBadgeClass}">${tierText}</span>
                 </div>
 
+                ${item.imageUrl ? `<img class="item-photo" src="${item.imageUrl}" alt="${item.name}" loading="lazy" />` : ''}
                 <h3 class="item-title">${item.name}</h3>
                 <p class="item-desc">${item.description}</p>
 

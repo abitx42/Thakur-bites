@@ -1,9 +1,9 @@
-/// Thakur Bites — Menu Item Model
-/// Maps to the `menuItems` Firestore collection.
-///
-/// Stock architecture: the backend (Firestore) is the single source of truth.
-/// Students see availability indicators (🟢/🟡/🔴), never exact stock counts.
-/// Staff sees exact counts in the Staff Hub.
+// Thakur Bites — Menu Item Model
+// Maps to the `menuItems` Firestore collection.
+//
+// Stock architecture: the backend (Firestore) is the single source of truth.
+// Students see availability indicators (🟢/🟡/🔴), never exact stock counts.
+// Staff sees exact counts in the Staff Hub.
 
 /// Availability level shown to students instead of exact numbers.
 enum AvailabilityLevel { available, limited, soldOut }

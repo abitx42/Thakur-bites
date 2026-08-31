@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '../models/menu_item.dart';
 import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
 import '../services/firestore_service.dart';
@@ -371,6 +370,7 @@ class _CartSummaryState extends State<_CartSummary> {
   Future<void> _handleConfirmAndPay() async {
     if (_isProcessing) return;
     final cart = widget.cart;
+    final authProvider = context.read<AuthProvider>();
 
     // 1. If cart has items that went completely unavailable, prompt to clean
     if (cart.hasOutOfStockItems) {
@@ -407,11 +407,11 @@ class _CartSummaryState extends State<_CartSummary> {
       // 3. ATOMIC STOCK RESERVATION — Place order & decrement inventory
       //    in one operation. This reserves the stock.
       // ──────────────────────────────────────────────────────────────
-      final student = context.read<AuthProvider>().currentStudent;
+      final student = authProvider.currentStudent;
       final order = await _firestore.placeOrder(cart, student: student);
 
       if (student != null) {
-        context.read<AuthProvider>().incrementOrderCount();
+        authProvider.incrementOrderCount();
       }
 
       // 4. Clear cart & show confirmation ticket

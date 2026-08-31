@@ -440,7 +440,21 @@ export const MENU_ITEMS = [
     rating: 4.9,
     isVeg: true,
     isPopular: true,
+    imageUrl: 'assets/menu/pav_bhaji.png',
     description: 'Mashed vegetable curry cooked with Mumbai spices and excessive Amul butter, served with 2 buttery toasted ladi pavs & lemon.'
+  },
+  {
+    id: 'chocolate_bar',
+    name: 'Milk Chocolate Bar',
+    category: 'chaat_snacks',
+    tier: 'tier1_instant',
+    station: 'snack_counter',
+    basePrice: 15,
+    prepTime: 0,
+    rating: 4.6,
+    isVeg: true,
+    imageUrl: 'assets/menu/chocolate.png',
+    description: 'A simple milk chocolate bar for a quick sweet bite.'
   },
   {
     id: 'extra_pav_pair',

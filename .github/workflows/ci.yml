@@ -1,0 +1,64 @@
+name: Thakur Bites CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  flutter-checks:
+    name: Flutter Analyzer & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Install Flutter Dependencies
+        working-directory: thakur_bites
+        run: flutter pub get
+
+      - name: Flutter Format Check
+        working-directory: thakur_bites
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Flutter Analyze
+        working-directory: thakur_bites
+        run: flutter analyze
+
+      - name: Run Flutter Tests
+        working-directory: thakur_bites
+        run: flutter test --coverage
+
+  functions-checks:
+    name: Backend Cloud Functions Lint & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install Functions Dependencies
+        working-directory: functions
+        run: npm ci || npm install
+
+      - name: Run Functions Build / Typecheck
+        working-directory: functions
+        run: npm run build --if-present
+
+      - name: Run Functions Unit Tests
+        working-directory: functions
+        run: npm test --if-present
