@@ -39,7 +39,7 @@ class CategoryTabs extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(vertical: 6),
         itemCount: menuCategories.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (context, index) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           final cat = menuCategories[index];
           final isActive = cat.id == activeCategory;

@@ -28,8 +28,8 @@ class MenuItemCard extends StatelessWidget {
     final iconBg = !inStock
         ? AppColors.line
         : (isCooked
-              ? AppColors.mustardInk.withOpacity(0.14)
-              : AppColors.greenInk.withOpacity(0.14));
+              ? AppColors.mustardInk.withAlpha(36)
+              : AppColors.greenInk.withAlpha(36));
 
     // Badge colors based on availability level
     Color badgeBg;
@@ -42,8 +42,8 @@ class MenuItemCard extends StatelessWidget {
       badgeTextColor = const Color(0xFFB45309);
     } else {
       badgeBg = isCooked
-          ? AppColors.mustardInk.withOpacity(0.12)
-          : AppColors.greenInk.withOpacity(0.12);
+          ? AppColors.mustardInk.withAlpha(30)
+          : AppColors.greenInk.withAlpha(30);
       badgeTextColor = accentInk;
     }
 
@@ -128,7 +128,7 @@ class MenuItemCard extends StatelessWidget {
                   '₹${item.price.toInt()}',
                   style: AppFonts.mono(
                     fontSize: 13,
-                    color: accentInk.withOpacity(0.85),
+                    color: accentInk.withAlpha(217),
                   ),
                 ),
               ],
@@ -190,7 +190,7 @@ class MenuItemCard extends StatelessWidget {
         child: Image.asset(
           item.imageUrl,
           fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => _buildIconFallback(iconBg, accentInk),
+          errorBuilder: (context, error, stackTrace) => _buildIconFallback(iconBg, accentInk),
         ),
       );
     }

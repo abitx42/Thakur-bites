@@ -202,7 +202,7 @@ class _MenuScreenState extends State<MenuScreen> {
                         decoration: BoxDecoration(
                           color: AppColors.mustardSoft,
                           shape: BoxShape.circle,
-                          border: Border.all(color: AppColors.mustardInk.withOpacity(0.3), width: 1.5),
+                          border: Border.all(color: AppColors.mustardInk.withAlpha(76), width: 1.5),
                         ),
                         child: Center(
                           child: Text(
@@ -358,7 +358,7 @@ class _MenuScreenState extends State<MenuScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.restaurant_menu_rounded,
-              size: 48, color: AppColors.inkSoft.withOpacity(0.5)),
+              size: 48, color: AppColors.inkSoft.withAlpha(128)),
           const SizedBox(height: 12),
           Text('No items on the menu right now',
               style: AppFonts.body(fontSize: 14, color: AppColors.inkSoft)),
@@ -385,7 +385,7 @@ class _MenuScreenState extends State<MenuScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.search_off_rounded,
-              size: 40, color: AppColors.inkSoft.withOpacity(0.5)),
+              size: 40, color: AppColors.inkSoft.withAlpha(128)),
           const SizedBox(height: 8),
           Text('Nothing here',
               style: AppFonts.body(fontSize: 14, color: AppColors.inkSoft)),
@@ -488,7 +488,7 @@ class _MenuScreenState extends State<MenuScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(Icons.receipt_long_rounded,
-                            size: 56, color: AppColors.inkSoft.withOpacity(0.4)),
+                            size: 56, color: AppColors.inkSoft.withAlpha(102)),
                         const SizedBox(height: 16),
                         Text('No orders yet',
                             style: AppFonts.body(
@@ -618,7 +618,7 @@ class _MenuScreenState extends State<MenuScreen> {
                       decoration: BoxDecoration(
                         color: AppColors.mustardSoft,
                         shape: BoxShape.circle,
-                        border: Border.all(color: AppColors.mustardInk.withOpacity(0.3), width: 1.5),
+                        border: Border.all(color: AppColors.mustardInk.withAlpha(76), width: 1.5),
                       ),
                       child: Center(
                         child: Text(
@@ -959,7 +959,7 @@ class _OrderCard extends StatelessWidget {
       statusBg = AppColors.surface2;
     } else {
       statusColor = AppColors.red;
-      statusBg = AppColors.red.withOpacity(0.12);
+      statusBg = AppColors.red.withAlpha(30);
     }
 
     final itemsSummary =

@@ -142,7 +142,7 @@ class _CartScreenState extends State<CartScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.shopping_cart_outlined,
-                size: 56, color: AppColors.inkSoft.withOpacity(0.4)),
+                size: 56, color: AppColors.inkSoft.withAlpha(102)),
             const SizedBox(height: 16),
             Text(
               'Your cart is empty',
