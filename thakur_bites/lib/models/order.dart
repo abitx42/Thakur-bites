@@ -8,7 +8,9 @@ class Order {
   final String id;
   final String tokenNumber; // e.g. "#142"
   final String pinCode; // 4-digit pickup verification
-  final String? studentId; // Firebase Auth UID (null until Phase 7)
+  final String? studentId; // Firebase Auth UID
+  final String? studentName;
+  final String? studentRoll;
   final String status; // 'placed' | 'preparing' | 'ready' | 'collected'
   final DateTime createdAt;
   final DateTime? readyAt;
@@ -21,6 +23,8 @@ class Order {
     required this.tokenNumber,
     required this.pinCode,
     this.studentId,
+    this.studentName,
+    this.studentRoll,
     required this.status,
     required this.createdAt,
     this.readyAt,
@@ -62,6 +66,8 @@ class Order {
       tokenNumber: data['tokenNumber'] ?? '',
       pinCode: data['pinCode'] ?? '',
       studentId: data['studentId'],
+      studentName: data['studentName'],
+      studentRoll: data['studentRoll'],
       status: data['status'] ?? 'placed',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       readyAt: (data['readyAt'] as Timestamp?)?.toDate(),
@@ -79,6 +85,8 @@ class Order {
       'tokenNumber': tokenNumber,
       'pinCode': pinCode,
       'studentId': studentId,
+      'studentName': studentName,
+      'studentRoll': studentRoll,
       'status': status,
       'createdAt': Timestamp.fromDate(createdAt),
       'readyAt': readyAt != null ? Timestamp.fromDate(readyAt!) : null,

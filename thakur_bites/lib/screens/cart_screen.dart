@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
@@ -280,7 +281,12 @@ class _CartSummaryState extends State<_CartSummary> {
     try {
       HapticFeedback.mediumImpact();
       final cart = widget.cart;
-      final order = await _firestore.placeOrder(cart);
+      final student = context.read<AuthProvider>().currentStudent;
+      final order = await _firestore.placeOrder(cart, student: student);
+
+      if (student != null) {
+        context.read<AuthProvider>().incrementOrderCount();
+      }
 
       // Clear the cart
       cart.clear();

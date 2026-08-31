@@ -1,7 +1,9 @@
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import '../models/menu_item.dart';
 import '../models/order.dart' as app;
+import '../models/student.dart';
 import '../providers/cart_provider.dart';
 
 /// Firestore service for Thakur Bites.
@@ -104,7 +106,7 @@ class FirestoreService {
 
   /// Place a new order from the current cart.
   /// Returns the created Order object.
-  Future<app.Order> placeOrder(CartProvider cart) async {
+  Future<app.Order> placeOrder(CartProvider cart, {Student? student}) async {
     final rng = Random();
 
     // Generate token number (#100–#999)
@@ -130,6 +132,9 @@ class FirestoreService {
       id: '', // Firestore will generate
       tokenNumber: tokenNumber,
       pinCode: pinCode,
+      studentId: student?.uid,
+      studentName: student?.name,
+      studentRoll: student?.rollNo,
       status: 'placed',
       createdAt: now,
       readyAt: now.add(Duration(minutes: estimatedMins)),
@@ -141,11 +146,25 @@ class FirestoreService {
     // Write to Firestore
     final docRef = await _orders.add(order.toFirestore());
 
+    // If student is logged in, increment their order count
+    if (student != null) {
+      try {
+        await _db.collection('students').doc(student.uid).update({
+          'totalOrders': FieldValue.increment(1),
+        });
+      } catch (e) {
+        debugPrint('Could not update student totalOrders: $e');
+      }
+    }
+
     // Return with the generated ID
     return app.Order(
       id: docRef.id,
       tokenNumber: order.tokenNumber,
       pinCode: order.pinCode,
+      studentId: order.studentId,
+      studentName: order.studentName,
+      studentRoll: order.studentRoll,
       status: order.status,
       createdAt: order.createdAt,
       readyAt: order.readyAt,
@@ -166,6 +185,17 @@ class FirestoreService {
   /// Get all orders (most recent first)
   Stream<List<app.Order>> ordersStream() {
     return _orders
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => app.Order.fromFirestore(doc.id, doc.data()))
+            .toList());
+  }
+
+  /// Get orders for a specific student (most recent first)
+  Stream<List<app.Order>> studentOrdersStream(String studentId) {
+    return _orders
+        .where('studentId', isEqualTo: studentId)
         .orderBy('createdAt', descending: true)
         .snapshots()
         .map((snapshot) => snapshot.docs
