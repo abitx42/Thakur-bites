@@ -184,27 +184,99 @@ export const simulatePermissionCheck = onCall<SimulatePermissionRequest>(async (
   };
 });
 
+export type EmergencyActionType = 'FREEZE_FINANCIALS' | 'KILL_SWITCH' | 'UNFREEZE_PLATFORM';
+
+export interface RequestStepUpChallengeData {
+  action: EmergencyActionType;
+  reason: string;
+}
+
+export interface RequestStepUpChallengeResponse {
+  challengeId: string;
+  challengeNonce: string;
+  expiresAt: string;
+  action: EmergencyActionType;
+}
+
 export interface EmergencyActionRequest {
-  action: 'FREEZE_FINANCIALS' | 'KILL_SWITCH' | 'UNFREEZE_PLATFORM';
-  stepUpToken: string;
+  action: EmergencyActionType;
+  challengeId: string;
+  challengeNonce: string;
   reason: string;
 }
 
 /**
- * Pure function to verify step-up confirmation token with constant-time equality check.
+ * Pure function to verify challenge nonce against stored hash with constant-time equality.
  */
-export function verifyStepUpAuthentication(stepUpToken?: string, requiredToken = 'STEP_UP_CONFIRM_EMERGENCY'): boolean {
-  if (!stepUpToken || typeof stepUpToken !== 'string') return false;
-  const tokenBuf = Buffer.from(stepUpToken);
-  const requiredBuf = Buffer.from(requiredToken);
-  if (tokenBuf.length !== requiredBuf.length) return false;
-  return crypto.timingSafeEqual(tokenBuf, requiredBuf);
+export function verifyChallengeNonceConstantTime(incomingNonce: string, storedHash: string): boolean {
+  if (!incomingNonce || !storedHash || typeof incomingNonce !== 'string' || typeof storedHash !== 'string') {
+    return false;
+  }
+  const computedHash = crypto.createHash('sha256').update(incomingNonce.trim()).digest('hex');
+  const bufA = Buffer.from(computedHash, 'hex');
+  const bufB = Buffer.from(storedHash, 'hex');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 /**
- * Platform 2.0 — Emergency Operational Action with Step-Up Authentication
+ * Platform 2.0 — Request Ephemeral Step-Up Authentication Challenge
  * 
- * Enforces MFA / Step-up token requirement for high-impact destructive controls.
+ * Issues a 60-second, single-use 32-byte cryptographic nonce for Security Admins.
+ */
+export const requestEmergencyStepUpChallenge = onCall<RequestStepUpChallengeData>(async (request): Promise<RequestStepUpChallengeResponse> => {
+  enforceAppCheck(request);
+
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'Security Admin authentication required.');
+  }
+
+  const callerRole = (request.auth.token.role as string | undefined) || '';
+  if (callerRole !== 'security_admin') {
+    throw new HttpsError('permission-denied', 'Separation of Duties: Step-up challenges restricted strictly to security_admin.');
+  }
+
+  const { action, reason } = request.data || {};
+  if (!action || !reason || !['FREEZE_FINANCIALS', 'KILL_SWITCH', 'UNFREEZE_PLATFORM'].includes(action)) {
+    throw new HttpsError('invalid-argument', 'Valid action and operational justification reason are required.');
+  }
+
+  // Generate 32-byte CSPRNG nonce
+  const rawNonce = crypto.randomBytes(32).toString('hex');
+  const nonceHash = crypto.createHash('sha256').update(rawNonce).digest('hex');
+  const challengeId = `CHAL-${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
+  const expiresAtDate = new Date(Date.now() + 60 * 1000); // 60-second lifetime
+
+  await db.collection('stepUpSessions').doc(challengeId).set({
+    challengeId,
+    actorUid: request.auth.uid,
+    action,
+    reason,
+    nonceHash,
+    used: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    expiresAt: admin.firestore.Timestamp.fromDate(expiresAtDate),
+  });
+
+  await logSecurityEvent({
+    eventType: 'STEP_UP_CHALLENGE_ISSUED',
+    severity: 'MEDIUM',
+    actorUid: request.auth.uid,
+    details: { challengeId, action, reason },
+  });
+
+  return {
+    challengeId,
+    challengeNonce: rawNonce,
+    expiresAt: expiresAtDate.toISOString(),
+    action,
+  };
+});
+
+/**
+ * Platform 2.0 — Execute Emergency Operational Action with Server-Issued Step-Up Verification
+ * 
+ * Atomically consumes the single-use challenge and transactionally modifies system operational state.
  */
 export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(async (request) => {
   enforceAppCheck(request);
@@ -213,42 +285,132 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
     throw new HttpsError('unauthenticated', 'Security Admin authentication required.');
   }
 
+  const authUid = request.auth.uid;
   const callerRole = (request.auth.token.role as string | undefined) || '';
-  if (callerRole !== 'security_admin' && callerRole !== 'admin') {
-    throw new HttpsError('permission-denied', 'Only security_admin or admin can execute emergency actions.');
+  if (callerRole !== 'security_admin') {
+    throw new HttpsError('permission-denied', 'Separation of Duties: Emergency actions restricted strictly to security_admin.');
   }
 
-  const { action, stepUpToken, reason } = request.data || {};
-  if (!action || !reason) {
-    throw new HttpsError('invalid-argument', 'Action and justification reason are required.');
+  const { action, challengeId, challengeNonce, reason } = request.data || {};
+  if (!action || !challengeId || !challengeNonce || !reason) {
+    throw new HttpsError('invalid-argument', 'Action, challengeId, challengeNonce, and reason are required.');
   }
 
-  const isStepUpValid = verifyStepUpAuthentication(stepUpToken, `STEP_UP_CONFIRM_${action}`);
-  if (!isStepUpValid) {
-    await logSecurityEvent({
-      eventType: 'STEP_UP_AUTH_FAILED',
-      severity: 'HIGH',
-      actorUid: request.auth.uid,
-      details: { action, reason },
+  const sessionRef = db.collection('stepUpSessions').doc(challengeId);
+  const systemConfigRef = db.collection('systemConfig').doc('status');
+  const publicStatusRef = db.collection('publicSystemStatus').doc('current');
+
+  let newMode: string;
+
+  await db.runTransaction(async (transaction) => {
+    const sessionSnap = await transaction.get(sessionRef);
+    if (!sessionSnap.exists) {
+      throw new HttpsError('not-found', 'Step-up challenge session not found.');
+    }
+
+    const sessionData = sessionSnap.data()!;
+    if (sessionData.used === true) {
+      throw new HttpsError('failed-precondition', 'Step-up challenge has already been consumed (Replay detected).');
+    }
+
+    if (sessionData.actorUid !== authUid) {
+      throw new HttpsError('permission-denied', 'Challenge session belongs to a different security administrator.');
+    }
+
+    if (sessionData.action !== action) {
+      throw new HttpsError('invalid-argument', 'Challenge was issued for a different action.');
+    }
+
+    const expiresAtMs = sessionData.expiresAt ? sessionData.expiresAt.toMillis() : 0;
+    if (Date.now() > expiresAtMs) {
+      throw new HttpsError('deadline-exceeded', 'Step-up challenge has expired. Request a fresh challenge.');
+    }
+
+    const isNonceValid = verifyChallengeNonceConstantTime(challengeNonce, sessionData.nonceHash);
+    if (!isNonceValid) {
+      throw new HttpsError('permission-denied', 'Invalid challenge nonce. Authentication failed.');
+    }
+
+    // Atomically consume challenge
+    transaction.update(sessionRef, {
+      used: true,
+      consumedAt: admin.firestore.FieldValue.serverTimestamp(),
+      consumedBy: authUid,
     });
-    throw new HttpsError(
-      'failed-precondition',
-      'Step-up confirmation token invalid or missing. Operation rejected.'
-    );
-  }
+
+    // Transactionally update operational state
+    if (action === 'KILL_SWITCH') {
+      newMode = 'EMERGENCY_FREEZE';
+      transaction.set(systemConfigRef, {
+        mode: 'EMERGENCY_FREEZE',
+        killSwitchActive: true,
+        financialOperationsFrozen: true,
+        reason,
+        updatedBy: authUid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      transaction.set(publicStatusRef, {
+        mode: 'EMERGENCY_FREEZE',
+        operational: false,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    } else if (action === 'FREEZE_FINANCIALS') {
+      newMode = 'FINANCIAL_FREEZE';
+      transaction.set(systemConfigRef, {
+        mode: 'FINANCIAL_FREEZE',
+        killSwitchActive: false,
+        financialOperationsFrozen: true,
+        reason,
+        updatedBy: authUid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      transaction.set(publicStatusRef, {
+        mode: 'FINANCIAL_FREEZE',
+        operational: false,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    } else {
+      // UNFREEZE_PLATFORM
+      newMode = 'NORMAL';
+      transaction.set(systemConfigRef, {
+        mode: 'NORMAL',
+        killSwitchActive: false,
+        financialOperationsFrozen: false,
+        reason,
+        updatedBy: authUid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      transaction.set(publicStatusRef, {
+        mode: 'NORMAL',
+        operational: true,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+  });
 
   await logSecurityEvent({
     eventType: 'EMERGENCY_OPERATIONAL_ACTION_EXECUTED',
     severity: 'CRITICAL',
-    actorUid: request.auth.uid,
-    details: { action, reason, executedAt: new Date().toISOString() },
+    actorUid: authUid,
+    details: {
+      action,
+      newMode: newMode!,
+      challengeId,
+      reason,
+      executedAt: new Date().toISOString(),
+    },
   });
 
   return {
     success: true,
     actionExecuted: action,
-    status: 'COMPLETED_UNDER_STEP_UP_AUTH',
+    operationalMode: newMode!,
+    status: 'COMPLETED_UNDER_EPHEMERAL_STEP_UP_AUTH',
     executedAt: new Date().toISOString(),
   };
 });
+
 

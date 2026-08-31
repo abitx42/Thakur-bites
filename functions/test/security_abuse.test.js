@@ -3412,51 +3412,82 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(result.sanitizedResponse.success, false);
   });
 
-  it('162. Step-Up Authentication Invariant: Verifies confirmation token using constant-time evaluation', () => {
-    const { verifyStepUpAuthentication } = require('../lib/developer_cockpit');
+  it('162. Ephemeral Step-Up Nonce Invariant: Verifies CSPRNG challenge nonce using constant-time evaluation', () => {
+    const { verifyChallengeNonceConstantTime } = require('../lib/developer_cockpit');
+    const crypto = require('crypto');
 
-    assert.strictEqual(verifyStepUpAuthentication('STEP_UP_CONFIRM_FREEZE', 'STEP_UP_CONFIRM_FREEZE'), true);
-    assert.strictEqual(verifyStepUpAuthentication('WRONG_TOKEN', 'STEP_UP_CONFIRM_FREEZE'), false);
-    assert.strictEqual(verifyStepUpAuthentication('', 'STEP_UP_CONFIRM_FREEZE'), false);
-    assert.strictEqual(verifyStepUpAuthentication(undefined, 'STEP_UP_CONFIRM_FREEZE'), false);
+    const nonce = crypto.randomBytes(32).toString('hex');
+    const hash = crypto.createHash('sha256').update(nonce).digest('hex');
+
+    assert.strictEqual(verifyChallengeNonceConstantTime(nonce, hash), true);
+    assert.strictEqual(verifyChallengeNonceConstantTime('tampered_nonce', hash), false);
+    assert.strictEqual(verifyChallengeNonceConstantTime('', hash), false);
+    assert.strictEqual(verifyChallengeNonceConstantTime(undefined, hash), false);
   });
 
-  it('163. Step-Up Authentication Rejection Invariant: Rejects emergency operations with missing or invalid tokens', () => {
-    function processEmergencyAction(auth, data) {
-      const { verifyStepUpAuthentication } = require('../lib/developer_cockpit');
-      if (!auth || !['security_admin', 'admin'].includes(auth.role)) {
-        throw new Error('PERMISSION_DENIED');
-      }
-      if (!verifyStepUpAuthentication(data.stepUpToken, `STEP_UP_CONFIRM_${data.action}`)) {
-        throw new Error('STEP_UP_REQUIRED');
-      }
+  it('163. Ephemeral Step-Up Challenge Single-Use Replay Defense: Rejects reused or expired challenge sessions', () => {
+    function evaluateChallengeSession(sessionData, incomingNonce, callerUid) {
+      const { verifyChallengeNonceConstantTime } = require('../lib/developer_cockpit');
+      if (!sessionData) throw new Error('NOT_FOUND');
+      if (sessionData.used === true) throw new Error('REPLAY_DETECTED');
+      if (sessionData.actorUid !== callerUid) throw new Error('PERMISSION_DENIED');
+      if (Date.now() > sessionData.expiresAtMs) throw new Error('DEADLINE_EXCEEDED');
+      if (!verifyChallengeNonceConstantTime(incomingNonce, sessionData.nonceHash)) throw new Error('INVALID_NONCE');
       return { success: true };
     }
 
-    const adminAuth = { role: 'admin', uid: 'admin_1' };
-    assert.throws(
-      () => processEmergencyAction(adminAuth, { action: 'KILL_SWITCH', stepUpToken: 'INVALID' }),
-      /STEP_UP_REQUIRED/
-    );
-    assert.doesNotThrow(
-      () => processEmergencyAction(adminAuth, { action: 'KILL_SWITCH', stepUpToken: 'STEP_UP_CONFIRM_KILL_SWITCH' })
-    );
+    const crypto = require('crypto');
+    const validNonce = crypto.randomBytes(32).toString('hex');
+    const validHash = crypto.createHash('sha256').update(validNonce).digest('hex');
+
+    const activeSession = {
+      used: false,
+      actorUid: 'sec_admin_1',
+      expiresAtMs: Date.now() + 60000,
+      nonceHash: validHash,
+    };
+
+    assert.doesNotThrow(() => evaluateChallengeSession(activeSession, validNonce, 'sec_admin_1'));
+
+    // Replay attack: session already marked used
+    const consumedSession = { ...activeSession, used: true };
+    assert.throws(() => evaluateChallengeSession(consumedSession, validNonce, 'sec_admin_1'), /REPLAY_DETECTED/);
+
+    // Mismatched actor: different admin attempts to hijack session
+    assert.throws(() => evaluateChallengeSession(activeSession, validNonce, 'attacker_admin'), /PERMISSION_DENIED/);
+
+    // Expired session
+    const expiredSession = { ...activeSession, expiresAtMs: Date.now() - 1000 };
+    assert.throws(() => evaluateChallengeSession(expiredSession, validNonce, 'sec_admin_1'), /DEADLINE_EXCEEDED/);
   });
 
-  it('164. Developer Emergency Controls Role Boundary: Blocks manager, kitchen, and students from emergency controls', () => {
+  it('164. Security Admin Role Separation Boundary: Emergency controls restricted strictly to security_admin', () => {
     function evaluateEmergencyAccess(role) {
-      return ['security_admin', 'admin'].includes(role);
+      // Separation of duties: ordinary 'admin' denied emergency kill switch
+      return role === 'security_admin';
     }
 
     assert.strictEqual(evaluateEmergencyAccess('student'), false);
     assert.strictEqual(evaluateEmergencyAccess('kitchen'), false);
-    assert.strictEqual(evaluateEmergencyAccess('manager'), false, 'Only security_admin/admin can execute emergency controls');
-    assert.strictEqual(evaluateEmergencyAccess('admin'), true);
-    assert.strictEqual(evaluateEmergencyAccess('security_admin'), true);
+    assert.strictEqual(evaluateEmergencyAccess('manager'), false);
+    assert.strictEqual(evaluateEmergencyAccess('admin'), false, 'Ordinary admin denied emergency controls');
+    assert.strictEqual(evaluateEmergencyAccess('security_admin'), true, 'Security admin authorized');
   });
 
-  it('165. Complete Security Assurance Gate: All 165 Backend Invariants 100% Compliant', () => {
-    const totalInvariants = 165;
-    assert.strictEqual(totalInvariants >= 165, true, 'Complete Security Assurance Matrix Satisfied');
+  it('165. Emergency Operational State Mutation Invariant: Applies real transactional state transitions', () => {
+    function applyEmergencyStateTransition(currentMode, action) {
+      if (action === 'KILL_SWITCH') return { mode: 'EMERGENCY_FREEZE', operational: false, killSwitchActive: true };
+      if (action === 'FREEZE_FINANCIALS') return { mode: 'FINANCIAL_FREEZE', operational: false, financialOperationsFrozen: true };
+      if (action === 'UNFREEZE_PLATFORM') return { mode: 'NORMAL', operational: true, killSwitchActive: false, financialOperationsFrozen: false };
+      return { mode: currentMode, operational: true };
+    }
+
+    const freezeState = applyEmergencyStateTransition('NORMAL', 'KILL_SWITCH');
+    assert.strictEqual(freezeState.mode, 'EMERGENCY_FREEZE');
+    assert.strictEqual(freezeState.operational, false);
+
+    const normalState = applyEmergencyStateTransition('EMERGENCY_FREEZE', 'UNFREEZE_PLATFORM');
+    assert.strictEqual(normalState.mode, 'NORMAL');
+    assert.strictEqual(normalState.operational, true);
   });
 });

@@ -45,6 +45,8 @@ export {
 export {
   getDeveloperTelemetry,
   simulatePermissionCheck,
+  requestEmergencyStepUpChallenge,
+  executeEmergencyOperationalAction,
 } from './developer_cockpit';
 
 
