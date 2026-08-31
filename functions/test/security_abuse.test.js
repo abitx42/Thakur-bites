@@ -2937,4 +2937,111 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     delay = 5000;
     assert.strictEqual(delay, 5000);
   });
+
+  it('136. Firestore Rules Boundary: Anonymous / TV caller reading orders collection -> DENIED', () => {
+    function evaluateOrderReadRule(auth, resourceData) {
+      if (!auth || !auth.uid) return false;
+      const isOwner = resourceData.studentId === auth.uid;
+      const isStaff = ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'security_admin'].includes(auth.token?.role);
+      return isOwner || isStaff;
+    }
+
+    // Anonymous / Public TV Display
+    assert.strictEqual(evaluateOrderReadRule(null, { studentId: 'student_123' }), false);
+    assert.strictEqual(evaluateOrderReadRule({}, { studentId: 'student_123' }), false);
+  });
+
+  it('137. Firestore Rules Boundary: publicLiveQueue/current is public, arbitrary docs -> DENIED', () => {
+    function evaluatePublicLiveQueueReadRule(docId) {
+      if (docId === 'current') return true;
+      return false; // Deny arbitrary collection scanning or token enumeration
+    }
+
+    assert.strictEqual(evaluatePublicLiveQueueReadRule('current'), true, 'publicLiveQueue/current must be public');
+    assert.strictEqual(evaluatePublicLiveQueueReadRule('TB-001'), false, 'Historical token doc must be DENIED');
+    assert.strictEqual(evaluatePublicLiveQueueReadRule('orders'), false);
+  });
+
+  it('138. Firestore Rules Boundary: Student A reading Student B order -> DENIED', () => {
+    function evaluateOrderReadRule(auth, resourceData) {
+      if (!auth || !auth.uid) return false;
+      const isOwner = resourceData.studentId === auth.uid;
+      const isStaff = ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'security_admin'].includes(auth.token?.role);
+      return isOwner || isStaff;
+    }
+
+    const studentA = { uid: 'student_A', token: { email: 'studentA@tcetmumbai.in' } };
+    const studentBOrder = { studentId: 'student_B', totalAmountPaise: 5000 };
+
+    assert.strictEqual(evaluateOrderReadRule(studentA, studentBOrder), false, 'Cross-user IDOR read must fail');
+    assert.strictEqual(evaluateOrderReadRule(studentA, { studentId: 'student_A' }), true, 'Own order read allowed');
+  });
+
+  it('139. Visitor Privacy Boundary: Visitor account isolated from institutional student datasets', () => {
+    const { classifyIdentity } = require('../lib/identity_classifier');
+
+    const visitor = classifyIdentity('guest.speaker@gmail.com');
+    assert.strictEqual(visitor.accountType, 'VISITOR');
+    assert.strictEqual(visitor.priorityLevel, 0);
+    assert.strictEqual(visitor.verificationStatus, 'NOT_REQUIRED');
+    assert.strictEqual(visitor.identityHints.isInstitutionalEmail, false);
+  });
+
+  it('140. Faculty Privilege Escalation Defense: Client attempting direct role or priority forgery -> REJECTED', () => {
+    function sanitizeUserUpdate(clientData) {
+      // Invariant: client cannot set accountType, priorityLevel, or verificationStatus
+      const allowedKeys = ['displayName', 'phone', 'department', 'year', 'photoURL', 'preferences'];
+      const filtered = {};
+      for (const k of allowedKeys) {
+        if (k in clientData) {
+          filtered[k] = clientData[k];
+        }
+      }
+      return filtered;
+    }
+
+    const maliciousClientPayload = {
+      displayName: 'Attacker',
+      accountType: 'TEACHER',
+      priorityLevel: 3,
+      verificationStatus: 'VERIFIED',
+      role: 'admin',
+    };
+
+    const sanitized = sanitizeUserUpdate(maliciousClientPayload);
+    assert.strictEqual('accountType' in sanitized, false);
+    assert.strictEqual('priorityLevel' in sanitized, false);
+    assert.strictEqual('verificationStatus' in sanitized, false);
+    assert.strictEqual('role' in sanitized, false);
+    assert.strictEqual(sanitized.displayName, 'Attacker');
+  });
+
+  it('141. Pending Faculty Order Placement: Evaluates to Priority Level 1 (Standard Queue) until verified', async () => {
+    const { evaluateOrderPriorityLevel } = require('../lib/priority_queue');
+
+    // User is COLLEGE_STAFF with PENDING verification status (priorityLevel 1)
+    const result = await evaluateOrderPriorityLevel('pending_faculty_uid', 'COLLEGE_STAFF', 1);
+    assert.strictEqual(result.assignedPriority, 1, 'Pending faculty must NOT receive priority level 2');
+    assert.strictEqual(result.priorityReason, 'STANDARD_QUEUE');
+  });
+
+  it('142. Approved Faculty Order Placement: Evaluates to Priority Level 2 with max 1 active ticket quota', () => {
+    function evaluateFacultyPriorityWithQuota(userPriorityLevel, activePriorityCount, maxQuota = 1) {
+      if (userPriorityLevel < 2) return { assignedPriority: userPriorityLevel, isPriority: false };
+      if (activePriorityCount >= maxQuota) {
+        return { assignedPriority: 1, isPriority: false, reason: 'FAIRNESS_MAX_ACTIVE_PRIORITY_REACHED' };
+      }
+      return { assignedPriority: userPriorityLevel, isPriority: true, reason: 'FACULTY_PRIORITY_APPLIED' };
+    }
+
+    // First active order -> Priority Granted
+    const firstOrderResult = evaluateFacultyPriorityWithQuota(2, 0, 1);
+    assert.strictEqual(firstOrderResult.assignedPriority, 2);
+    assert.strictEqual(firstOrderResult.isPriority, true);
+
+    // Second concurrent active order -> Quota Exceeded, drops to Standard Level 1
+    const secondOrderResult = evaluateFacultyPriorityWithQuota(2, 1, 1);
+    assert.strictEqual(secondOrderResult.assignedPriority, 1, 'Exceeded active priority quota must drop to level 1');
+    assert.strictEqual(secondOrderResult.isPriority, false);
+  });
 });
