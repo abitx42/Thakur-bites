@@ -202,7 +202,7 @@ service cloud.firestore {
     match /userFavourites/{userId} {
       allow read: if isOwner(userId);
       allow write: if isOwner(userId)
-        && request.resource.data.keys().hasOnly(['items', 'updatedAt'])\
+        && request.resource.data.keys().hasOnly(['items', 'updatedAt'])
         && request.resource.data.items is list
         && request.resource.data.items.size() <= 50;
     }
@@ -221,6 +221,11 @@ service cloud.firestore {
       allow write: if false; // Backend Cloud Function ONLY
     }
 
+    // ─── Faculty Priority Locks (Atomic Concurrency Enforcer) ─────
+    match /facultyPriorityLocks/{userId} {
+      allow read, write: if false; // Backend Cloud Function ONLY
+    }
+
     // ─── Feature Flags ───────────────────────────────────────────
     match /featureFlags/{flagId} {
       allow read: if true;
@@ -230,6 +235,17 @@ service cloud.firestore {
     // ─── Workstation Shift PINs ───────────────────────────────────
     match /shiftPins/{pinId} {
       allow read, write: if false; // Backend Cloud Function ONLY
+    }
+
+    // ─── Step-Up Emergency Sessions ──────────────────────────────
+    match /stepUpSessions/{sessionId} {
+      allow read, write: if false; // Backend Cloud Function ONLY
+    }
+
+    // ─── Orphaned Payments Ledger ────────────────────────────────
+    match /orphanedPayments/{orphanId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Backend Cloud Function ONLY
     }
 
     // ─── TV Ephemeral Public Projection (Single Document Isolation) ─

@@ -98,8 +98,8 @@ export const onOrderStatusNotification = onDocumentUpdated('orders/{orderId}', a
   const notification = buildOrderNotification(orderId, tokenNumber, fromStatus, toStatus);
   if (!notification) return;
 
-  // 1. Record notification in student notifications subcollection
-  const notifRef = db.collection('students').doc(studentId).collection('notifications').doc();
+  // 1. Record notification in canonical user notifications subcollection
+  const notifRef = db.collection('users').doc(studentId).collection('notifications').doc();
   await notifRef.set({
     notificationId: notifRef.id,
     orderId,
@@ -111,10 +111,15 @@ export const onOrderStatusNotification = onDocumentUpdated('orders/{orderId}', a
     isRead: false,
   });
 
-  // 2. Fetch student FCM Device Tokens
+  // 2. Fetch user FCM Device Tokens from canonical users collection (with backward compatibility)
   try {
-    const studentDoc = await db.collection('students').doc(studentId).get();
-    const fcmTokens: string[] = studentDoc.data()?.fcmTokens || [];
+    const userDoc = await db.collection('users').doc(studentId).get();
+    let fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
+
+    if (fcmTokens.length === 0) {
+      const studentDoc = await db.collection('students').doc(studentId).get();
+      fcmTokens = studentDoc.data()?.fcmTokens || [];
+    }
 
     if (fcmTokens.length > 0) {
       await admin.messaging().sendEachForMulticast({

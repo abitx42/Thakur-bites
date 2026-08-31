@@ -109,17 +109,19 @@ export const getOwnerBusinessMetrics = onCall(async (request): Promise<OwnerBusi
       stationDistribution[status]++;
     }
 
-    // Financial Metrics
-    const amount = Number(data.totalAmountPaise || (data.totalAmount ? data.totalAmount * 100 : 0));
-    if (data.status !== 'cancelled') {
+    // Financial Metrics (Derived from verified payment status)
+    const amount = Number(data.totalAmountPaise || (data.totalAmount ? Math.round(data.totalAmount * 100) : 0));
+    const isPaid = data.paymentStatus === 'paid' || data.paymentStatus === 'captured';
+
+    if (data.status !== 'cancelled' && isPaid) {
       grossRevenuePaise += amount;
-      if (data.paymentMethod === 'cash') {
+      if (data.paymentMethod === 'counter_cash' || data.paymentMethod === 'cash') {
         cashRevenuePaise += amount;
       } else {
         digitalRevenuePaise += amount;
       }
-    } else {
-      refundedPaise += amount;
+    } else if (data.status === 'cancelled' && (data.refundedAmountPaise || isPaid)) {
+      refundedPaise += Number(data.refundedAmountPaise || amount);
     }
 
     // Item sales tracking

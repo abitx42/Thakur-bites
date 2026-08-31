@@ -69,6 +69,7 @@ export const provisionStudentProfile = onCall<ProvisionStudentRequest>(async (re
   const cleanPhone = String(phone).trim().slice(0, 20);
 
   const studentRef = db.collection('students').doc(studentId);
+  const userRef = db.collection('users').doc(studentId);
   const now = admin.firestore.Timestamp.now();
 
   const studentData: StudentProfileDoc = {
@@ -99,6 +100,37 @@ export const provisionStudentProfile = onCall<ProvisionStudentRequest>(async (re
       });
     } else {
       transaction.set(studentRef, studentData);
+    }
+
+    // Mirror to canonical users collection
+    const userSnap = await transaction.get(userRef);
+    if (userSnap.exists) {
+      transaction.update(userRef, {
+        displayName: cleanName,
+        department: cleanDept,
+        year: cleanYear,
+        phone: cleanPhone,
+        updatedAt: now,
+      });
+    } else {
+      transaction.set(userRef, {
+        uid: studentId,
+        email,
+        displayName: cleanName,
+        department: cleanDept,
+        year: cleanYear,
+        phone: cleanPhone,
+        accountType: 'STUDENT',
+        verificationStatus: 'VERIFIED',
+        priorityLevel: 1,
+        isVerified: true,
+        accountDisabled: false,
+        totalOrders: 0,
+        totalSpentPaise: 0,
+        averageOrderPaise: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
     }
   });
 
