@@ -243,7 +243,8 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
     }
   });
 
-  // Update Firebase Auth custom claims atomically
+  // Update Firebase Auth custom claims atomically and record sync status
+  let claimsSynced = false;
   if (reviewResult.decision === 'APPROVED' && reviewResult.applicantUid) {
     try {
       await syncUserCustomClaims(reviewResult.applicantUid, {
@@ -251,8 +252,24 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
         verificationStatus: reviewResult.verificationStatus,
         priorityLevel: reviewResult.priorityLevel,
       });
-    } catch (e) {
+      await db.collection('users').doc(reviewResult.applicantUid).update({
+        authClaimsSyncStatus: 'SYNCED',
+        authClaimsSyncedAt: admin.firestore.Timestamp.now(),
+      });
+      claimsSynced = true;
+    } catch (e: any) {
       console.error(`Error setting custom claims for ${reviewResult.applicantUid}:`, e);
+      await db.collection('users').doc(reviewResult.applicantUid).update({
+        authClaimsSyncStatus: 'FAILED',
+        authClaimsSyncError: String(e.message || e),
+        authClaimsSyncFailedAt: admin.firestore.Timestamp.now(),
+      });
+      await logSecurityEvent({
+        eventType: 'AUTH_CLAIMS_SYNC_FAILED',
+        severity: 'HIGH',
+        actorUid: reviewerUid,
+        details: { applicantUid: reviewResult.applicantUid, error: String(e.message || e) },
+      });
     }
   }
 
@@ -271,6 +288,7 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
     success: true,
     applicationId,
     decision,
+    claimsSynced,
     message: `Application ${applicationId} has been successfully ${decision.toLowerCase()}.`,
   };
 });
