@@ -6,7 +6,7 @@ import '../models/user_profile.dart';
 import '../models/student.dart';
 
 /// Platform 2.0 Universal Authentication and Identity Service for Thakur Bites.
-/// Seamlessly manages Google Sign-In, Email/Password, and Anonymous Guest sessions.
+/// Seamlessly manages Google Identity Platform (Web & Native), Email/Password, and Guest Sessions.
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -14,7 +14,7 @@ class AuthService {
     scopes: ['email', 'profile'],
   );
 
-  static const List<String> allowedDomains = [
+  static const List<String> allowedInstitutionalDomains = [
     'tcetmumbai.in',
     'thakureducation.org',
   ];
@@ -36,7 +36,7 @@ class AuthService {
     final clean = email.trim().toLowerCase();
     if (!clean.contains('@')) return false;
     final domain = clean.split('@').last;
-    return allowedDomains.any((d) => domain == d || domain.endsWith('.$d'));
+    return allowedInstitutionalDomains.any((d) => domain == d || domain.endsWith('.$d'));
   }
 
   /// Classifies email domain to default account type
@@ -91,98 +91,173 @@ class AuthService {
     return null;
   }
 
-  /// Sign In with Google (Web and Mobile compatible)
+  /// Checks for any pending web OAuth redirect result on startup
+  Future<UserProfile?> checkRedirectResult() async {
+    if (kIsWeb) {
+      try {
+        final userCredential = await _auth.getRedirectResult();
+        final user = userCredential.user;
+        if (user != null) {
+          return await _ensureUserProfile(user);
+        }
+      } catch (e) {
+        debugPrint('[AuthService] Web redirect result check: $e');
+      }
+    }
+    return null;
+  }
+
+  /// Sign In with Google (Google Identity Platform Web Popup / Redirect & Mobile Native SDK)
   Future<UserProfile> signInWithGoogle() async {
     UserCredential userCredential;
 
-    if (kIsWeb) {
-      // Use Firebase Auth popup on Web for optimal reliability
-      final googleProvider = GoogleAuthProvider();
-      googleProvider.addScope('email');
-      googleProvider.addScope('profile');
-      googleProvider.setCustomParameters({'prompt': 'select_account'});
-      userCredential = await _auth.signInWithPopup(googleProvider);
-    } else {
-      // Native Google Sign-In on iOS / Android
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-      if (googleUser == null) {
-        throw Exception('Google sign-in was cancelled by the user.');
+    try {
+      if (kIsWeb) {
+        // Official Firebase Web GoogleAuthProvider
+        final googleProvider = GoogleAuthProvider();
+        googleProvider.addScope('email');
+        googleProvider.addScope('profile');
+        googleProvider.setCustomParameters({'prompt': 'select_account'});
+
+        try {
+          userCredential = await _auth.signInWithPopup(googleProvider);
+        } on FirebaseAuthException catch (e) {
+          if (e.code == 'popup-blocked' || e.code == 'popup-closed-by-user') {
+            // Graceful fallback to redirect
+            await _auth.signInWithRedirect(googleProvider);
+            throw Exception('Redirecting to Google authentication...');
+          }
+          rethrow;
+        }
+      } else {
+        // Native Google Sign-In on iOS / Android
+        final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+        if (googleUser == null) {
+          throw Exception('Google sign-in was cancelled.');
+        }
+        final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+        final OAuthCredential credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+        userCredential = await _auth.signInWithCredential(credential);
       }
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-      final OAuthCredential credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
+
+      final user = userCredential.user;
+      if (user == null) {
+        throw Exception('Failed to obtain user identity from Google.');
+      }
+
+      return await _ensureUserProfile(user);
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_mapFirebaseAuthError(e));
+    } catch (e) {
+      if (e.toString().contains('Redirecting')) rethrow;
+      throw Exception(e.toString().replaceAll('Exception:', '').trim());
+    }
+  }
+
+  /// Sign in as Guest (Anonymous Firebase Auth session + provisioned Visitor Profile)
+  Future<UserProfile> signInAsGuest() async {
+    try {
+      final userCredential = await _auth.signInAnonymously();
+      final user = userCredential.user;
+      if (user == null) {
+        throw Exception('Failed to create guest session.');
+      }
+
+      final guestProfile = UserProfile(
+        uid: user.uid,
+        email: '',
+        displayName: 'Guest Visitor',
+        accountType: AccountType.visitor,
+        verificationStatus: VerificationStatus.notRequired,
+        priorityLevel: 0,
+        isVerified: true,
+        accountDisabled: false,
+        totalOrders: 0,
+        createdAt: DateTime.now(),
+        lastLoginAt: DateTime.now(),
       );
-      userCredential = await _auth.signInWithCredential(credential);
-    }
 
-    final user = userCredential.user;
-    if (user == null) {
-      throw Exception('Failed to obtain user from Google Sign-In.');
+      await _users.doc(user.uid).set(guestProfile.toFirestore(), SetOptions(merge: true));
+      return guestProfile;
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_mapFirebaseAuthError(e));
+    } catch (e) {
+      throw Exception('Guest sign-in failed: ${e.toString().replaceAll('Exception:', '').trim()}');
     }
-
-    return await _ensureUserProfile(user);
   }
 
-  /// Sign in anonymously as Guest for browsing
-  Future<User> signInAsGuest() async {
-    final userCredential = await _auth.signInAnonymously();
-    final user = userCredential.user;
-    if (user == null) {
-      throw Exception('Failed to create guest session.');
-    }
-    return user;
-  }
-
-  /// Sign up with College Email and Password
+  /// Sign up with Email and Password (Institutional or Visitor)
   Future<UserProfile> signUpWithEmail({
     required String email,
     required String password,
     required String name,
     required String phone,
-    required String rollNo,
+    String? rollNo,
     String? department,
   }) async {
     final cleanEmail = email.trim().toLowerCase();
 
-    if (!isAuthorizedCollegeDomain(cleanEmail)) {
-      throw Exception(
-          'Institutional sign-up is restricted to official college email addresses (@tcetmumbai.in or @thakureducation.org).');
+    if (cleanEmail.isEmpty || !cleanEmail.contains('@')) {
+      throw Exception('Please enter a valid email address.');
+    }
+    if (password.length < 6) {
+      throw Exception('Password must be at least 6 characters long.');
     }
 
-    final userCredential = await _auth.createUserWithEmailAndPassword(
-      email: cleanEmail,
-      password: password,
-    );
-
-    final user = userCredential.user;
-    if (user == null) {
-      throw Exception('Failed to create user account.');
-    }
-
-    // Send email verification link
-    await user.sendEmailVerification();
-
+    final isCollegeDomain = isAuthorizedCollegeDomain(cleanEmail);
     final accountType = classifyEmailDomain(cleanEmail);
-    final userProfile = UserProfile(
-      uid: user.uid,
-      email: cleanEmail,
-      displayName: name.trim(),
-      accountType: accountType,
-      verificationStatus: user.emailVerified ? VerificationStatus.verified : VerificationStatus.pending,
-      priorityLevel: 1,
-      department: department?.trim(),
-      rollNo: rollNo.trim().toUpperCase(),
-      phone: phone.trim(),
-      isVerified: user.emailVerified,
-      accountDisabled: false,
-      totalOrders: 0,
-      createdAt: DateTime.now(),
-      lastLoginAt: DateTime.now(),
-    );
+    final isVisitor = accountType == AccountType.visitor;
 
-    await _users.doc(user.uid).set(userProfile.toFirestore());
-    return userProfile;
+    try {
+      final userCredential = await _auth.createUserWithEmailAndPassword(
+        email: cleanEmail,
+        password: password,
+      );
+
+      final user = userCredential.user;
+      if (user == null) {
+        throw Exception('Failed to create account.');
+      }
+
+      // Update user display name in Firebase Auth
+      await user.updateDisplayName(name.trim());
+
+      // Send verification link for institutional accounts
+      if (isCollegeDomain) {
+        try {
+          await user.sendEmailVerification();
+        } catch (_) {}
+      }
+
+      final userProfile = UserProfile(
+        uid: user.uid,
+        email: cleanEmail,
+        displayName: name.trim(),
+        accountType: accountType,
+        verificationStatus: isVisitor
+            ? VerificationStatus.notRequired
+            : (user.emailVerified ? VerificationStatus.verified : VerificationStatus.pending),
+        priorityLevel: accountType == AccountType.teacher ? 2 : (isVisitor ? 0 : 1),
+        department: department?.trim(),
+        rollNo: rollNo?.trim().toUpperCase() ?? (isVisitor ? 'GUEST' : 'TCET'),
+        phone: phone.trim(),
+        isVerified: isVisitor || user.emailVerified,
+        accountDisabled: false,
+        totalOrders: 0,
+        createdAt: DateTime.now(),
+        lastLoginAt: DateTime.now(),
+      );
+
+      await _users.doc(user.uid).set(userProfile.toFirestore());
+      return userProfile;
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_mapFirebaseAuthError(e));
+    } catch (e) {
+      throw Exception('Sign up failed: ${e.toString().replaceAll('Exception:', '').trim()}');
+    }
   }
 
   /// Sign in with Email and Password
@@ -192,70 +267,74 @@ class AuthService {
   }) async {
     final cleanEmail = email.trim().toLowerCase();
 
-    final userCredential = await _auth.signInWithEmailAndPassword(
-      email: cleanEmail,
-      password: password,
-    );
-
-    final user = userCredential.user;
-    if (user == null) {
-      throw Exception('Failed to authenticate user.');
+    if (cleanEmail.isEmpty) {
+      throw Exception('Email address cannot be empty.');
+    }
+    if (password.isEmpty) {
+      throw Exception('Password cannot be empty.');
     }
 
-    await user.reload();
-    final refreshedUser = _auth.currentUser ?? user;
+    try {
+      final userCredential = await _auth.signInWithEmailAndPassword(
+        email: cleanEmail,
+        password: password,
+      );
 
-    return await _ensureUserProfile(refreshedUser);
+      final user = userCredential.user;
+      if (user == null) {
+        throw Exception('Failed to authenticate.');
+      }
+
+      await user.reload();
+      final refreshedUser = _auth.currentUser ?? user;
+
+      return await _ensureUserProfile(refreshedUser);
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_mapFirebaseAuthError(e));
+    } catch (e) {
+      throw Exception('Sign in failed: ${e.toString().replaceAll('Exception:', '').trim()}');
+    }
   }
 
-  /// Instant Sign-In with Roll Number & Phone
+  /// Instant Student Login with Name, Roll No & Phone (Creates or attaches to session)
   Future<UserProfile> signInStudent({
     required String name,
     required String phone,
     required String rollNo,
     String? email,
   }) async {
-    final user = _auth.currentUser;
+    User? user = _auth.currentUser;
     if (user == null) {
-      throw Exception('No active session. Please sign in with Google or College Email.');
+      final anonCredential = await _auth.signInAnonymously();
+      user = anonCredential.user;
+      if (user == null) {
+        throw Exception('Failed to initialize student session.');
+      }
     }
 
     final uid = user.uid;
-    final existing = await getUserProfile(uid);
-    UserProfile profile;
+    final cleanEmail = email?.trim().toLowerCase() ?? user.email ?? '';
+    final accountType = classifyEmailDomain(cleanEmail);
 
-    if (existing != null) {
-      profile = existing.copyWith(
-        displayName: name.trim(),
-        phone: phone.trim(),
-        rollNo: rollNo.trim().toUpperCase(),
-        email: email?.trim().toLowerCase() ?? user.email,
-        isVerified: user.emailVerified,
-        lastLoginAt: DateTime.now(),
-      );
-    } else {
-      final cleanEmail = email?.trim().toLowerCase() ?? user.email ?? '';
-      final accountType = classifyEmailDomain(cleanEmail);
-      profile = UserProfile(
-        uid: uid,
-        email: cleanEmail,
-        displayName: name.trim(),
-        accountType: accountType,
-        verificationStatus: user.emailVerified ? VerificationStatus.verified : VerificationStatus.pending,
-        priorityLevel: 1,
-        rollNo: rollNo.trim().toUpperCase(),
-        phone: phone.trim(),
-        isVerified: user.emailVerified,
-        createdAt: DateTime.now(),
-        lastLoginAt: DateTime.now(),
-      );
-    }
+    final profile = UserProfile(
+      uid: uid,
+      email: cleanEmail,
+      displayName: name.trim(),
+      accountType: accountType == AccountType.visitor ? AccountType.student : accountType,
+      verificationStatus: VerificationStatus.pending,
+      priorityLevel: 1,
+      rollNo: rollNo.trim().toUpperCase(),
+      phone: phone.trim(),
+      isVerified: user.emailVerified,
+      createdAt: DateTime.now(),
+      lastLoginAt: DateTime.now(),
+    );
 
     await _users.doc(uid).set(profile.toFirestore(), SetOptions(merge: true));
     return profile;
   }
 
-  /// Internal helper to ensure a UserProfile document exists and is up to date
+  /// Helper to ensure a UserProfile document exists in Firestore and is updated
   Future<UserProfile> _ensureUserProfile(User user) async {
     final existing = await getUserProfile(user.uid);
     if (existing != null) {
@@ -306,10 +385,41 @@ class AuthService {
     return newProfile;
   }
 
+  /// Translates Firebase Auth error codes into human-readable messages
+  static String _mapFirebaseAuthError(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'user-not-found':
+        return 'No account found with this email. Please sign up first.';
+      case 'wrong-password':
+      case 'invalid-credential':
+        return 'Incorrect password or email. Please check your credentials.';
+      case 'email-already-in-use':
+        return 'An account already exists with this email address.';
+      case 'invalid-email':
+        return 'The email address is invalid.';
+      case 'weak-password':
+        return 'The password is too weak. Please use at least 6 characters.';
+      case 'user-disabled':
+        return 'This account has been disabled. Please contact support.';
+      case 'too-many-requests':
+        return 'Too many unsuccessful attempts. Please wait a few moments before trying again.';
+      case 'operation-not-allowed':
+        return 'This sign-in provider is currently not enabled in Firebase Console.';
+      case 'network-request-failed':
+        return 'Network error. Please check your internet connection.';
+      default:
+        return e.message ?? 'Authentication failed. Please try again.';
+    }
+  }
+
   /// Send password reset link to user email
   Future<void> sendPasswordReset(String email) async {
     final cleanEmail = email.trim().toLowerCase();
-    await _auth.sendPasswordResetEmail(email: cleanEmail);
+    try {
+      await _auth.sendPasswordResetEmail(email: cleanEmail);
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_mapFirebaseAuthError(e));
+    }
   }
 
   /// Update user profile
