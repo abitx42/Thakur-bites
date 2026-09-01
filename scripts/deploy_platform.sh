@@ -11,7 +11,7 @@ echo "🚀 THAKUR BITES PLATFORM 2.0 — PRODUCTION DEPLOYMENT ENGINE"
 echo "══════════════════════════════════════════════════════════════════════"
 echo ""
 
-echo "▶ Phase 1: Running All 8 Security, SAST & Invariant Gates..."
+echo "▶ Phase 1: Running All 9 Security, SAST & Invariant Gates..."
 bash "$DIR/scripts/run_all_security_checks.sh"
 
 echo ""

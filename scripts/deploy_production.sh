@@ -9,7 +9,7 @@ echo "🚀 THAKUR BITES PLATFORM 2.0 — MASTER PRODUCTION DEPLOYMENT PIPELINE"
 echo "══════════════════════════════════════════════════════════════════════"
 echo ""
 
-echo "▶ Step 1: Executing 187-Test Security & Invariant CI Gate..."
+echo "▶ Step 1: Executing 263-Test Security & Invariant CI Gate..."
 bash "$DIR/scripts/run_all_security_checks.sh"
 
 echo ""
