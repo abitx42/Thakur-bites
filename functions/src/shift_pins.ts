@@ -38,10 +38,10 @@ const ROLE_MAX_DEVICES: Record<string, number> = {
 };
 
 /**
- * Derives a salted cryptographic hash of a 6-digit shift PIN using PBKDF2 (10,000 iterations).
+ * Derives a salted cryptographic hash of a 6-digit shift PIN using PBKDF2 (20,000 iterations).
  */
 export function derivePinHash(pin: string, salt: string): string {
-  return crypto.pbkdf2Sync(pin.trim(), salt, 10000, 32, 'sha256').toString('hex');
+  return crypto.pbkdf2Sync(pin.trim(), salt, 20000, 32, 'sha256').toString('hex');
 }
 
 /**
@@ -104,15 +104,14 @@ export const generateShiftPin = onCall<GenerateShiftPinRequest>(async (request) 
   const pinHash = derivePinHash(rawPin, salt);
   const maxDevices = ROLE_MAX_DEVICES[role] || 2;
 
-  // Calculate expiration time (End of shift in Asia/Kolkata + buffer)
-  const expiresAt = new Date();
+  // Calculate expiration time strictly according to Asia/Kolkata (IST: UTC+5:30)
+  let timeStr = '23:59:59.999';
   if (shiftWindow === 'MORNING') {
-    expiresAt.setHours(15, 30, 0, 0); // 3:30 PM
+    timeStr = '15:30:00.000'; // 3:30 PM IST
   } else if (shiftWindow === 'AFTERNOON') {
-    expiresAt.setHours(22, 0, 0, 0); // 10:00 PM
-  } else {
-    expiresAt.setHours(23, 59, 59, 999);
+    timeStr = '22:00:00.000'; // 10:00 PM IST
   }
+  const expiresAt = new Date(`${shiftDate}T${timeStr}+05:30`);
 
   const now = admin.firestore.Timestamp.now();
 
@@ -400,8 +399,16 @@ export const revokeShiftPin = onCall<RevokeShiftPinRequest>(async (request) => {
 export async function assertActiveWorkstationSession(uid: string, token: Record<string, any>): Promise<void> {
   if (token && (token.isWorkstationSession === true || uid.startsWith('staff_'))) {
     const sessionSnap = await db.collection('workstationSessions').doc(uid).get();
-    if (!sessionSnap.exists || sessionSnap.data()?.status !== 'ACTIVE') {
-      throw new HttpsError('unauthenticated', 'Workstation session has been revoked or expired. Please re-authenticate with shift PIN.');
+    if (!sessionSnap.exists) {
+      throw new HttpsError('unauthenticated', 'Workstation session does not exist. Please re-authenticate with shift PIN.');
+    }
+    const sessionData = sessionSnap.data()!;
+    if (sessionData.status !== 'ACTIVE') {
+      throw new HttpsError('unauthenticated', 'Workstation session has been revoked. Please re-authenticate with shift PIN.');
+    }
+    const now = admin.firestore.Timestamp.now();
+    if (sessionData.expiresAt && sessionData.expiresAt.toMillis() <= now.toMillis()) {
+      throw new HttpsError('unauthenticated', 'Workstation session has expired. Please re-authenticate with shift PIN.');
     }
   }
 }
