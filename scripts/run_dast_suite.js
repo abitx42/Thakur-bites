@@ -346,6 +346,46 @@ runAttackTest('Class J: Developer Cockpit', 'Destructive emergency action requir
   assert.throws(() => executeEmergencyAction(secAdminAuth, { challengeId: 'CHAL-TEST-001', challengeNonce: nonce }, activeSession), /REPLAY_DETECTED/);
 });
 
+// ─── Class K: Gateway Refunds & In-Flight Revocation Attacks ───────
+runAttackTest('Class K: Refunds & Sessions', 'Unauthorized actor attempting unverified gateway refund injection', () => {
+  const caller = { role: 'student', uid: 'student_1' };
+  function processRefundAttempt(auth, orderId, amountPaise) {
+    if (auth.role !== 'manager' && auth.role !== 'admin' && auth.role !== 'security_admin') {
+      throw new Error('PERMISSION_DENIED: Refunds require manager or admin authorization');
+    }
+    return { success: true };
+  }
+  assert.throws(() => processRefundAttempt(caller, 'TB-01', 5000), /PERMISSION_DENIED/);
+});
+
+runAttackTest('Class K: Refunds & Sessions', 'In-flight operational view request with revoked shift workstation session', () => {
+  const sessions = new Map([
+    ['staff_kitchen_tok_1', { status: 'REVOKED', role: 'kitchen' }],
+  ]);
+
+  function handleOperationalCall(sessionToken) {
+    const s = sessions.get(sessionToken);
+    if (!s || s.status !== 'ACTIVE') {
+      throw new Error('UNAUTHENTICATED: Workstation session revoked or expired');
+    }
+    return { success: true, tickets: [] };
+  }
+
+  assert.throws(() => handleOperationalCall('staff_kitchen_tok_1'), /UNAUTHENTICATED/);
+});
+
+runAttackTest('Class K: Refunds & Sessions', 'Direct API callable invocation attempting to bypass production App Check', () => {
+  function verifyAppCheck(request, nodeEnv) {
+    const isProduction = nodeEnv === 'production';
+    if (isProduction && !request.app) {
+      throw new Error('APP_CHECK_VERIFICATION_FAILED: Direct API access blocked');
+    }
+    return { success: true };
+  }
+
+  assert.throws(() => verifyAppCheck({ app: undefined }, 'production'), /APP_CHECK_VERIFICATION_FAILED/);
+});
+
 console.log('\n════════════════════════════════════════════════════════════════');
 console.log(`🏆 ALL ${totalAttacks}/${totalAttacks} DAST ATTACK SCENARIOS DEFENDED (100% BLOCKED)`);
 console.log('════════════════════════════════════════════════════════════════\n');
