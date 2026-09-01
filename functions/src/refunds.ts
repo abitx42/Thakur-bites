@@ -196,6 +196,7 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     // 2. Update Order State with Cumulative Refund Tracking
     transaction.update(orderRef, {
       paymentStatus: nextPaymentStatus,
+      refundLifecycleStatus: 'GATEWAY_REFUNDED',
       status: nextOrderStatus,
       refundId,
       refundedAt: now,

@@ -17,8 +17,17 @@ export type PaymentStatus =
   | 'pending'
   | 'captured'
   | 'settled'
+  | 'refund_requested'
+  | 'gateway_refund_pending'
   | 'refunded'
   | 'partially_refunded';
+
+export type RefundLifecycleStatus =
+  | 'REFUND_REQUESTED'
+  | 'GATEWAY_REFUND_PENDING'
+  | 'GATEWAY_REFUNDED'
+  | 'RECONCILED'
+  | 'GATEWAY_REFUND_FAILED';
 
 export type PaymentMethod = 'online' | 'counter_cash';
 

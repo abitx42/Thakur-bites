@@ -285,6 +285,7 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
       transaction.update(orderRef, {
         status: 'cancelled',
         paymentStatus: 'refunded',
+        refundLifecycleStatus: 'GATEWAY_REFUNDED',
         refundId: gatewayRefundId,
         refundedAt: now,
         amountRefundedPaise: amountToRefundPaise,
