@@ -66,6 +66,9 @@ export async function enforceRateLimit(
     }
 
     timestamps.push(now);
+    if (timestamps.length > 100) {
+      timestamps = timestamps.slice(-100);
+    }
     const expireAt = admin.firestore.Timestamp.fromMillis(now + baseConfig.windowSeconds * 1000);
 
     transaction.set(rateLimitRef, {
