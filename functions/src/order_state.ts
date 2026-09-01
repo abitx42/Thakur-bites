@@ -6,6 +6,7 @@ import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
 import { updatePublicLiveQueueProjection } from './tv_projection';
 import { assertActiveWorkstationSession } from './shift_pins';
+import { RazorpayPaymentAdapter } from './payments';
 
 const db = admin.firestore();
 
@@ -150,6 +151,56 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
   const orderRef = db.collection('orders').doc(orderId);
   const now = admin.firestore.Timestamp.now();
 
+  // 1. Initial order validation & Gateway Refund Execution for Paid Online Orders
+  const initialSnap = await orderRef.get();
+  if (!initialSnap.exists) {
+    throw new HttpsError('not-found', `Order ${orderId} not found.`);
+  }
+
+  const initialOrderData = initialSnap.data()!;
+  const isOwner = initialOrderData.studentId === actorId;
+  const isStaff = ['manager', 'admin', 'security_admin'].includes(actorRole);
+
+  if (!isOwner && !isStaff) {
+    throw new HttpsError('permission-denied', 'You do not have permission to cancel this order.');
+  }
+
+  if (initialOrderData.status === 'collected' || initialOrderData.status === 'cancelled') {
+    throw new HttpsError('failed-precondition', `Order is already in ${initialOrderData.status} state.`);
+  }
+
+  if (initialOrderData.paymentStatus === 'paid' && (initialOrderData.status === 'preparing' || initialOrderData.status === 'ready') && !isStaff) {
+    throw new HttpsError('failed-precondition', 'Order is already being prepared. Please contact counter staff for cancellation.');
+  }
+
+  let gatewayRefundId = `rfnd_${crypto.randomBytes(8).toString('hex')}`;
+  let refundDispatched = false;
+  let amountToRefundPaise = 0;
+
+  if (initialOrderData.paymentStatus === 'paid') {
+    const amountPaidPaise = Number(initialOrderData.amountPaidPaise);
+    if (!Number.isSafeInteger(amountPaidPaise) || amountPaidPaise <= 0) {
+      throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Paid order ${orderId} has invalid or missing amountPaidPaise.`);
+    }
+    amountToRefundPaise = amountPaidPaise;
+
+    const isCash = initialOrderData.paymentMethod === 'counter_cash';
+    if (!isCash) {
+      const gatewayPaymentId = initialOrderData.gatewayPaymentId;
+      if (!gatewayPaymentId) {
+        throw new HttpsError('failed-precondition', 'Cannot cancel and refund online order without recorded gateway payment ID.');
+      }
+      try {
+        const adapter = new RazorpayPaymentAdapter();
+        const refundRes = await adapter.createRefund(gatewayPaymentId, amountPaidPaise, cleanReason);
+        gatewayRefundId = refundRes.refundId;
+        refundDispatched = true;
+      } catch (err: any) {
+        throw new HttpsError('internal', `Cancellation refund failed: ${err.message}`);
+      }
+    }
+  }
+
   const cancelResult = await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(orderRef);
     if (!snap.exists) {
@@ -157,55 +208,49 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
     }
 
     const orderData = snap.data()!;
-    const isOwner = orderData.studentId === actorId;
-    const isStaff = ['manager', 'admin', 'security_admin'].includes(actorRole);
-
-    // Permission boundary: Customer can only cancel unpaid / pending orders. Staff can cancel confirmed/preparing.
-    if (!isOwner && !isStaff) {
-      throw new HttpsError('permission-denied', 'You do not have permission to cancel this order.');
-    }
-
     if (orderData.status === 'collected' || orderData.status === 'cancelled') {
       throw new HttpsError('failed-precondition', `Order is already in ${orderData.status} state.`);
     }
 
-    // If order was already paid, customer cannot self-cancel if already preparing/ready without staff authorization
-    if (orderData.paymentStatus === 'paid' && (orderData.status === 'preparing' || orderData.status === 'ready') && !isStaff) {
-      throw new HttpsError('failed-precondition', 'Order is already being prepared. Please contact counter staff for cancellation.');
-    }
-
-    // 1. Release or Restore Inventory
-    // If stock was committed (paid/confirmed), restore stockOnHand. If stock was only reserved, release reservation.
+    // 1. Release or Restore Inventory (Fail-Closed Hardened)
     const isCommitted = orderData.paymentStatus === 'paid' && orderData.status !== 'payment_pending';
     for (const item of (orderData.items || [])) {
       const itemRef = db.collection('menuItems').doc(item.itemId);
       const itemSnap = await transaction.get(itemRef);
-      if (itemSnap.exists) {
-        const itemData = itemSnap.data()!;
-        if (itemData.type === 'instant') {
-          if (isCommitted) {
-            // Restore physical stockOnHand
-            const newStockOnHand = (itemData.stockOnHand || 0) + item.quantity;
-            const reserved = itemData.reservedStock || 0;
-            const newAvailable = newStockOnHand - reserved;
-            transaction.update(itemRef, {
-              stockOnHand: newStockOnHand,
-              available: newAvailable > 0,
-              isOrderable: newAvailable > 0,
-              updatedAt: now,
-            });
-          } else {
-            // Release reservation
-            const reserved = Math.max(0, (itemData.reservedStock || 0) - item.quantity);
-            const stockOnHand = itemData.stockOnHand || 0;
-            const newAvailable = stockOnHand - reserved;
-            transaction.update(itemRef, {
-              reservedStock: reserved,
-              available: newAvailable > 0,
-              isOrderable: newAvailable > 0,
-              updatedAt: now,
-            });
-          }
+      if (!itemSnap.exists) {
+        throw new HttpsError('internal', `INVENTORY_ITEM_NOT_FOUND: Item "${item.itemId}" missing from catalog during cancellation.`);
+      }
+
+      const itemData = itemSnap.data()!;
+      if (itemData.type === 'instant') {
+        const stockOnHand = itemData.stockOnHand;
+        const reservedStock = itemData.reservedStock !== undefined ? itemData.reservedStock : 0;
+
+        if (typeof stockOnHand !== 'number' || !Number.isSafeInteger(stockOnHand) || stockOnHand < 0) {
+          throw new HttpsError('internal', `INVENTORY_CORRUPTION: Item "${itemData.name}" has invalid stockOnHand during cancellation.`);
+        }
+        if (typeof reservedStock !== 'number' || !Number.isSafeInteger(reservedStock) || reservedStock < 0) {
+          throw new HttpsError('internal', `INVENTORY_CORRUPTION: Item "${itemData.name}" has invalid reservedStock during cancellation.`);
+        }
+
+        if (isCommitted) {
+          const newStockOnHand = stockOnHand + item.quantity;
+          const newAvailable = newStockOnHand - reservedStock;
+          transaction.update(itemRef, {
+            stockOnHand: newStockOnHand,
+            available: newAvailable > 0,
+            isOrderable: newAvailable > 0,
+            updatedAt: now,
+          });
+        } else {
+          const newReserved = Math.max(0, reservedStock - item.quantity);
+          const newAvailable = stockOnHand - newReserved;
+          transaction.update(itemRef, {
+            reservedStock: newReserved,
+            available: newAvailable > 0,
+            isOrderable: newAvailable > 0,
+            updatedAt: now,
+          });
         }
       }
     }
@@ -214,26 +259,23 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
     const resRef = db.collection('inventoryReservations').doc(orderId);
     transaction.set(resRef, { status: 'RELEASED', releasedAt: now, releaseReason: cleanReason }, { merge: true });
 
-    // 3. If paid, execute refund disbursement ledger entry
-    let refundDispatched = false;
+    // 3. If paid, post refund disbursement ledger entry
     if (orderData.paymentStatus === 'paid') {
-      const orderTotalPaise = Number(orderData.totalAmountPaise || (orderData.totalAmount ? Math.round(orderData.totalAmount * 100) : 0));
       const isCash = orderData.paymentMethod === 'counter_cash';
-      const refundId = `rfnd_${crypto.randomBytes(8).toString('hex')}`;
-      const finTxRef = db.collection('financialTransactions').doc(`refund_fin_${refundId}`);
+      const finTxRef = db.collection('financialTransactions').doc(`refund_fin_${gatewayRefundId}`);
 
       transaction.set(finTxRef, {
         transactionId: finTxRef.id,
         orderId,
         type: 'REFUND_DISBURSEMENT',
-        amount: orderTotalPaise / 100,
-        amountPaise: orderTotalPaise,
+        amount: amountToRefundPaise / 100,
+        amountPaise: amountToRefundPaise,
         currency: 'INR',
         postings: [
-          { account: 'SALES_REVENUE', debitPaise: orderTotalPaise, creditPaise: 0 },
-          { account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE', debitPaise: 0, creditPaise: orderTotalPaise },
+          { account: 'SALES_REVENUE', debitPaise: amountToRefundPaise, creditPaise: 0 },
+          { account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE', debitPaise: 0, creditPaise: amountToRefundPaise },
         ],
-        gatewayTransactionId: refundId,
+        gatewayTransactionId: gatewayRefundId,
         gatewayOrderId: orderData.gatewayOrderId || 'direct',
         actorId,
         timestamp: now,
@@ -243,15 +285,15 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
       transaction.update(orderRef, {
         status: 'cancelled',
         paymentStatus: 'refunded',
-        refundId,
+        refundId: gatewayRefundId,
         refundedAt: now,
-        amountRefundedPaise: orderTotalPaise,
+        amountRefundedPaise: amountToRefundPaise,
         refundReason: cleanReason,
         cancelledAt: now,
         cancelledBy: actorId,
+        cancellationReason: cleanReason,
         updatedAt: now,
       });
-      refundDispatched = true;
     } else {
       transaction.update(orderRef, {
         status: 'cancelled',
@@ -279,7 +321,7 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
       actorRole,
       timestamp: now,
       reason: `ORDER_CANCELLED: ${cleanReason}`,
-      metadata: { refundDispatched, previousPaymentStatus: orderData.paymentStatus },
+      metadata: { refundDispatched, refundId: gatewayRefundId, previousPaymentStatus: orderData.paymentStatus },
     });
 
     return {
@@ -287,6 +329,7 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
       orderId,
       status: 'cancelled',
       refundDispatched,
+      refundId: orderData.paymentStatus === 'paid' ? gatewayRefundId : undefined,
     };
   });
 

@@ -14,6 +14,7 @@ export interface RefundRequest {
   orderId: string;
   reason: string;
   amountPaise?: number; // Optional partial refund amount in paise
+  idempotencyKey?: string; // Caller-supplied idempotency key
 }
 
 export interface RefundResponse {
@@ -51,13 +52,31 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
 
   await enforceRateLimit(request.auth.uid, 'refund');
 
-  const { orderId, reason, amountPaise } = request.data || {};
+  const { orderId, reason, amountPaise, idempotencyKey } = request.data || {};
   if (!orderId || typeof orderId !== 'string' || orderId.trim().length === 0 || orderId.length > 128) {
     throw new HttpsError('invalid-argument', 'Valid non-empty orderId (max 128 chars) is required.');
   }
 
   if (!reason || typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 200) {
     throw new HttpsError('invalid-argument', 'Valid refund reason string (1-200 characters) is required.');
+  }
+
+  // Idempotency Check
+  const cleanIdempKey = idempotencyKey && typeof idempotencyKey === 'string' ? idempotencyKey.trim().slice(0, 128) : undefined;
+  if (cleanIdempKey) {
+    const existingIdempDoc = await db.collection('refundIdempotency').doc(cleanIdempKey).get();
+    if (existingIdempDoc.exists) {
+      const data = existingIdempDoc.data()!;
+      return {
+        success: true,
+        refundId: data.refundId,
+        orderId: data.orderId,
+        refundedPaise: data.refundedPaise,
+        totalRefundedPaise: data.totalRefundedPaise,
+        remainingRefundablePaise: data.remainingRefundablePaise || 0,
+        status: data.status,
+      };
+    }
   }
 
   const cleanReason = reason.trim();
@@ -78,11 +97,10 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     );
   }
 
-  const orderTotalPaise = Number(orderData.totalAmountPaise || (orderData.totalAmount ? Math.round(orderData.totalAmount * 100) : 0));
-  const amountPaidPaise = Number(orderData.amountPaidPaise || orderTotalPaise);
-
+  // Strict Fail-Closed Paid Amount Validation (No fallback to orderTotalPaise)
+  const amountPaidPaise = Number(orderData.amountPaidPaise);
   if (!Number.isSafeInteger(amountPaidPaise) || amountPaidPaise <= 0) {
-    throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Order ${orderId} has invalid paid amount.`);
+    throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Order ${orderId} is missing authoritative amountPaidPaise.`);
   }
 
   const previouslyRefundedPaise = Number(orderData.amountRefundedPaise || 0);
@@ -207,6 +225,21 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
         paymentMethod: currentOrderData.paymentMethod,
       },
     });
+
+    // 4. Record Idempotency Result if requested
+    if (cleanIdempKey) {
+      const idempRef = db.collection('refundIdempotency').doc(cleanIdempKey);
+      transaction.set(idempRef, {
+        idempotencyKey: cleanIdempKey,
+        refundId,
+        orderId,
+        refundedPaise: requestedRefundPaise,
+        totalRefundedPaise: newTotalRefundedPaise,
+        remainingRefundablePaise: amountPaidPaise - newTotalRefundedPaise,
+        status: nextPaymentStatus,
+        createdAt: now,
+      });
+    }
 
     return {
       success: true,
