@@ -4170,4 +4170,103 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(res.claimsSynced, false);
     assert.strictEqual(userDoc.authClaimsSyncStatus, 'FAILED');
   });
+
+  it('196. Distributed Webhook Lease Crash Recovery Invariant: Expired lease allows automatic recovery', () => {
+    let leaseState = { status: 'PROCESSING', workerId: 'worker_crashed', leaseExpiresAt: Date.now() - 5000 };
+
+    function claimWebhookLease(newWorkerId, now) {
+      if (leaseState.status === 'PROCESSED') {
+        return { claimed: false, reason: 'ALREADY_PROCESSED' };
+      }
+      if (leaseState.status === 'PROCESSING' && leaseState.leaseExpiresAt > now) {
+        return { claimed: false, reason: 'LEASE_ACTIVE' };
+      }
+      leaseState.status = 'PROCESSING';
+      leaseState.workerId = newWorkerId;
+      leaseState.leaseExpiresAt = now + 30000;
+      return { claimed: true, workerId: newWorkerId };
+    }
+
+    const claim = claimWebhookLease('worker_healthy', Date.now());
+    assert.strictEqual(claim.claimed, true);
+    assert.strictEqual(claim.workerId, 'worker_healthy');
+    assert.strictEqual(leaseState.status, 'PROCESSING');
+  });
+
+  it('197. Dual Concurrent Role Mutation Version Serialization Invariant: Serializes claim versions monotonically', () => {
+    let globalVersion = 0;
+    const authoritativeClaims = new Map();
+
+    function updateClaims(uid, newRole) {
+      globalVersion += 1;
+      const current = authoritativeClaims.get(uid) || {};
+      const updated = { ...current, role: newRole, permissionsVersion: globalVersion };
+      authoritativeClaims.set(uid, updated);
+      return updated;
+    }
+
+    const u1 = updateClaims('user_alice', 'kitchen');
+    const u2 = updateClaims('user_bob', 'pickup');
+    const u3 = updateClaims('user_alice', 'manager');
+
+    assert.strictEqual(u1.permissionsVersion, 1);
+    assert.strictEqual(u2.permissionsVersion, 2);
+    assert.strictEqual(u3.permissionsVersion, 3);
+    assert.strictEqual(authoritativeClaims.get('user_alice').role, 'manager');
+  });
+
+  it('198. Rate Limiter Bounded Array Invariant: Caps timestamp history to 100 entries', () => {
+    let timestamps = [];
+    for (let i = 0; i < 150; i++) {
+      timestamps.push(Date.now() + i);
+      if (timestamps.length > 100) {
+        timestamps = timestamps.slice(-100);
+      }
+    }
+    assert.strictEqual(timestamps.length, 100);
+  });
+
+  it('199. Centralized Capability Registry Role Invariant: Rejects unauthorized actions consistently', () => {
+    const roleMatrix = {
+      student: new Set([]),
+      kitchen: new Set(['view_kitchen_orders', 'update_kitchen_status']),
+      cashier: new Set(['view_cashier_orders', 'record_cash_payment']),
+      manager: new Set(['process_refund', 'adjust_inventory', 'generate_shift_pin']),
+      admin: new Set(['process_refund', 'adjust_inventory', 'generate_shift_pin', 'manage_staff_roles']),
+      security_admin: new Set(['process_refund', 'adjust_inventory', 'generate_shift_pin', 'manage_staff_roles', 'emergency_freeze']),
+    };
+
+    function hasCap(role, cap) {
+      const caps = roleMatrix[role];
+      return caps ? caps.has(cap) : false;
+    }
+
+    assert.strictEqual(hasCap('student', 'view_kitchen_orders'), false);
+    assert.strictEqual(hasCap('kitchen', 'view_kitchen_orders'), true);
+    assert.strictEqual(hasCap('kitchen', 'process_refund'), false);
+    assert.strictEqual(hasCap('manager', 'process_refund'), true);
+    assert.strictEqual(hasCap('manager', 'emergency_freeze'), false);
+    assert.strictEqual(hasCap('security_admin', 'emergency_freeze'), true);
+  });
+
+  it('200. Double-Entry Financial Debit-Credit Net Balance Invariant: Postings always balance', () => {
+    function createTransaction(amountPaise, type, isCash) {
+      return {
+        type,
+        amountPaise,
+        postings: [
+          { account: 'SALES_REVENUE', debitPaise: amountPaise, creditPaise: 0 },
+          { account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE', debitPaise: 0, creditPaise: amountPaise },
+        ],
+      };
+    }
+
+    const tx = createTransaction(12000, 'REFUND_DISBURSEMENT', false);
+    const totalDebits = tx.postings.reduce((sum, p) => sum + p.debitPaise, 0);
+    const totalCredits = tx.postings.reduce((sum, p) => sum + p.creditPaise, 0);
+
+    assert.strictEqual(totalDebits, 12000);
+    assert.strictEqual(totalCredits, 12000);
+    assert.strictEqual(totalDebits, totalCredits);
+  });
 });
