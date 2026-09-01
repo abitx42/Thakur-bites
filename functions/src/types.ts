@@ -174,6 +174,8 @@ export interface DailyReconciliationRecord {
   totalOrdersCount: number;
   totalRevenueCalculated: number;
   totalRevenuePaise: number;
+  totalRefundsPaise?: number;
+  netRevenuePaise?: number;
   onlinePaymentsCaptured: number;
   counterCashEstimated: number;
   discrepanciesCount: number;

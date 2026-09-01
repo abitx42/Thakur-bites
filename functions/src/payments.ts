@@ -23,9 +23,16 @@ const db = admin.firestore();
  * PAYMENT GATEWAY ADAPTER ARCHITECTURE
  * ═══════════════════════════════════════════════════════════════════
  */
+export interface RefundResult {
+  refundId: string;
+  status: 'processed' | 'pending';
+  amountPaise: number;
+}
+
 export interface PaymentGatewayAdapter {
   verifyPaymentSignature(gatewayOrderId: string, gatewayPaymentId: string, signature: string): boolean;
-  verifyWebhookSignature(payloadRaw: string, signature: string): boolean;
+  verifyWebhookSignature(payloadRaw: string | Buffer, signature: string): boolean;
+  createRefund(gatewayPaymentId: string, amountPaise: number, reason: string): Promise<RefundResult>;
 }
 
 /**
@@ -76,6 +83,47 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
       return false;
     }
     return false;
+  }
+
+  async createRefund(gatewayPaymentId: string, amountPaise: number, reason: string): Promise<RefundResult> {
+    const isProduction = process.env.NODE_ENV === 'production' && !process.env.SIMULATE_PAYMENTS;
+    if (isProduction) {
+      const keyId = getRequiredSecret('RAZORPAY_KEY_ID');
+      const authHeader = `Basic ${Buffer.from(`${keyId}:${this.secret}`).toString('base64')}`;
+
+      const res = await fetch(`https://api.razorpay.com/v1/payments/${gatewayPaymentId}/refund`, {
+        method: 'POST',
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: amountPaise,
+          speed: 'optimum',
+          notes: { reason },
+        }),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw new Error(`GATEWAY_REFUND_FAILED: HTTP ${res.status} - ${errBody}`);
+      }
+
+      const json = await res.json() as any;
+      return {
+        refundId: json.id || `rfnd_${crypto.randomBytes(8).toString('hex')}`,
+        status: json.status === 'processed' ? 'processed' : 'pending',
+        amountPaise: Number(json.amount || amountPaise),
+      };
+    }
+
+    // In staging / test / simulation mode: return deterministic simulated refund record
+    const refundId = `rfnd_${crypto.randomBytes(8).toString('hex')}`;
+    return {
+      refundId,
+      status: 'processed',
+      amountPaise,
+    };
   }
 }
 
@@ -478,11 +526,28 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
     }
   });
 
+  // Query financial refunds recorded on this date
+  const refundsSnap = await db.collection('financialTransactions')
+    .where('type', '==', 'REFUND_DISBURSEMENT')
+    .where('timestamp', '>=', startTimestamp)
+    .where('timestamp', '<=', endTimestamp)
+    .get();
+
+  let totalRefundsPaise = 0;
+  refundsSnap.forEach(doc => {
+    const rf = doc.data();
+    totalRefundsPaise += Number(rf.amountPaise || Math.round(Number(rf.amount || 0) * 100));
+  });
+
+  const netRevenuePaise = totalRevenuePaise - totalRefundsPaise;
+
   const reconciliation: DailyReconciliationRecord = {
     date: dateStr,
     totalOrdersCount,
     totalRevenueCalculated: totalRevenuePaise / 100,
     totalRevenuePaise,
+    totalRefundsPaise,
+    netRevenuePaise,
     onlinePaymentsCaptured: onlinePaymentsCapturedPaise / 100,
     counterCashEstimated: counterCashEstimatedPaise / 100,
     discrepanciesCount,

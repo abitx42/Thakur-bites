@@ -6,6 +6,7 @@ import { logSecurityEvent } from './security_logger';
 import { enforceRateLimit } from './rate_limiter';
 import { assertOperationalMode } from './kill_switch';
 import { enforceAppCheck } from './app_check';
+import { RazorpayPaymentAdapter } from './payments';
 
 const db = admin.firestore();
 
@@ -62,7 +63,69 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
   const cleanReason = reason.trim();
   const orderRef = db.collection('orders').doc(orderId);
   const now = admin.firestore.Timestamp.now();
-  const refundId = `rfnd_${crypto.randomBytes(8).toString('hex')}`;
+
+  // 1. Initial order validation
+  const initialSnap = await orderRef.get();
+  if (!initialSnap.exists) {
+    throw new HttpsError('not-found', 'Order not found.');
+  }
+
+  const orderData = initialSnap.data()!;
+  if (orderData.paymentStatus !== 'paid' && orderData.paymentStatus !== 'partially_refunded') {
+    throw new HttpsError(
+      'failed-precondition',
+      `Cannot refund an order with paymentStatus '${orderData.paymentStatus}' (must be 'paid' or 'partially_refunded').`
+    );
+  }
+
+  const orderTotalPaise = Number(orderData.totalAmountPaise || (orderData.totalAmount ? Math.round(orderData.totalAmount * 100) : 0));
+  const amountPaidPaise = Number(orderData.amountPaidPaise || orderTotalPaise);
+
+  if (!Number.isSafeInteger(amountPaidPaise) || amountPaidPaise <= 0) {
+    throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Order ${orderId} has invalid paid amount.`);
+  }
+
+  const previouslyRefundedPaise = Number(orderData.amountRefundedPaise || 0);
+  const remainingRefundablePaise = Math.max(0, amountPaidPaise - previouslyRefundedPaise);
+
+  if (remainingRefundablePaise <= 0) {
+    throw new HttpsError('failed-precondition', `Order ${orderId} has already been fully refunded.`);
+  }
+
+  const requestedRefundPaise = amountPaise !== undefined ? Number(amountPaise) : remainingRefundablePaise;
+
+  if (!Number.isSafeInteger(requestedRefundPaise) || requestedRefundPaise <= 0 || requestedRefundPaise > remainingRefundablePaise) {
+    throw new HttpsError(
+      'invalid-argument',
+      `Invalid refund amount ${requestedRefundPaise} paise. Maximum refundable amount is ${remainingRefundablePaise} paise.`
+    );
+  }
+
+  const isCash = orderData.paymentMethod === 'counter_cash';
+  let refundId = `rfnd_${crypto.randomBytes(8).toString('hex')}`;
+
+  // 2. Real Gateway Execution for Online Payments (TB-NEW-001)
+  if (!isCash) {
+    const gatewayPaymentId = orderData.gatewayPaymentId;
+    if (!gatewayPaymentId) {
+      throw new HttpsError('failed-precondition', 'Cannot refund online order without a recorded gateway payment ID.');
+    }
+
+    try {
+      const adapter = new RazorpayPaymentAdapter();
+      const refundRes = await adapter.createRefund(gatewayPaymentId, requestedRefundPaise, cleanReason);
+      refundId = refundRes.refundId;
+    } catch (err: any) {
+      await logSecurityEvent({
+        eventType: 'GATEWAY_REFUND_FAILED',
+        severity: 'HIGH',
+        orderId,
+        actorUid: request.auth.uid,
+        details: { error: err.message, gatewayPaymentId, amountPaise: requestedRefundPaise },
+      });
+      throw new HttpsError('internal', `Payment gateway refund failed: ${err.message}`);
+    }
+  }
 
   return await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(orderRef);
@@ -70,45 +133,20 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
       throw new HttpsError('not-found', 'Order not found.');
     }
 
-    const orderData = snap.data()!;
-    if (orderData.paymentStatus !== 'paid' && orderData.paymentStatus !== 'partially_refunded') {
-      throw new HttpsError(
-        'failed-precondition',
-        `Cannot refund an order with paymentStatus '${orderData.paymentStatus}' (must be 'paid' or 'partially_refunded').`
-      );
+    const currentOrderData = snap.data()!;
+    const curPrevRefunded = Number(currentOrderData.amountRefundedPaise || 0);
+    const curRemaining = Math.max(0, amountPaidPaise - curPrevRefunded);
+
+    if (requestedRefundPaise > curRemaining) {
+      throw new HttpsError('failed-precondition', 'Concurrent refund detected: requested amount exceeds remaining refundable balance.');
     }
 
-    // Cumulative Refund Bounds Assertion
-    const orderTotalPaise = Number(orderData.totalAmountPaise || (orderData.totalAmount ? Math.round(orderData.totalAmount * 100) : 0));
-    const amountPaidPaise = Number(orderData.amountPaidPaise || orderTotalPaise);
-
-    if (!Number.isSafeInteger(amountPaidPaise) || amountPaidPaise <= 0) {
-      throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Order ${orderId} has invalid paid amount.`);
-    }
-
-    const previouslyRefundedPaise = Number(orderData.amountRefundedPaise || 0);
-    const remainingRefundablePaise = Math.max(0, amountPaidPaise - previouslyRefundedPaise);
-
-    if (remainingRefundablePaise <= 0) {
-      throw new HttpsError('failed-precondition', `Order ${orderId} has already been fully refunded.`);
-    }
-
-    const requestedRefundPaise = amountPaise !== undefined ? Number(amountPaise) : remainingRefundablePaise;
-
-    if (!Number.isSafeInteger(requestedRefundPaise) || requestedRefundPaise <= 0 || requestedRefundPaise > remainingRefundablePaise) {
-      throw new HttpsError(
-        'invalid-argument',
-        `Invalid refund amount ${requestedRefundPaise} paise. Maximum refundable amount is ${remainingRefundablePaise} paise.`
-      );
-    }
-
-    const newTotalRefundedPaise = previouslyRefundedPaise + requestedRefundPaise;
+    const newTotalRefundedPaise = curPrevRefunded + requestedRefundPaise;
     const isFullRefund = newTotalRefundedPaise === amountPaidPaise;
     const nextPaymentStatus = isFullRefund ? 'refunded' : 'partially_refunded';
-    const nextOrderStatus = isFullRefund ? 'cancelled' : orderData.status;
+    const nextOrderStatus = isFullRefund ? 'cancelled' : currentOrderData.status;
 
     // 1. Write to immutable financialTransactions ledger with deterministic ID (TB-NEW-001 & TB-NEW-002)
-    const isCash = orderData.paymentMethod === 'counter_cash';
     const finTxRef = db.collection('financialTransactions').doc(`refund_fin_${refundId}`);
     const finRecord: FinancialTransactionRecord = {
       transactionId: finTxRef.id,
@@ -130,7 +168,7 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
         },
       ],
       gatewayTransactionId: refundId,
-      gatewayOrderId: orderData.gatewayOrderId || 'direct',
+      gatewayOrderId: currentOrderData.gatewayOrderId || 'direct',
       actorId: request.auth!.uid,
       timestamp: now,
       status: 'REFUNDED',
@@ -155,7 +193,7 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     const eventRef = db.collection('orderEvents').doc();
     transaction.set(eventRef, {
       orderId,
-      fromStatus: orderData.status,
+      fromStatus: currentOrderData.status,
       toStatus: nextOrderStatus,
       actorId: request.auth!.uid,
       actorRole,
@@ -166,7 +204,7 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
         refundAmountPaise: requestedRefundPaise,
         totalRefundedPaise: newTotalRefundedPaise,
         isFullRefund,
-        paymentMethod: orderData.paymentMethod,
+        paymentMethod: currentOrderData.paymentMethod,
       },
     });
 
