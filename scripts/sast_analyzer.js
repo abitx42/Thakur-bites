@@ -47,6 +47,13 @@ const SAST_RULES = [
     severity: 'CRITICAL',
     fileExts: ['.ts'],
   },
+  {
+    id: 'SEC-SAST-04',
+    name: 'Hardcoded Production Bypass or Static Admin Credentials',
+    regex: /if\s*\(\s*.*?(?:admin@tcet\.com|bypass_auth|disable_security).*?\)/i,
+    severity: 'CRITICAL',
+    fileExts: ['.js', '.ts', '.dart'],
+  },
 ];
 
 let scannedCount = 0;
