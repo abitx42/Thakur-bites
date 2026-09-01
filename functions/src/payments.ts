@@ -15,6 +15,7 @@ import { releaseInventoryInTransaction } from './inventory_reservation';
 import { assertOperationalMode } from './kill_switch';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
+import { assertActiveWorkstationSession } from './shift_pins';
 
 const db = admin.firestore();
 
@@ -419,6 +420,8 @@ export const recordCashPayment = onCall<{ orderId: string; idempotencyKey?: stri
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
+
+  await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
   if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin' && actorRole !== 'cashier') {

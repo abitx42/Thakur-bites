@@ -5,6 +5,7 @@ import { OrderStatus, UserRole } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
 import { updatePublicLiveQueueProjection } from './tv_projection';
+import { assertActiveWorkstationSession } from './shift_pins';
 
 const db = admin.firestore();
 
@@ -34,6 +35,7 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
+  await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
   const actorId = request.auth.uid;
   await enforceRateLimit(actorId, 'order_status');
   const actorRole = (request.auth.token.role as UserRole) || 'student';
@@ -130,6 +132,7 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
+  await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
   const actorId = request.auth.uid;
   await enforceRateLimit(actorId, 'order_status');
   const actorRole = (request.auth.token.role as UserRole) || 'student';

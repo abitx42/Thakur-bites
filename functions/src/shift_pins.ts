@@ -398,7 +398,7 @@ export const revokeShiftPin = onCall<RevokeShiftPinRequest>(async (request) => {
  * Asserts that a workstation session is still active and has not been revoked (TB-NEW-004 & TB-NEW-005).
  */
 export async function assertActiveWorkstationSession(uid: string, token: Record<string, any>): Promise<void> {
-  if (token.isWorkstationSession === true) {
+  if (token && (token.isWorkstationSession === true || uid.startsWith('staff_'))) {
     const sessionSnap = await db.collection('workstationSessions').doc(uid).get();
     if (!sessionSnap.exists || sessionSnap.data()?.status !== 'ACTIVE') {
       throw new HttpsError('unauthenticated', 'Workstation session has been revoked or expired. Please re-authenticate with shift PIN.');

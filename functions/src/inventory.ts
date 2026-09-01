@@ -4,6 +4,7 @@ import { UserRole } from './types';
 import { logSecurityEvent } from './security_logger';
 import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
+import { assertActiveWorkstationSession } from './shift_pins';
 
 const db = admin.firestore();
 
@@ -37,6 +38,8 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
+
+  await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
   if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin') {

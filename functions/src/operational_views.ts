@@ -4,6 +4,7 @@ import { UserRole } from './types';
 import { calculateEffectivePriority } from './priority_queue';
 import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
+import { assertActiveWorkstationSession } from './shift_pins';
 
 const db = admin.firestore();
 
@@ -58,6 +59,7 @@ export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async 
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
+  await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
   await enforceRateLimit(request.auth.uid, 'kitchen_view');
 
   const role = (request.auth.token.role as UserRole) || 'student';
@@ -120,6 +122,7 @@ export const getPickupOrders = onCall<void, Promise<PickupOrderView[]>>(async (r
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
+  await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
   await enforceRateLimit(request.auth.uid, 'pickup_view');
 
   const role = (request.auth.token.role as UserRole) || 'student';
@@ -161,6 +164,7 @@ export const getCashierOrders = onCall<void, Promise<CashierOrderView[]>>(async 
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
+  await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
   await enforceRateLimit(request.auth.uid, 'cashier_view');
 
   const role = (request.auth.token.role as UserRole) || 'student';

@@ -7,6 +7,7 @@ import { getRequiredSecret } from './secrets';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { updatePublicLiveQueueProjection } from './tv_projection';
+import { assertActiveWorkstationSession } from './shift_pins';
 
 const db = admin.firestore();
 
@@ -26,6 +27,7 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
+  await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
   await enforceRateLimit(request.auth.uid, 'pickup_verify');
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
@@ -250,6 +252,7 @@ export const unlockOrderPickupVerification = onCall<{ orderId: string; reason: s
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
+  await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
   const actorRole = (request.auth.token.role as UserRole) || 'student';
   if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin') {
     throw new HttpsError('permission-denied', 'Only managers or administrators can unlock a security-locked order.');
