@@ -48,6 +48,7 @@ export {
   requestEmergencyStepUpChallenge,
   executeEmergencyOperationalAction,
 } from './developer_cockpit';
+export { updateAppVersionPolicy } from './version_policy';
 
 
 

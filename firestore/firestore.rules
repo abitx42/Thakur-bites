@@ -181,6 +181,12 @@ service cloud.firestore {
       allow write: if false; // Cloud Functions only
     }
 
+    // Public Application Version & Update Policy (Read-only to clients)
+    match /appConfig/{configId=**} {
+      allow read: if true;
+      allow write: if false; // Cloud Functions only
+    }
+
     // ─── Universal Users (Platform 2.0) ──────────────────────────
     match /users/{userId} {
       allow read: if isOwner(userId) || isManagerOrAdmin();

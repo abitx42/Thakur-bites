@@ -175,5 +175,11 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false; // Cloud Functions only
     }
+
+    // Public Application Version & Update Policy (Read-only to clients)
+    match /appConfig/{configId=**} {
+      allow read: if true;
+      allow write: if false; // Cloud Functions only
+    }
   }
 }

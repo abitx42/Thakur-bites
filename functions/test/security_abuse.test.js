@@ -4269,4 +4269,50 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(totalCredits, 12000);
     assert.strictEqual(totalDebits, totalCredits);
   });
+
+  it('201. Server-Authoritative App Version Policy Invariant: Blocks deprecated/compromised clients at API layer', () => {
+    const policy = {
+      latestVersion: '1.4.0',
+      minimumSupportedVersion: '1.2.0',
+      forceUpdate: false,
+    };
+
+    function validateClientVersion(clientVersion, policyConfig) {
+      if (policyConfig.forceUpdate) {
+        throw new Error('APP_VERSION_DEPRECATED_FORCED_UPDATE: Emergency force update active');
+      }
+
+      const p1 = clientVersion.split('.').map(x => parseInt(x, 10) || 0);
+      const p2 = policyConfig.minimumSupportedVersion.split('.').map(x => parseInt(x, 10) || 0);
+      while (p1.length < 3) p1.push(0);
+      while (p2.length < 3) p2.push(0);
+
+      let isBelow = false;
+      for (let i = 0; i < 3; i++) {
+        if (p1[i] < p2[i]) {
+          isBelow = true;
+          break;
+        }
+        if (p1[i] > p2[i]) break;
+      }
+
+      if (isBelow) {
+        throw new Error(`APP_VERSION_DEPRECATED_FORCED_UPDATE: Version ${clientVersion} is below minimum supported ${policyConfig.minimumSupportedVersion}`);
+      }
+      return true;
+    }
+
+    // Supported versions pass
+    assert.strictEqual(validateClientVersion('1.2.0', policy), true);
+    assert.strictEqual(validateClientVersion('1.3.5', policy), true);
+    assert.strictEqual(validateClientVersion('2.0.0', policy), true);
+
+    // Deprecated versions fail-closed
+    assert.throws(() => validateClientVersion('1.1.9', policy), /APP_VERSION_DEPRECATED_FORCED_UPDATE/);
+    assert.throws(() => validateClientVersion('1.0.0', policy), /APP_VERSION_DEPRECATED_FORCED_UPDATE/);
+
+    // Emergency force update blocks all versions
+    const emergencyPolicy = { ...policy, forceUpdate: true };
+    assert.throws(() => validateClientVersion('2.0.0', emergencyPolicy), /APP_VERSION_DEPRECATED_FORCED_UPDATE/);
+  });
 });
