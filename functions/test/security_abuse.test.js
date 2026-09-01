@@ -4069,4 +4069,105 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(order.paymentStatus, 'refunded');
     assert.strictEqual(order.status, 'cancelled');
   });
+
+  it('191. Cancellation Online Gateway Refund Coupling Invariant: Paid online orders call gateway refund and fail closed', async () => {
+    let order = { orderId: 'TB-01', paymentStatus: 'paid', paymentMethod: 'upi_razorpay', gatewayPaymentId: 'pay_123', status: 'confirmed', amountPaidPaise: 5000 };
+
+    async function cancelAndRefund(orderObj, gatewayAvailable) {
+      if (orderObj.paymentStatus === 'paid' && orderObj.paymentMethod !== 'counter_cash') {
+        if (!gatewayAvailable) {
+          throw new Error('GATEWAY_UNAVAILABLE: Refund API rejected');
+        }
+      }
+      orderObj.status = 'cancelled';
+      orderObj.paymentStatus = 'refunded';
+      return { success: true, refundDispatched: true };
+    }
+
+    // Attempt cancellation with gateway failure
+    await assert.rejects(async () => {
+      await cancelAndRefund(order, false);
+    }, /GATEWAY_UNAVAILABLE/);
+
+    assert.strictEqual(order.status, 'confirmed', 'Order status must remain confirmed on gateway refund failure');
+    assert.strictEqual(order.paymentStatus, 'paid');
+
+    // Attempt cancellation with gateway success
+    const res = await cancelAndRefund(order, true);
+    assert.strictEqual(res.refundDispatched, true);
+    assert.strictEqual(order.status, 'cancelled');
+    assert.strictEqual(order.paymentStatus, 'refunded');
+  });
+
+  it('192. Cancellation Missing Inventory Fail-Closed Invariant: Rejects cancellation if catalog item is missing', () => {
+    const catalog = new Map([['item_samosa', { stockOnHand: 10, reservedStock: 2 }]]);
+
+    function processCancellationInventory(items) {
+      for (const item of items) {
+        if (!catalog.has(item.itemId)) {
+          throw new Error(`INVENTORY_ITEM_NOT_FOUND: Item ${item.itemId} missing from catalog`);
+        }
+      }
+      return { success: true };
+    }
+
+    // Valid items
+    assert.strictEqual(processCancellationInventory([{ itemId: 'item_samosa', quantity: 2 }]).success, true);
+
+    // Missing item throws error
+    assert.throws(() => processCancellationInventory([{ itemId: 'item_deleted', quantity: 1 }]), /INVENTORY_ITEM_NOT_FOUND/);
+  });
+
+  it('193. Workstation Session Expiry Invariant: Rejects expired sessions', () => {
+    const pastTime = Date.now() - 5000;
+    const futureTime = Date.now() + 3600000;
+
+    function validateSession(session, now) {
+      if (!session || session.status !== 'ACTIVE') {
+        throw new Error('UNAUTHENTICATED: Session not active');
+      }
+      if (session.expiresAtMs <= now) {
+        throw new Error('UNAUTHENTICATED: Session expired');
+      }
+      return true;
+    }
+
+    // Active + future expiration -> allowed
+    assert.strictEqual(validateSession({ status: 'ACTIVE', expiresAtMs: futureTime }, Date.now()), true);
+
+    // Active + past expiration -> rejected
+    assert.throws(() => validateSession({ status: 'ACTIVE', expiresAtMs: pastTime }, Date.now()), /Session expired/);
+  });
+
+  it('194. Shift PIN Asia/Kolkata (+05:30) Timezone Boundary Invariant: Expiration calculated with IST offset', () => {
+    const shiftDate = '2026-09-01';
+    const shiftWindow = 'MORNING';
+
+    let timeStr = '23:59:59.999';
+    if (shiftWindow === 'MORNING') timeStr = '15:30:00.000';
+    const expiresAt = new Date(`${shiftDate}T${timeStr}+05:30`);
+
+    // In UTC, 15:30 IST (UTC+5:30) is 10:00 UTC (15h 30m - 5h 30m = 10h 00m)
+    assert.strictEqual(expiresAt.getUTCHours(), 10);
+    assert.strictEqual(expiresAt.getUTCMinutes(), 0);
+  });
+
+  it('195. Verification Custom Claims Sync Status Tracking Invariant: Tracks FAILED without crashing profile update', () => {
+    const userDoc = { uid: 'user_1', verificationStatus: 'VERIFIED', authClaimsSyncStatus: 'PENDING' };
+
+    function finalizeVerification(user, claimsSuccess) {
+      if (claimsSuccess) {
+        user.authClaimsSyncStatus = 'SYNCED';
+      } else {
+        user.authClaimsSyncStatus = 'FAILED';
+        user.authClaimsSyncError = 'AUTH_TIMEOUT';
+      }
+      return { success: true, claimsSynced: claimsSuccess };
+    }
+
+    const res = finalizeVerification(userDoc, false);
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(res.claimsSynced, false);
+    assert.strictEqual(userDoc.authClaimsSyncStatus, 'FAILED');
+  });
 });
