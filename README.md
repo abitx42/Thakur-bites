@@ -1,7 +1,7 @@
 # 🍛 Thakur Bites Platform 2.0 — Smart Campus Canteen Operating System
 
-[![Tests](https://img.shields.io/badge/tests-268%20passing-brightgreen.svg)](scripts/run_all_security_checks.sh)
-[![Security Gate](https://img.shields.io/badge/security%20invariants-195%20vectors%20passed-blue.svg)](functions/test/security_abuse.test.js)
+[![Tests](https://img.shields.io/badge/tests-273%20passing-brightgreen.svg)](scripts/run_all_security_checks.sh)
+[![Security Gate](https://img.shields.io/badge/security%20invariants-200%20vectors%20passed-blue.svg)](functions/test/security_abuse.test.js)
 [![Flutter](https://img.shields.io/badge/flutter-3.29%20Web%20%26%20Mobile-02569B.svg)](thakur_bites/)
 [![Firebase](https://img.shields.io/badge/firebase-Cloud%20Functions%20v2-FFCA28.svg)](functions/)
 
