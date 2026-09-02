@@ -30,92 +30,401 @@ export interface RefundResponse {
   status: 'refunded' | 'partially_refunded';
 }
 
-/**
- * Claims a refund balance before any external side effect. Both the staff refund
- * flow and cancellation flow use this primitive so a retry cannot double-refund.
- */
-export async function reserveAndExecuteRefund(params: {
+export interface ExecuteRefundParams {
   orderId: string;
   reason: string;
-  amountPaise: number;
+  amountPaise?: number;
   actorId: string;
   actorRole: UserRole;
   idempotencyKey?: string;
   cancellation?: boolean;
-}): Promise<{ refundId: string; reservationId: string; isCash: boolean; amountPaidPaise: number; previousRefundedPaise: number }> {
+}
+
+export interface ExecuteRefundResult {
+  success: boolean;
+  refundId: string;
+  reservationId: string;
+  orderId: string;
+  refundedPaise: number;
+  totalRefundedPaise: number;
+  remainingRefundablePaise: number;
+  status: 'refunded' | 'partially_refunded';
+  isCash: boolean;
+  amountPaidPaise: number;
+  previousRefundedPaise: number;
+}
+
+/**
+ * Authoritative Single Refund Engine — Distributed Race-Condition & Idempotency-Safe.
+ * 
+ * Invariants Enforced:
+ * 1. Transactional Idempotency Claiming: Claim `refundIdempotency/{key}` before external gateway execution.
+ * 2. Delta Accounting & In-Flight Reservation: Speculatively increments `pendingRefundPaise` to block double-refunds,
+ *    and settles via delta arithmetic (`pendingRefundPaise -= X`, `amountRefundedPaise += X`). Rollbacks only
+ *    decrement `pendingRefundPaise -= X`, NEVER clobbering concurrent or later refunds with stale absolute values.
+ * 3. Deterministic Gateway Key: Razorpay receives `TB-REFUND-${orderId}-${reservationId}` for external deduplication.
+ * 4. Double-entry financial transactions and audit logs posted atomically upon finalization.
+ */
+export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Promise<ExecuteRefundResult> {
   const { orderId, reason, amountPaise, actorId, actorRole, idempotencyKey, cancellation = false } = params;
+
+  if (!orderId || typeof orderId !== 'string' || orderId.trim().length === 0 || orderId.length > 128) {
+    throw new HttpsError('invalid-argument', 'Valid non-empty orderId (max 128 chars) is required.');
+  }
+
+  if (!reason || typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 200) {
+    throw new HttpsError('invalid-argument', 'Valid refund reason string (1-200 characters) is required.');
+  }
+
+  const cleanReason = reason.trim();
+  const cleanIdempKey = idempotencyKey && typeof idempotencyKey === 'string' ? idempotencyKey.trim().slice(0, 128) : undefined;
+  const now = admin.firestore.Timestamp.now();
+
+  // ─── Step 1: Transactional Idempotency Key Claim (TB-NEW-005 Remediation) ───
+  const idempRef = cleanIdempKey ? db.collection('refundIdempotency').doc(cleanIdempKey) : null;
+  if (idempRef) {
+    const claimResult = await db.runTransaction(async (t) => {
+      const snap = await t.get(idempRef);
+      if (snap.exists) {
+        const data = snap.data()!;
+        if (data.status === 'SETTLED' || data.status === 'refunded' || data.status === 'partially_refunded') {
+          return { status: 'RESOLVED', data };
+        }
+        const elapsedMs = Date.now() - (data.claimedAt?.toMillis?.() || 0);
+        if (data.status === 'PROCESSING' && elapsedMs < 60000) {
+          return { status: 'IN_PROGRESS' };
+        }
+        // If previous failed or lease expired (>60s), reclaim
+        t.update(idempRef, {
+          status: 'PROCESSING',
+          claimedAt: now,
+          attemptCount: admin.firestore.FieldValue.increment(1),
+        });
+        return { status: 'CLAIMED' };
+      }
+
+      t.set(idempRef, {
+        idempotencyKey: cleanIdempKey,
+        orderId,
+        actorUid: actorId,
+        status: 'PROCESSING',
+        claimedAt: now,
+        createdAt: now,
+        attemptCount: 1,
+      });
+      return { status: 'CLAIMED' };
+    });
+
+    if (claimResult.status === 'RESOLVED') {
+      const d = claimResult.data!;
+      return {
+        success: true,
+        refundId: d.refundId,
+        reservationId: d.reservationId,
+        orderId: d.orderId,
+        refundedPaise: d.refundedPaise,
+        totalRefundedPaise: d.totalRefundedPaise,
+        remainingRefundablePaise: d.remainingRefundablePaise || 0,
+        status: d.status,
+        isCash: d.isCash || false,
+        amountPaidPaise: d.amountPaidPaise || 0,
+        previousRefundedPaise: d.previousRefundedPaise || 0,
+      };
+    }
+
+    if (claimResult.status === 'IN_PROGRESS') {
+      throw new HttpsError('failed-precondition', 'A refund with this idempotency key is currently in progress. Please wait.');
+    }
+  }
+
+  // ─── Step 2: Validate Order & Balances ──────────────────────────────────
   const orderRef = db.collection('orders').doc(orderId);
   const initialSnap = await orderRef.get();
-  if (!initialSnap.exists) throw new HttpsError('not-found', 'Order not found.');
+  if (!initialSnap.exists) {
+    throw new HttpsError('not-found', 'Order not found.');
+  }
 
-  const initial = initialSnap.data()!;
-  const amountPaidPaise = Number(initial.amountPaidPaise);
-  const previousRefundedPaise = Number(initial.amountRefundedPaise || 0);
-  if (!Number.isSafeInteger(amountPaidPaise) || amountPaidPaise <= 0 || !Number.isSafeInteger(previousRefundedPaise) || previousRefundedPaise < 0) {
-    throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Order ${orderId} has invalid payment totals.`);
+  const orderData = initialSnap.data()!;
+  if (orderData.paymentStatus !== 'paid' && orderData.paymentStatus !== 'partially_refunded') {
+    throw new HttpsError(
+      'failed-precondition',
+      `Cannot refund an order with paymentStatus '${orderData.paymentStatus}' (must be 'paid' or 'partially_refunded').`
+    );
   }
-  if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0 || amountPaise > amountPaidPaise - previousRefundedPaise) {
-    throw new HttpsError('invalid-argument', 'Refund amount exceeds the authoritative remaining balance.');
+
+  const amountPaidPaise = Number(orderData.amountPaidPaise);
+  if (!Number.isSafeInteger(amountPaidPaise) || amountPaidPaise <= 0) {
+    throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Order ${orderId} has invalid amountPaidPaise.`);
   }
-  if (cancellation && amountPaise !== amountPaidPaise - previousRefundedPaise) {
+
+  const previouslyRefundedPaise = Number(orderData.amountRefundedPaise || 0);
+  const previousPendingPaise = Number(orderData.pendingRefundPaise || 0);
+  const remainingRefundablePaise = Math.max(0, amountPaidPaise - previouslyRefundedPaise - previousPendingPaise);
+
+  if (remainingRefundablePaise <= 0) {
+    throw new HttpsError('failed-precondition', `Order ${orderId} has no remaining refundable balance.`);
+  }
+
+  const requestedRefundPaise = amountPaise !== undefined ? Number(amountPaise) : remainingRefundablePaise;
+  if (!Number.isSafeInteger(requestedRefundPaise) || requestedRefundPaise <= 0 || requestedRefundPaise > remainingRefundablePaise) {
+    throw new HttpsError(
+      'invalid-argument',
+      `Invalid refund amount ${requestedRefundPaise} paise. Maximum currently refundable is ${remainingRefundablePaise} paise.`
+    );
+  }
+
+  if (cancellation && requestedRefundPaise !== remainingRefundablePaise) {
     throw new HttpsError('failed-precondition', 'Cancellation requires refunding the full remaining balance.');
   }
 
-  const isCash = initial.paymentMethod === 'counter_cash';
+  const isCash = orderData.paymentMethod === 'counter_cash';
   const reservationId = crypto.randomBytes(16).toString('hex');
   const reservationRef = db.collection('refundReservations').doc(reservationId);
-  const now = admin.firestore.Timestamp.now();
 
+  // ─── Step 3: Atomic Reservation Lock (Delta Accounting) ────────────────
   await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(orderRef);
     if (!snap.exists) throw new HttpsError('not-found', 'Order not found during refund reservation.');
+
     const current = snap.data()!;
-    if (current.status === 'cancelled' || current.status === 'collected' || (current.paymentStatus !== 'paid' && current.paymentStatus !== 'partially_refunded')) {
+    if (current.status === 'cancelled' && !cancellation) {
+      throw new HttpsError('failed-precondition', 'Order is already cancelled.');
+    }
+    if (current.status === 'collected' && !cancellation) {
+      throw new HttpsError('failed-precondition', 'Order is already collected.');
+    }
+    if (current.paymentStatus !== 'paid' && current.paymentStatus !== 'partially_refunded') {
       throw new HttpsError('failed-precondition', 'Order is not eligible for a refund.');
     }
-    const currentPaid = Number(current.amountPaidPaise);
-    const currentRefunded = Number(current.amountRefundedPaise || 0);
-    const remaining = currentPaid - currentRefunded;
-    if (!Number.isSafeInteger(currentPaid) || !Number.isSafeInteger(currentRefunded) || amountPaise > remaining || (cancellation && amountPaise !== remaining)) {
-      throw new HttpsError('failed-precondition', 'Concurrent refund detected. Please retry.');
+
+    const curPaid = Number(current.amountPaidPaise);
+    const curSettled = Number(current.amountRefundedPaise || 0);
+    const curPending = Number(current.pendingRefundPaise || 0);
+    const curAvailable = curPaid - curSettled - curPending;
+
+    if (!Number.isSafeInteger(curPaid) || !Number.isSafeInteger(curSettled) || requestedRefundPaise > curAvailable || (cancellation && requestedRefundPaise !== curAvailable)) {
+      throw new HttpsError('failed-precondition', 'Concurrent refund detected or insufficient balance. Please retry.');
     }
+
     transaction.set(reservationRef, {
-      reservationId, orderId, requestedRefundPaise: amountPaise, amountPaidPaise: currentPaid,
-      curPrevRefunded: currentRefunded, actorUid: actorId, actorRole, reason,
-      status: 'RESERVATION_CREATED', isCash, idempotencyKey: idempotencyKey || null,
-      cancellation, createdAt: now,
+      reservationId,
+      orderId,
+      requestedRefundPaise,
+      amountPaidPaise: curPaid,
+      curPrevRefunded: curSettled,
+      curPrevPending: curPending,
+      actorUid: actorId,
+      actorRole,
+      reason: cleanReason,
+      status: 'RESERVATION_CREATED',
+      isCash,
+      idempotencyKey: cleanIdempKey || null,
+      cancellation,
+      createdAt: now,
     });
+
+    // Delta arithmetic: increment pendingRefundPaise to lock funds without corrupting settled ledger
     transaction.update(orderRef, {
-      amountRefundedPaise: currentRefunded + amountPaise,
+      pendingRefundPaise: admin.firestore.FieldValue.increment(requestedRefundPaise),
       refundLifecycleStatus: 'REFUND_REQUESTED',
       updatedAt: now,
     });
   });
 
-  let refundId = `rfnd_cash_${reservationId}`;
-  try {
-    if (!isCash) {
-      const gatewayPaymentId = initial.gatewayPaymentId;
-      if (!gatewayPaymentId) throw new HttpsError('failed-precondition', 'Cannot refund online order without a recorded gateway payment ID.');
-      refundId = (await new RazorpayPaymentAdapter().createRefund(gatewayPaymentId, amountPaise, reason)).refundId;
-    }
-    await reservationRef.update({ status: isCash ? 'GATEWAY_SKIPPED_CASH' : 'GATEWAY_SUCCEEDED', gatewayRefundId: refundId, gatewayExecutedAt: admin.firestore.Timestamp.now() });
-  } catch (error: unknown) {
-    await db.runTransaction(async (transaction) => {
-      const current = await transaction.get(orderRef);
-      if (current.exists && Number(current.data()!.amountRefundedPaise) === previousRefundedPaise + amountPaise) {
-        transaction.update(orderRef, { amountRefundedPaise: previousRefundedPaise, refundLifecycleStatus: 'GATEWAY_REFUND_FAILED', updatedAt: admin.firestore.Timestamp.now() });
+  // ─── Step 4: External Gateway Call with Deterministic Idempotency Key ───
+  const deterministicGatewayKey = cleanIdempKey || `TB-REFUND-${orderId}-${reservationId}`;
+  let gatewayRefundId = `rfnd_cash_${reservationId}`;
+
+  if (!isCash) {
+    const gatewayPaymentId = orderData.gatewayPaymentId;
+    if (!gatewayPaymentId) {
+      // Rollback reservation delta in transaction
+      await db.runTransaction(async (transaction) => {
+        transaction.update(orderRef, {
+          pendingRefundPaise: admin.firestore.FieldValue.increment(-requestedRefundPaise),
+          refundLifecycleStatus: 'GATEWAY_REFUND_FAILED',
+          updatedAt: admin.firestore.Timestamp.now(),
+        });
+        transaction.update(reservationRef, {
+          status: 'GATEWAY_FAILED',
+          failedAt: admin.firestore.Timestamp.now(),
+          error: 'Missing gatewayPaymentId',
+        });
+      });
+      if (idempRef) {
+        await idempRef.update({
+          status: 'FAILED',
+          failedAt: admin.firestore.Timestamp.now(),
+          error: 'Missing gatewayPaymentId',
+        }).catch(() => {});
       }
-      transaction.update(reservationRef, { status: 'GATEWAY_FAILED', failedAt: admin.firestore.Timestamp.now(), error: error instanceof Error ? error.message : 'Unknown gateway failure' });
+      throw new HttpsError('failed-precondition', 'Cannot refund online order without a recorded gateway payment ID.');
+    }
+
+    try {
+      const adapter = new RazorpayPaymentAdapter();
+      const refundRes = await adapter.createRefund(gatewayPaymentId, requestedRefundPaise, cleanReason, deterministicGatewayKey);
+      gatewayRefundId = refundRes.refundId;
+      await reservationRef.update({
+        status: 'GATEWAY_SUCCEEDED',
+        gatewayRefundId,
+        gatewayExecutedAt: admin.firestore.Timestamp.now(),
+      });
+    } catch (err: any) {
+      // Rollback reservation delta safely using FieldValue.increment(-requestedRefundPaise) (Finding 6)
+      await db.runTransaction(async (transaction) => {
+        transaction.update(orderRef, {
+          pendingRefundPaise: admin.firestore.FieldValue.increment(-requestedRefundPaise),
+          refundLifecycleStatus: 'GATEWAY_REFUND_FAILED',
+          updatedAt: admin.firestore.Timestamp.now(),
+        });
+        transaction.update(reservationRef, {
+          status: 'GATEWAY_FAILED',
+          failedAt: admin.firestore.Timestamp.now(),
+          error: err.message,
+        });
+      });
+
+      if (idempRef) {
+        await idempRef.update({
+          status: 'FAILED',
+          failedAt: admin.firestore.Timestamp.now(),
+          error: err.message,
+        }).catch(() => {});
+      }
+
+      await logSecurityEvent({
+        eventType: 'GATEWAY_REFUND_FAILED',
+        severity: 'HIGH',
+        orderId,
+        actorUid: actorId,
+        details: { error: err.message, gatewayPaymentId, amountPaise: requestedRefundPaise, reservationId },
+      });
+      throw new HttpsError('internal', `Payment gateway refund failed: ${err.message}`);
+    }
+  } else {
+    await reservationRef.update({
+      status: 'GATEWAY_SKIPPED_CASH',
+      gatewayRefundId,
+      gatewayExecutedAt: admin.firestore.Timestamp.now(),
     });
-    throw error;
   }
 
-  return { refundId, reservationId, isCash, amountPaidPaise, previousRefundedPaise };
+  // ─── Step 5: Finalization Transaction (Delta Accounting & Double-Entry Ledger) ───
+  return await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(orderRef);
+    if (!snap.exists) {
+      throw new HttpsError('not-found', 'Order not found during refund finalization.');
+    }
+
+    const currentOrderData = snap.data()!;
+    const settledSoFar = Number(currentOrderData.amountRefundedPaise || 0);
+    const newTotalRefundedPaise = settledSoFar + requestedRefundPaise;
+    const isFullRefund = newTotalRefundedPaise >= amountPaidPaise;
+    const nextPaymentStatus = isFullRefund ? 'refunded' : 'partially_refunded';
+    const nextOrderStatus = (isFullRefund && currentOrderData.status !== 'collected') ? 'cancelled' : currentOrderData.status;
+
+    // 1. Immutable Financial Transactions double-entry ledger posting
+    const finTxRef = db.collection('financialTransactions').doc(`refund_fin_${gatewayRefundId}`);
+    const finRecord: FinancialTransactionRecord = {
+      transactionId: finTxRef.id,
+      orderId,
+      type: 'REFUND_DISBURSEMENT',
+      amount: requestedRefundPaise / 100,
+      amountPaise: requestedRefundPaise,
+      currency: 'INR',
+      postings: [
+        { account: 'SALES_REVENUE', debitPaise: requestedRefundPaise, creditPaise: 0 },
+        { account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE', debitPaise: 0, creditPaise: requestedRefundPaise },
+      ],
+      gatewayTransactionId: gatewayRefundId,
+      gatewayOrderId: currentOrderData.gatewayOrderId || 'direct',
+      actorId,
+      timestamp: now,
+      status: 'REFUNDED',
+    };
+    transaction.set(finTxRef, finRecord);
+
+    // 2. Finalize Order State (Delta accounting: decrement pending, increment settled)
+    transaction.update(orderRef, {
+      pendingRefundPaise: admin.firestore.FieldValue.increment(-requestedRefundPaise),
+      amountRefundedPaise: admin.firestore.FieldValue.increment(requestedRefundPaise),
+      paymentStatus: nextPaymentStatus,
+      refundLifecycleStatus: 'GATEWAY_REFUNDED',
+      status: nextOrderStatus,
+      refundId: gatewayRefundId,
+      refundedAt: now,
+      amountRefundablePaise: amountPaidPaise - newTotalRefundedPaise,
+      lastRefundAmountPaise: requestedRefundPaise,
+      refundReason: cleanReason,
+      refundedByStaffId: actorId,
+      refundReservationId: reservationId,
+      updatedAt: now,
+    });
+
+    // 3. Mark reservation as finalized
+    transaction.update(reservationRef, {
+      status: isCash ? 'GATEWAY_SKIPPED_CASH' : 'FINALIZED',
+      gatewayRefundId,
+      finalizedAt: now,
+    });
+
+    // 4. Immutable Audit Event
+    const eventRef = db.collection('orderEvents').doc();
+    transaction.set(eventRef, {
+      orderId,
+      fromStatus: currentOrderData.status,
+      toStatus: nextOrderStatus,
+      actorId,
+      actorRole,
+      timestamp: now,
+      reason: `REFUND_PROCESSED: ${cleanReason}`,
+      metadata: {
+        refundId: gatewayRefundId,
+        reservationId,
+        refundAmountPaise: requestedRefundPaise,
+        totalRefundedPaise: newTotalRefundedPaise,
+        isFullRefund,
+        paymentMethod: currentOrderData.paymentMethod,
+      },
+    });
+
+    // 5. Idempotency record transition to SETTLED
+    if (idempRef) {
+      transaction.set(idempRef, {
+        idempotencyKey: cleanIdempKey,
+        refundId: gatewayRefundId,
+        reservationId,
+        orderId,
+        refundedPaise: requestedRefundPaise,
+        totalRefundedPaise: newTotalRefundedPaise,
+        remainingRefundablePaise: amountPaidPaise - newTotalRefundedPaise,
+        status: nextPaymentStatus,
+        isCash,
+        amountPaidPaise,
+        previousRefundedPaise: settledSoFar,
+        settledAt: now,
+      }, { merge: true });
+    }
+
+    return {
+      success: true,
+      refundId: gatewayRefundId,
+      reservationId,
+      orderId,
+      refundedPaise: requestedRefundPaise,
+      totalRefundedPaise: newTotalRefundedPaise,
+      remainingRefundablePaise: amountPaidPaise - newTotalRefundedPaise,
+      status: nextPaymentStatus,
+      isCash,
+      amountPaidPaise,
+      previousRefundedPaise: settledSoFar,
+    };
+  });
 }
 
 /**
- * Formal, Audited Cumulative Refund Engine — Race-Condition-Safe.
+ * Formal, Audited Cumulative Refund Engine — Race-Condition-Safe & Idempotency-Hardened.
  */
 export const processOrderRefund = onCall<RefundRequest>(async (request) => {
   enforceAppCheck(request);
@@ -142,267 +451,23 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
   await enforceRateLimit(request.auth.uid, 'refund');
 
   const { orderId, reason, amountPaise, idempotencyKey } = request.data || {};
-  if (!orderId || typeof orderId !== 'string' || orderId.trim().length === 0 || orderId.length > 128) {
-    throw new HttpsError('invalid-argument', 'Valid non-empty orderId (max 128 chars) is required.');
-  }
-
-  if (!reason || typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 200) {
-    throw new HttpsError('invalid-argument', 'Valid refund reason string (1-200 characters) is required.');
-  }
-
-  // Caller-supplied idempotency key check
-  const cleanIdempKey = idempotencyKey && typeof idempotencyKey === 'string' ? idempotencyKey.trim().slice(0, 128) : undefined;
-  if (cleanIdempKey) {
-    const existingIdempDoc = await db.collection('refundIdempotency').doc(cleanIdempKey).get();
-    if (existingIdempDoc.exists) {
-      const data = existingIdempDoc.data()!;
-      return {
-        success: true,
-        refundId: data.refundId,
-        orderId: data.orderId,
-        refundedPaise: data.refundedPaise,
-        totalRefundedPaise: data.totalRefundedPaise,
-        remainingRefundablePaise: data.remainingRefundablePaise || 0,
-        status: data.status,
-      };
-    }
-  }
-
-  const cleanReason = reason.trim();
-  const orderRef = db.collection('orders').doc(orderId);
-  const now = admin.firestore.Timestamp.now();
-
-  // ─── Step 1: Validate order (pre-flight, non-transactional read) ─────────
-  const initialSnap = await orderRef.get();
-  if (!initialSnap.exists) {
-    throw new HttpsError('not-found', 'Order not found.');
-  }
-
-  const orderData = initialSnap.data()!;
-  if (orderData.paymentStatus !== 'paid' && orderData.paymentStatus !== 'partially_refunded') {
-    throw new HttpsError(
-      'failed-precondition',
-      `Cannot refund an order with paymentStatus '${orderData.paymentStatus}' (must be 'paid' or 'partially_refunded').`
-    );
-  }
-
-  // Strict Fail-Closed Paid Amount Validation
-  const amountPaidPaise = Number(orderData.amountPaidPaise);
-  if (!Number.isSafeInteger(amountPaidPaise) || amountPaidPaise <= 0) {
-    throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Order ${orderId} is missing authoritative amountPaidPaise.`);
-  }
-
-  const previouslyRefundedPaise = Number(orderData.amountRefundedPaise || 0);
-  const remainingRefundablePaise = Math.max(0, amountPaidPaise - previouslyRefundedPaise);
-
-  if (remainingRefundablePaise <= 0) {
-    throw new HttpsError('failed-precondition', `Order ${orderId} has already been fully refunded.`);
-  }
-
-  const requestedRefundPaise = amountPaise !== undefined ? Number(amountPaise) : remainingRefundablePaise;
-
-  if (!Number.isSafeInteger(requestedRefundPaise) || requestedRefundPaise <= 0 || requestedRefundPaise > remainingRefundablePaise) {
-    throw new HttpsError(
-      'invalid-argument',
-      `Invalid refund amount ${requestedRefundPaise} paise. Maximum refundable amount is ${remainingRefundablePaise} paise.`
-    );
-  }
-
-  const isCash = orderData.paymentMethod === 'counter_cash';
-  const reservationId = crypto.randomBytes(16).toString('hex');
-  const reservationRef = db.collection('refundReservations').doc(reservationId);
-
-  // ─── Step 2: Atomic Reservation (THE race-condition lock) ─────────────────
-  // This transaction atomically verifies the refundable amount hasn't changed AND
-  // creates the exclusive reservation. Only one concurrent caller can commit this.
-  // The second concurrent caller will see a stale `remainingRefundablePaise` mismatch
-  // and be rejected — BEFORE any gateway call is made.
-  await db.runTransaction(async (transaction) => {
-    const snap = await transaction.get(orderRef);
-    if (!snap.exists) {
-      throw new HttpsError('not-found', 'Order not found during reservation.');
-    }
-
-    const currentData = snap.data()!;
-    const curPrevRefunded = Number(currentData.amountRefundedPaise || 0);
-    const curRemaining = Math.max(0, amountPaidPaise - curPrevRefunded);
-
-    // Fail-closed: if another concurrent refund already consumed some amount, reject
-    if (requestedRefundPaise > curRemaining) {
-      throw new HttpsError(
-        'failed-precondition',
-        'Concurrent refund detected: requested amount exceeds remaining refundable balance. Please retry.'
-      );
-    }
-
-    // Create the atomic reservation document — this is the exclusive lock
-    transaction.set(reservationRef, {
-      reservationId,
-      orderId,
-      requestedRefundPaise,
-      amountPaidPaise,
-      curPrevRefunded,
-      actorUid: request.auth!.uid,
-      actorRole,
-      reason: cleanReason,
-      status: 'RESERVATION_CREATED',
-      isCash,
-      idempotencyKey: cleanIdempKey || null,
-      createdAt: now,
-    });
-
-    // Also speculatively increment amountRefundedPaise to block any other concurrent reservation
-    transaction.update(orderRef, {
-      amountRefundedPaise: curPrevRefunded + requestedRefundPaise,
-      refundLifecycleStatus: 'REFUND_REQUESTED',
-      updatedAt: now,
-    });
+  const result = await reserveAndExecuteRefund({
+    orderId,
+    reason,
+    amountPaise,
+    actorId: request.auth.uid,
+    actorRole,
+    idempotencyKey,
+    cancellation: false,
   });
 
-  // ─── Step 3: Gateway Execution (AFTER reservation is committed) ───────────
-  // If this fails, the reservation document remains with status=GATEWAY_FAILED
-  // which the reconciliation cron will pick up and reverse the amountRefundedPaise increment.
-  let gatewayRefundId = `rfnd_cash_${reservationId}`;
-
-  if (!isCash) {
-    const gatewayPaymentId = orderData.gatewayPaymentId;
-    if (!gatewayPaymentId) {
-      // Rollback the speculative increment
-      await orderRef.update({
-        amountRefundedPaise: previouslyRefundedPaise,
-        refundLifecycleStatus: 'GATEWAY_REFUND_FAILED',
-        updatedAt: admin.firestore.Timestamp.now(),
-      });
-      await reservationRef.update({ status: 'GATEWAY_FAILED', failedAt: admin.firestore.Timestamp.now() });
-      throw new HttpsError('failed-precondition', 'Cannot refund online order without a recorded gateway payment ID.');
-    }
-
-    try {
-      const adapter = new RazorpayPaymentAdapter();
-      const refundRes = await adapter.createRefund(gatewayPaymentId, requestedRefundPaise, cleanReason);
-      gatewayRefundId = refundRes.refundId;
-      await reservationRef.update({ status: 'GATEWAY_SUCCEEDED', gatewayRefundId, gatewayExecutedAt: admin.firestore.Timestamp.now() });
-    } catch (err: any) {
-      // Rollback the speculative increment so future refund attempts can proceed
-      await orderRef.update({
-        amountRefundedPaise: previouslyRefundedPaise,
-        refundLifecycleStatus: 'GATEWAY_REFUND_FAILED',
-        updatedAt: admin.firestore.Timestamp.now(),
-      });
-      await reservationRef.update({ status: 'GATEWAY_FAILED', failedAt: admin.firestore.Timestamp.now(), error: err.message });
-
-      await logSecurityEvent({
-        eventType: 'GATEWAY_REFUND_FAILED',
-        severity: 'HIGH',
-        orderId,
-        actorUid: request.auth.uid,
-        details: { error: err.message, gatewayPaymentId, amountPaise: requestedRefundPaise, reservationId },
-      });
-      throw new HttpsError('internal', `Payment gateway refund failed: ${err.message}`);
-    }
-  }
-
-  // ─── Step 4: Finalization Transaction ────────────────────────────────────
-  return await db.runTransaction(async (transaction) => {
-    const snap = await transaction.get(orderRef);
-    if (!snap.exists) {
-      throw new HttpsError('not-found', 'Order not found during finalization.');
-    }
-
-    const currentOrderData = snap.data()!;
-    // At this point amountRefundedPaise was already speculatively updated in Step 2
-    const newTotalRefundedPaise = Number(currentOrderData.amountRefundedPaise);
-    const isFullRefund = newTotalRefundedPaise >= amountPaidPaise;
-    const nextPaymentStatus = isFullRefund ? 'refunded' : 'partially_refunded';
-    const nextOrderStatus = isFullRefund ? 'cancelled' : currentOrderData.status;
-
-    // 1. Write to immutable financialTransactions ledger
-    const finTxRef = db.collection('financialTransactions').doc(`refund_fin_${gatewayRefundId}`);
-    const finRecord: FinancialTransactionRecord = {
-      transactionId: finTxRef.id,
-      orderId,
-      type: 'REFUND_DISBURSEMENT',
-      amount: requestedRefundPaise / 100,
-      amountPaise: requestedRefundPaise,
-      currency: 'INR',
-      postings: [
-        { account: 'SALES_REVENUE', debitPaise: requestedRefundPaise, creditPaise: 0 },
-        { account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE', debitPaise: 0, creditPaise: requestedRefundPaise },
-      ],
-      gatewayTransactionId: gatewayRefundId,
-      gatewayOrderId: currentOrderData.gatewayOrderId || 'direct',
-      actorId: request.auth!.uid,
-      timestamp: now,
-      status: 'REFUNDED',
-    };
-    transaction.set(finTxRef, finRecord);
-
-    // 2. Finalize Order State
-    transaction.update(orderRef, {
-      paymentStatus: nextPaymentStatus,
-      refundLifecycleStatus: 'GATEWAY_REFUNDED',
-      status: nextOrderStatus,
-      refundId: gatewayRefundId,
-      refundedAt: now,
-      amountRefundablePaise: amountPaidPaise - newTotalRefundedPaise,
-      lastRefundAmountPaise: requestedRefundPaise,
-      refundReason: cleanReason,
-      refundedByStaffId: request.auth!.uid,
-      refundReservationId: reservationId,
-      updatedAt: now,
-    });
-
-    // 3. Mark reservation as finalized
-    transaction.update(reservationRef, {
-      status: 'FINALIZED',
-      gatewayRefundId,
-      finalizedAt: now,
-    });
-
-    // 4. Immutable Audit Event
-    const eventRef = db.collection('orderEvents').doc();
-    transaction.set(eventRef, {
-      orderId,
-      fromStatus: currentOrderData.status,
-      toStatus: nextOrderStatus,
-      actorId: request.auth!.uid,
-      actorRole,
-      timestamp: now,
-      reason: `REFUND_PROCESSED: ${cleanReason}`,
-      metadata: {
-        refundId: gatewayRefundId,
-        reservationId,
-        refundAmountPaise: requestedRefundPaise,
-        totalRefundedPaise: newTotalRefundedPaise,
-        isFullRefund,
-        paymentMethod: currentOrderData.paymentMethod,
-      },
-    });
-
-    // 5. Idempotency record
-    if (cleanIdempKey) {
-      const idempRef = db.collection('refundIdempotency').doc(cleanIdempKey);
-      transaction.set(idempRef, {
-        idempotencyKey: cleanIdempKey,
-        refundId: gatewayRefundId,
-        reservationId,
-        orderId,
-        refundedPaise: requestedRefundPaise,
-        totalRefundedPaise: newTotalRefundedPaise,
-        remainingRefundablePaise: amountPaidPaise - newTotalRefundedPaise,
-        status: nextPaymentStatus,
-        createdAt: now,
-      });
-    }
-
-    return {
-      success: true,
-      refundId: gatewayRefundId,
-      orderId,
-      refundedPaise: requestedRefundPaise,
-      totalRefundedPaise: newTotalRefundedPaise,
-      remainingRefundablePaise: amountPaidPaise - newTotalRefundedPaise,
-      status: nextPaymentStatus,
-    };
-  });
+  return {
+    success: result.success,
+    refundId: result.refundId,
+    orderId: result.orderId,
+    refundedPaise: result.refundedPaise,
+    totalRefundedPaise: result.totalRefundedPaise,
+    remainingRefundablePaise: result.remainingRefundablePaise,
+    status: result.status,
+  };
 });

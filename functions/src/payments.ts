@@ -50,6 +50,10 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
     this.webhookSecret = getRequiredSecret('RAZORPAY_WEBHOOK_SECRET');
   }
 
+  isProduction(): boolean {
+    return process.env.NODE_ENV === 'production' && !process.env.SIMULATE_PAYMENTS;
+  }
+
   verifyPaymentSignature(gatewayOrderId: string, gatewayPaymentId: string, signature: string): boolean {
     const expected = crypto
       .createHmac('sha256', this.secret)
@@ -88,10 +92,14 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
     return false;
   }
 
-  async createRefund(gatewayPaymentId: string, amountPaise: number, reason: string): Promise<RefundResult> {
-    const isProduction = process.env.NODE_ENV === 'production' && !process.env.SIMULATE_PAYMENTS;
-    if (isProduction) {
-      const keyId = getRequiredSecret('RAZORPAY_KEY_ID');
+  async createRefund(
+    gatewayPaymentId: string,
+    amountPaise: number,
+    reason: string,
+    idempotencyKey?: string
+  ): Promise<RefundResult> {
+    if (this.isProduction()) {
+      const keyId = getRequiredSecret('PAYMENT_GATEWAY_KEY_ID');
       const authHeader = `Basic ${Buffer.from(`${keyId}:${this.secret}`).toString('base64')}`;
 
       const res = await fetch(`https://api.razorpay.com/v1/payments/${gatewayPaymentId}/refund`, {
@@ -99,11 +107,13 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
         headers: {
           'Authorization': authHeader,
           'Content-Type': 'application/json',
+          ...(idempotencyKey ? { 'X-Razorpay-Idempotency-Key': idempotencyKey } : {}),
         },
         body: JSON.stringify({
           amount: amountPaise,
           speed: 'optimum',
-          notes: { reason },
+          receipt: idempotencyKey || undefined,
+          notes: { reason, idempotencyKey: idempotencyKey || '' },
         }),
       });
 
@@ -120,8 +130,10 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
       };
     }
 
-    // In staging / test / simulation mode: return deterministic simulated refund record
-    const refundId = `rfnd_${crypto.randomBytes(8).toString('hex')}`;
+    // In staging / test / simulation mode: return deterministic simulated refund record based on idempotencyKey
+    const refundId = idempotencyKey
+      ? `rfnd_${crypto.createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 16)}`
+      : `rfnd_${crypto.randomBytes(8).toString('hex')}`;
     return {
       refundId,
       status: 'processed',
@@ -319,7 +331,18 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
   }
 
   const eventPayload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-  const eventId = eventPayload.id || `evt_${crypto.randomBytes(8).toString('hex')}`;
+  if (!eventPayload || !eventPayload.id || typeof eventPayload.id !== 'string' || eventPayload.id.trim().length === 0) {
+    await logSecurityEvent({
+      eventType: 'MALFORMED_WEBHOOK_PAYLOAD',
+      severity: 'HIGH',
+      actorUid: 'external_webhook',
+      details: { reason: 'Missing or invalid provider event ID' },
+    });
+    res.status(400).json({ error: 'Missing valid provider event identifier.' });
+    return;
+  }
+
+  const eventId = eventPayload.id.trim();
   const eventType = eventPayload.event;
 
   const eventDocRef = db.collection('processedGatewayEvents').doc(eventId);
@@ -401,15 +424,20 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
 
     res.status(200).json({ received: true, processed: true });
   } catch (err: any) {
-    console.error('Webhook processing error:', err);
+    const correlationId = `WH-ERR-${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
+    console.error(`[handlePaymentWebhook][${correlationId}] Internal processing error:`, err);
     // Mark as FAILED / RETRYABLE so gateway retries can be processed
     await eventDocRef.set({
       status: 'FAILED',
       errorMessage: err.message,
+      correlationId,
       failedAt: admin.firestore.Timestamp.now(),
     }, { merge: true }).catch(() => {});
 
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      error: 'Webhook processing failed',
+      correlationId,
+    });
   }
 });
 
