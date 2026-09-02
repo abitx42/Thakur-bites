@@ -2,6 +2,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
+import { enforceAppCheck } from './app_check';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -36,6 +37,8 @@ export interface StudentProfileDoc {
  * Prevents client from manufacturing authoritative fields (isVerified, role, accountDisabled, totalOrders).
  */
 export const provisionStudentProfile = onCall<ProvisionStudentRequest>(async (request) => {
+  // Legacy compatibility endpoint. New clients use provisionUserProfile.
+  enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
