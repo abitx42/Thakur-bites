@@ -239,13 +239,12 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Increment Order Count
+  /// Increment Order Count (Local state notification — server updates authoritative totalOrders on checkout)
   void incrementOrderCount() {
     if (_currentUserProfile != null) {
       _currentUserProfile = _currentUserProfile!.copyWith(
         totalOrders: _currentUserProfile!.totalOrders + 1,
       );
-      _authService.incrementUserOrders(_currentUserProfile!.uid);
       notifyListeners();
     }
   }

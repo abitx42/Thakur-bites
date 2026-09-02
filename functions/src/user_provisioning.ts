@@ -1,11 +1,12 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { UserDocument } from './types';
+import { UserDocument, VerificationStatus } from './types';
 import { classifyIdentity } from './identity_classifier';
 import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
 import { logSecurityEvent } from './security_logger';
 import { syncUserCustomClaims } from './claims_manager';
+import { enforceAppVersionPolicy } from './version_policy';
 
 const db = admin.firestore();
 
@@ -15,52 +16,73 @@ export interface ProvisionUserRequest {
   department?: string;
   year?: string;
   rollNo?: string;
+  appVersion?: string;
 }
 
 /**
  * Universal User Profile Provisioner (Platform 2.0).
  * 
- * Called after Google Sign-In (or any Firebase Auth sign-in).
- * Uses identity_classifier to determine initial accountType and verificationStatus.
- * If an existing students/{uid} document exists, migrates data preserving totalOrders and createdAt.
+ * Called after Google Sign-In, Email Sign-Up, or Guest Sign-In.
+ * Authoritatively determines accountType, verificationStatus, and priorityLevel on the backend.
  * 
- * Client cannot set: accountType, verificationStatus, priorityLevel, isVerified,
- * accountDisabled, totalOrders, totalSpentPaise, averageOrderPaise.
+ * SECURITY INVARIANTS:
+ * 1. Anonymous / Guest sessions are strictly assigned accountType: 'VISITOR', priorityLevel: 0.
+ *    Client self-assertion of student/teacher status is strictly IGNORED.
+ * 2. Institutional student/teacher status requires verified institutional email (@tcetmumbai.in, @thakureducation.org).
+ * 3. Client cannot set or tamper with: accountType, verificationStatus, priorityLevel, isVerified,
+ *    accountDisabled, totalOrders, totalSpentPaise, averageOrderPaise.
+ * 4. Migrates legacy students/{uid} documents server-side.
  */
 export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request) => {
   enforceAppCheck(request);
+  await enforceAppVersionPolicy(request.data?.appVersion);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
   const userId = request.auth.uid;
-  const email = (request.auth.token.email as string | undefined)?.trim().toLowerCase();
+  const email = (request.auth.token.email as string | undefined)?.trim().toLowerCase() || '';
+  const isAnonymous = request.auth.token.firebase?.sign_in_provider === 'anonymous' || !email;
   const emailVerified = request.auth.token.email_verified === true;
   const displayNameFromToken = (request.auth.token.name as string | undefined) || '';
   const photoURL = (request.auth.token.picture as string | undefined) || '';
 
-  if (!email) {
-    throw new HttpsError('invalid-argument', 'Authenticated user must have an email address.');
-  }
-
   await enforceRateLimit(userId, 'role_assignment');
 
-  // Classify identity based on email
-  const classification = classifyIdentity(email);
+  // Authoritatively classify identity based on verified email
+  let classification: ReturnType<typeof classifyIdentity>;
+  let verificationStatus: VerificationStatus;
 
-  // If institutional email, require verification
-  let verificationStatus = classification.verificationStatus;
-  if (classification.identityHints.isInstitutionalEmail && !emailVerified) {
-    verificationStatus = 'PENDING';
+  if (isAnonymous) {
+    // Anonymous / Guest sign-in: Always VISITOR, Zero priority, Not Required verification
+    classification = {
+      accountType: 'VISITOR',
+      verificationStatus: 'NOT_REQUIRED',
+      priorityLevel: 0,
+      identityHints: {
+        isInstitutionalEmail: false,
+        domain: '',
+        possibleStudentId: false,
+      },
+    };
+    verificationStatus = 'NOT_REQUIRED';
+  } else {
+    classification = classifyIdentity(email);
+    verificationStatus = classification.verificationStatus;
+    // If institutional email, require email verification
+    if (classification.identityHints.isInstitutionalEmail && !emailVerified) {
+      verificationStatus = 'PENDING';
+    }
   }
 
   // Sanitize client-provided fields
   const { displayName, phone, department, year, rollNo } = request.data || {};
-  const cleanName = String(displayName || displayNameFromToken || 'Thakur Bites User').trim().slice(0, 100);
+  const fallbackDefaultName = isAnonymous ? 'Guest Visitor' : 'Thakur Bites User';
+  const cleanName = String(displayName || displayNameFromToken || fallbackDefaultName).trim().slice(0, 100);
   const cleanPhone = String(phone || '').trim().slice(0, 20);
   const cleanDept = String(department || '').trim().slice(0, 50);
   const cleanYear = String(year || '').trim().slice(0, 10);
-  const cleanRollNo = String(rollNo || '').trim().toUpperCase().slice(0, 20);
+  const cleanRollNo = String(rollNo || (isAnonymous ? 'GUEST' : '')).trim().toUpperCase().slice(0, 20);
 
   const userRef = db.collection('users').doc(userId);
   const studentRef = db.collection('students').doc(userId);
@@ -73,7 +95,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
     ]);
 
     if (userSnap.exists) {
-      // User already exists — update mutable fields only
+      // User already exists — update mutable client-editable fields only
       const existingData = userSnap.data() as UserDocument;
       transaction.update(userRef, {
         displayName: cleanName || existingData.displayName,
@@ -90,6 +112,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
         accountType: existingData.accountType,
         verificationStatus: existingData.verificationStatus,
         priorityLevel: existingData.priorityLevel,
+        isVerified: existingData.isVerified,
       };
     }
 
@@ -105,14 +128,10 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
       if (studentData.createdAt) {
         migratedCreatedAt = studentData.createdAt;
       }
-      // Preserve student-specific fields
-      if (!cleanDept && studentData.department) {
-        // Use existing department
-      }
     }
 
-    const isVerified = classification.accountType === 'VISITOR'
-      ? true  // Visitors are always "verified" (no institutional proof needed)
+    const isVerified = isAnonymous || classification.accountType === 'VISITOR'
+      ? true  // Visitors do not require institutional verification
       : (emailVerified && classification.verificationStatus === 'VERIFIED');
 
     const newUser: UserDocument = {
@@ -143,6 +162,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
       accountType: classification.accountType,
       verificationStatus,
       priorityLevel: classification.priorityLevel,
+      isVerified,
     };
   });
 
@@ -159,6 +179,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
     actorUid: userId,
     details: {
       email,
+      isAnonymous,
       accountType: result.accountType,
       verificationStatus: result.verificationStatus,
       priorityLevel: result.priorityLevel,
@@ -174,6 +195,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
     accountType: result.accountType,
     verificationStatus: result.verificationStatus,
     priorityLevel: result.priorityLevel,
+    isVerified: result.isVerified,
     isNew: result.isNew,
   };
 });

@@ -3,16 +3,32 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../models/user_profile.dart';
-import '../models/student.dart';
+import 'functions_service.dart';
 
 /// Platform 2.0 Universal Authentication and Identity Service for Thakur Bites.
-/// Seamlessly manages Google Identity Platform (Web & Native), Email/Password, and Guest Sessions.
+///
+/// SECURITY ARCHITECTURE:
+/// - Firebase Auth manages user authentication tokens.
+/// - Authoritative user profile creation and role assignment is strictly performed
+///   server-side via the `provisionUserProfile` Cloud Function.
+/// - Clients cannot choose or write `accountType`, `priorityLevel`, `isVerified`,
+///   `verificationStatus`, or `role` directly to Firestore.
+/// - Anonymous guest sessions are strictly provisioned as `VISITOR` (Priority 0).
 class AuthService {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: ['email', 'profile'],
-  );
+  final FirebaseAuth _auth;
+  final FirebaseFirestore _db;
+  final FunctionsService _functions;
+  final GoogleSignIn _googleSignIn;
+
+  AuthService({
+    FirebaseAuth? auth,
+    FirebaseFirestore? firestore,
+    FunctionsService? functions,
+    GoogleSignIn? googleSignIn,
+  })  : _auth = auth ?? FirebaseAuth.instance,
+        _db = firestore ?? FirebaseFirestore.instance,
+        _functions = functions ?? FunctionsService(),
+        _googleSignIn = googleSignIn ?? GoogleSignIn(scopes: ['email', 'profile']);
 
   static const List<String> allowedInstitutionalDomains = [
     'tcetmumbai.in',
@@ -21,9 +37,6 @@ class AuthService {
 
   CollectionReference<Map<String, dynamic>> get _users =>
       _db.collection('users');
-
-  CollectionReference<Map<String, dynamic>> get _students =>
-      _db.collection('students');
 
   /// Stream of Firebase Auth state changes
   Stream<User?> get authStateChanges => _auth.authStateChanges();
@@ -39,7 +52,7 @@ class AuthService {
     return allowedInstitutionalDomains.any((d) => domain == d || domain.endsWith('.$d'));
   }
 
-  /// Classifies email domain to default account type
+  /// Classifies email domain to default account type (Hint only — server enforces authoritative classification)
   static AccountType classifyEmailDomain(String email) {
     final clean = email.trim().toLowerCase();
     if (clean.endsWith('@tcetmumbai.in')) {
@@ -51,7 +64,7 @@ class AuthService {
     return AccountType.visitor;
   }
 
-  /// Fetch a user profile by UID (Checking `users` collection first with fallback migration from `students`)
+  /// Fetch a user profile by UID from authoritative `users` collection.
   Future<UserProfile?> getUserProfile(String uid) async {
     try {
       final userDoc = await _users.doc(uid).get();
@@ -59,34 +72,12 @@ class AuthService {
         return UserProfile.fromFirestore(userDoc.id, userDoc.data()!);
       }
 
-      // Legacy fallback: check `students` collection
-      final studentDoc = await _students.doc(uid).get();
-      if (studentDoc.exists && studentDoc.data() != null) {
-        final legacyStudent = Student.fromFirestore(studentDoc.id, studentDoc.data()!);
-        
-        // Auto-migrate legacy student to users collection
-        final migratedProfile = UserProfile(
-          uid: legacyStudent.uid,
-          email: legacyStudent.email ?? '',
-          displayName: legacyStudent.name.isNotEmpty ? legacyStudent.name : 'TCET Student',
-          accountType: AccountType.student,
-          verificationStatus: legacyStudent.isVerified ? VerificationStatus.verified : VerificationStatus.pending,
-          priorityLevel: 1,
-          department: legacyStudent.department,
-          rollNo: legacyStudent.rollNo,
-          phone: legacyStudent.phone,
-          isVerified: legacyStudent.isVerified,
-          accountDisabled: legacyStudent.accountDisabled,
-          totalOrders: legacyStudent.totalOrders,
-          createdAt: legacyStudent.createdAt,
-          lastLoginAt: legacyStudent.lastLoginAt ?? DateTime.now(),
-        );
-
-        await _users.doc(uid).set(migratedProfile.toFirestore(), SetOptions(merge: true));
-        return migratedProfile;
+      // If user profile document does not exist in Firestore yet, trigger server-side provisioning
+      if (_auth.currentUser != null && _auth.currentUser!.uid == uid) {
+        return await _ensureUserProfile(_auth.currentUser!);
       }
     } catch (e) {
-      debugPrint('Error fetching user profile for $uid: $e');
+      debugPrint('[AuthService] Error fetching user profile for $uid: $e');
     }
     return null;
   }
@@ -113,7 +104,6 @@ class AuthService {
 
     try {
       if (kIsWeb) {
-        // Official Firebase Web GoogleAuthProvider
         final googleProvider = GoogleAuthProvider();
         googleProvider.addScope('email');
         googleProvider.addScope('profile');
@@ -123,14 +113,12 @@ class AuthService {
           userCredential = await _auth.signInWithPopup(googleProvider);
         } on FirebaseAuthException catch (e) {
           if (e.code == 'popup-blocked' || e.code == 'popup-closed-by-user') {
-            // Graceful fallback to redirect
             await _auth.signInWithRedirect(googleProvider);
             throw Exception('Redirecting to Google authentication...');
           }
           rethrow;
         }
       } else {
-        // Native Google Sign-In on iOS / Android
         final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
         if (googleUser == null) {
           throw Exception('Google sign-in was cancelled.');
@@ -157,7 +145,7 @@ class AuthService {
     }
   }
 
-  /// Sign in as Guest (Anonymous Firebase Auth session + provisioned Visitor Profile)
+  /// Sign in as Guest (Anonymous Firebase Auth session + server-provisioned VISITOR Profile)
   Future<UserProfile> signInAsGuest() async {
     try {
       final userCredential = await _auth.signInAnonymously();
@@ -166,7 +154,18 @@ class AuthService {
         throw Exception('Failed to create guest session.');
       }
 
-      final guestProfile = UserProfile(
+      // Authoritative server-side profile provisioning as VISITOR
+      await _functions.provisionUserProfile(
+        displayName: 'Guest Visitor',
+      );
+
+      final profile = await getUserProfile(user.uid);
+      if (profile != null) {
+        return profile;
+      }
+
+      // Safe client-side fallback representation
+      return UserProfile(
         uid: user.uid,
         email: '',
         displayName: 'Guest Visitor',
@@ -179,9 +178,6 @@ class AuthService {
         createdAt: DateTime.now(),
         lastLoginAt: DateTime.now(),
       );
-
-      await _users.doc(user.uid).set(guestProfile.toFirestore(), SetOptions(merge: true));
-      return guestProfile;
     } on FirebaseAuthException catch (e) {
       throw Exception(_mapFirebaseAuthError(e));
     } catch (e) {
@@ -208,8 +204,6 @@ class AuthService {
     }
 
     final isCollegeDomain = isAuthorizedCollegeDomain(cleanEmail);
-    final accountType = classifyEmailDomain(cleanEmail);
-    final isVisitor = accountType == AccountType.visitor;
 
     try {
       final userCredential = await _auth.createUserWithEmailAndPassword(
@@ -232,7 +226,23 @@ class AuthService {
         } catch (_) {}
       }
 
-      final userProfile = UserProfile(
+      // Authoritative server-side profile provisioning
+      await _functions.provisionUserProfile(
+        displayName: name.trim(),
+        phone: phone.trim(),
+        rollNo: rollNo?.trim().toUpperCase(),
+        department: department?.trim(),
+      );
+
+      final profile = await getUserProfile(user.uid);
+      if (profile != null) {
+        return profile;
+      }
+
+      final accountType = classifyEmailDomain(cleanEmail);
+      final isVisitor = accountType == AccountType.visitor;
+
+      return UserProfile(
         uid: user.uid,
         email: cleanEmail,
         displayName: name.trim(),
@@ -250,28 +260,24 @@ class AuthService {
         createdAt: DateTime.now(),
         lastLoginAt: DateTime.now(),
       );
-
-      await _users.doc(user.uid).set(userProfile.toFirestore());
-      return userProfile;
     } on FirebaseAuthException catch (e) {
       throw Exception(_mapFirebaseAuthError(e));
     } catch (e) {
-      throw Exception('Sign up failed: ${e.toString().replaceAll('Exception:', '').trim()}');
+      throw Exception(e.toString().replaceAll('Exception:', '').trim());
     }
   }
 
-  /// Sign in with Email and Password
+  /// Sign In with Email and Password
   Future<UserProfile> signInWithEmail({
     required String email,
     required String password,
   }) async {
     final cleanEmail = email.trim().toLowerCase();
-
-    if (cleanEmail.isEmpty) {
-      throw Exception('Email address cannot be empty.');
+    if (cleanEmail.isEmpty || !cleanEmail.contains('@')) {
+      throw Exception('Please enter a valid email address.');
     }
     if (password.isEmpty) {
-      throw Exception('Password cannot be empty.');
+      throw Exception('Please enter your password.');
     }
 
     try {
@@ -282,21 +288,22 @@ class AuthService {
 
       final user = userCredential.user;
       if (user == null) {
-        throw Exception('Failed to authenticate.');
+        throw Exception('Sign-in failed.');
       }
 
+      // Reload user to get latest emailVerified state
       await user.reload();
-      final refreshedUser = _auth.currentUser ?? user;
+      final freshUser = _auth.currentUser ?? user;
 
-      return await _ensureUserProfile(refreshedUser);
+      return await _ensureUserProfile(freshUser);
     } on FirebaseAuthException catch (e) {
       throw Exception(_mapFirebaseAuthError(e));
     } catch (e) {
-      throw Exception('Sign in failed: ${e.toString().replaceAll('Exception:', '').trim()}');
+      throw Exception(e.toString().replaceAll('Exception:', '').trim());
     }
   }
 
-  /// Instant Student Login with Name, Roll No & Phone (Creates or attaches to session)
+  /// Provisional quick student session (routed authoritatively through provisionUserProfile)
   Future<UserProfile> signInStudent({
     required String name,
     required String phone,
@@ -308,81 +315,78 @@ class AuthService {
       final anonCredential = await _auth.signInAnonymously();
       user = anonCredential.user;
       if (user == null) {
-        throw Exception('Failed to initialize student session.');
+        throw Exception('Failed to initialize session.');
       }
     }
 
-    final uid = user.uid;
-    final cleanEmail = email?.trim().toLowerCase() ?? user.email ?? '';
-    final accountType = classifyEmailDomain(cleanEmail);
-
-    final profile = UserProfile(
-      uid: uid,
-      email: cleanEmail,
+    // Authoritatively provision on the backend
+    await _functions.provisionUserProfile(
       displayName: name.trim(),
-      accountType: accountType == AccountType.visitor ? AccountType.student : accountType,
-      verificationStatus: VerificationStatus.pending,
-      priorityLevel: 1,
+      phone: phone.trim(),
+      rollNo: rollNo.trim().toUpperCase(),
+    );
+
+    final profile = await getUserProfile(user.uid);
+    if (profile != null) {
+      return profile;
+    }
+
+    return UserProfile(
+      uid: user.uid,
+      email: email?.trim().toLowerCase() ?? user.email ?? '',
+      displayName: name.trim(),
+      accountType: AccountType.visitor,
+      verificationStatus: VerificationStatus.notRequired,
+      priorityLevel: 0,
       rollNo: rollNo.trim().toUpperCase(),
       phone: phone.trim(),
-      isVerified: user.emailVerified,
+      isVerified: true,
       createdAt: DateTime.now(),
       lastLoginAt: DateTime.now(),
     );
-
-    await _users.doc(uid).set(profile.toFirestore(), SetOptions(merge: true));
-    return profile;
   }
 
   /// Helper to ensure a UserProfile document exists in Firestore and is updated
   Future<UserProfile> _ensureUserProfile(User user) async {
-    final existing = await getUserProfile(user.uid);
-    if (existing != null) {
-      if (existing.accountDisabled) {
+    // 1. Call server-authoritative provisioner to guarantee valid record & claims
+    try {
+      await _functions.provisionUserProfile(
+        displayName: user.displayName,
+      );
+    } catch (e) {
+      debugPrint('[AuthService] Server provisioning notice: $e');
+    }
+
+    // 2. Fetch authoritative profile from Firestore
+    final userDoc = await _users.doc(user.uid).get();
+    if (userDoc.exists && userDoc.data() != null) {
+      final profile = UserProfile.fromFirestore(userDoc.id, userDoc.data()!);
+      if (profile.accountDisabled) {
         await _auth.signOut();
         throw Exception('Account has been deactivated. Please contact canteen management.');
       }
-
-      final isVerified = user.emailVerified || existing.isVerified || existing.accountType == AccountType.visitor;
-      final updated = existing.copyWith(
-        isVerified: isVerified,
-        lastLoginAt: DateTime.now(),
-        photoURL: user.photoURL ?? existing.photoURL,
-        displayName: (existing.displayName.isEmpty || existing.displayName == 'Thakur Bites User')
-            ? (user.displayName ?? existing.displayName)
-            : existing.displayName,
-      );
-
-      await _users.doc(user.uid).update({
-        'isVerified': isVerified,
-        'lastLoginAt': Timestamp.now(),
-        if (user.photoURL != null) 'photoURL': user.photoURL,
-      });
-
-      return updated;
+      return profile;
     }
 
-    // Provision new profile based on email classification
+    // Fallback baseline
     final email = user.email ?? '';
     final accountType = classifyEmailDomain(email);
     final isVisitor = accountType == AccountType.visitor;
-    final isVerified = isVisitor || user.emailVerified;
 
-    final newProfile = UserProfile(
+    return UserProfile(
       uid: user.uid,
       email: email,
       displayName: user.displayName ?? (isVisitor ? 'Guest Customer' : 'TCET Student'),
       photoURL: user.photoURL,
       accountType: accountType,
-      verificationStatus: isVisitor ? VerificationStatus.notRequired : (user.emailVerified ? VerificationStatus.verified : VerificationStatus.pending),
+      verificationStatus: isVisitor
+          ? VerificationStatus.notRequired
+          : (user.emailVerified ? VerificationStatus.verified : VerificationStatus.pending),
       priorityLevel: accountType == AccountType.teacher ? 2 : (isVisitor ? 0 : 1),
-      isVerified: isVerified,
+      isVerified: isVisitor || user.emailVerified,
       createdAt: DateTime.now(),
       lastLoginAt: DateTime.now(),
     );
-
-    await _users.doc(user.uid).set(newProfile.toFirestore());
-    return newProfile;
   }
 
   /// Translates Firebase Auth error codes into human-readable messages
@@ -422,15 +426,14 @@ class AuthService {
     }
   }
 
-  /// Update user profile
+  /// Update user profile (Updates only client-mutable fields in accordance with Firestore security rules)
   Future<void> updateUserProfile(UserProfile profile) async {
-    await _users.doc(profile.uid).set(profile.toFirestore(), SetOptions(merge: true));
-  }
-
-  /// Increment user total orders count
-  Future<void> incrementUserOrders(String uid) async {
-    await _users.doc(uid).update({
-      'totalOrders': FieldValue.increment(1),
+    await _users.doc(profile.uid).update({
+      'displayName': profile.displayName,
+      if (profile.phone != null) 'phone': profile.phone,
+      if (profile.department != null) 'department': profile.department,
+      if (profile.photoURL != null) 'photoURL': profile.photoURL,
+      'updatedAt': Timestamp.now(),
     });
   }
 

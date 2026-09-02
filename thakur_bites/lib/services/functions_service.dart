@@ -79,19 +79,28 @@ class FunctionsService {
     return Map<String, dynamic>.from(result.data as Map);
   }
 
-  // ─── Order State ─────────────────────────────────────────────────────────
+  // ─── User Profile Provisioning ──────────────────────────────────────────
 
-  /// Cancels an order and triggers gateway refund if applicable.
-  Future<Map<String, dynamic>> cancelOrder({
-    required String orderId,
-    required String reason,
+  /// Authoritatively provisions or updates a user profile via Cloud Function.
+  /// Enforces server-side identity classification, role boundaries, and custom claims.
+  Future<Map<String, dynamic>> provisionUserProfile({
+    String? displayName,
+    String? phone,
+    String? department,
+    String? year,
+    String? rollNo,
   }) async {
-    final callable = _functions.httpsCallable('cancelOrder');
-    final result = await callable.call({
-      'orderId': orderId,
-      'reason': reason,
+    final callable = _functions.httpsCallable('provisionUserProfile');
+    final payload = <String, dynamic>{
       'appVersion': _appVersion,
-    });
+    };
+    if (displayName != null) payload['displayName'] = displayName;
+    if (phone != null) payload['phone'] = phone;
+    if (department != null) payload['department'] = department;
+    if (year != null) payload['year'] = year;
+    if (rollNo != null) payload['rollNo'] = rollNo;
+
+    final result = await callable.call(payload);
     return Map<String, dynamic>.from(result.data as Map);
   }
 
