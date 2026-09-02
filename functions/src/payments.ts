@@ -18,6 +18,7 @@ import { enforceAppCheck } from './app_check';
 import { assertActiveWorkstationSession } from './shift_pins';
 import { enforceAppVersionPolicy } from './version_policy';
 import { assertCapability } from './authorization_policy';
+import { isProduction, isSimulationAllowed } from './env_config';
 
 const db = admin.firestore();
 
@@ -51,7 +52,7 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
   }
 
   isProduction(): boolean {
-    return process.env.NODE_ENV === 'production' && !process.env.SIMULATE_PAYMENTS;
+    return isProduction() || !isSimulationAllowed();
   }
 
   verifyPaymentSignature(gatewayOrderId: string, gatewayPaymentId: string, signature: string): boolean {

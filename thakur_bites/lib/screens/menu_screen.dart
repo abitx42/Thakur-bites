@@ -368,9 +368,9 @@ class _MenuScreenState extends State<MenuScreen> {
               style: AppFonts.body(fontSize: 14, color: AppColors.inkSoft)),
           const SizedBox(height: 16),
           ElevatedButton.icon(
-            onPressed: () => _firestore.seedPhase2MenuItems(),
-            icon: const Icon(Icons.add_circle_outline, size: 18),
-            label: const Text('Seed demo items'),
+            onPressed: () => setState(() {}),
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Refresh Menu'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.red,
               foregroundColor: Colors.white,

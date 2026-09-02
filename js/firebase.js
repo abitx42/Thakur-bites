@@ -20,6 +20,10 @@ import {
   signOut as fbSignOut,
   onAuthStateChanged
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import {
+  getFunctions,
+  httpsCallable
+} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 
 // Project credentials matching Flutter app
 const firebaseConfig = {
@@ -36,6 +40,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+export const functions = getFunctions(app, 'us-central1');
 
 // ─── Staff Authentication & Role Management ─────────────────────────
 
@@ -108,22 +113,13 @@ export function subscribeOrders(callback) {
 }
 
 /**
- * Updates order status in Firestore.
+ * Updates order status via authoritative Cloud Function.
  * @param {string} orderId 
  * @param {string} newStatus - 'placed' | 'preparing' | 'ready' | 'collected' | 'cancelled'
  */
 export async function updateOrderStatusInDb(orderId, newStatus) {
-  const orderRef = doc(db, 'orders', orderId);
-  const updateData = { status: newStatus };
-
-  if (newStatus === 'ready') {
-    updateData.readyAt = Timestamp.now();
-  }
-  if (newStatus === 'collected') {
-    updateData.collectedAt = Timestamp.now();
-  }
-
-  await updateDoc(orderRef, updateData);
+  const updateStatusFn = httpsCallable(functions, 'updateOrderStatus');
+  await updateStatusFn({ orderId, status: newStatus });
 }
 
 export const updateOrderStatus = updateOrderStatusInDb;
@@ -176,15 +172,12 @@ export async function toggleItemAvailability(itemId, isAvailable) {
 }
 
 /**
- * Update quantity / stock count for packaged/store items in Firestore
+ * Update quantity / stock count for packaged/store items via Cloud Function
  */
 export async function updateItemStockCount(itemId, count) {
   const newCount = Math.max(0, Number(count));
-  const itemRef = doc(db, 'menuItems', itemId);
-  await updateDoc(itemRef, { 
-    stockCount: newCount,
-    available: newCount > 0 
-  });
+  const adjustFn = httpsCallable(functions, 'adjustInventoryStock');
+  await adjustFn({ itemId, newStock: newCount, reason: 'Staff dashboard stock count update' });
 }
 
 /**
@@ -237,28 +230,18 @@ export async function deleteMenuItem(itemId) {
 }
 
 /**
- * Manager Unlock for PIN-locked orders
+ * Manager Unlock for PIN-locked orders via Cloud Function
  */
 export async function unlockOrder(orderId, reason = 'Student presented physical ID') {
-  const orderRef = doc(db, 'orders', orderId);
-  await updateDoc(orderRef, {
-    isLockedForInvestigation: false,
-    failedPinAttempts: 0,
-    unlockReason: reason,
-    unlockedAt: Timestamp.now()
-  });
+  const unlockFn = httpsCallable(functions, 'unlockOrderPickupVerification');
+  await unlockFn({ orderId, reason });
 }
 
 /**
- * Record Counter Cash Payment
+ * Record Counter Cash Payment via Cloud Function
  */
 export async function recordCashPayment(orderId) {
-  const orderRef = doc(db, 'orders', orderId);
-  await updateDoc(orderRef, {
-    paymentStatus: 'paid',
-    status: 'confirmed',
-    paidAt: Timestamp.now(),
-    updatedAt: Timestamp.now()
-  });
+  const cashFn = httpsCallable(functions, 'recordCashPayment');
+  await cashFn({ orderId });
 }
 
