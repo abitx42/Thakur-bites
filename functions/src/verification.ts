@@ -13,6 +13,27 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
+const SAFE_TEXT = /^[\p{L}\p{N} .,'&()/_-]+$/u;
+
+function requireSafeText(value: string, label: string, minimum: number): void {
+  if (value.length < minimum || !SAFE_TEXT.test(value)) {
+    throw new HttpsError('invalid-argument', `${label} contains unsupported characters.`);
+  }
+}
+
+function validateProofPath(value: unknown, userId: string): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string' || value.length > 512) {
+    throw new HttpsError('invalid-argument', 'Invalid ID proof storage path.');
+  }
+  const expectedPrefix = `verification_proofs/${userId}/`;
+  const filename = value.slice(expectedPrefix.length);
+  if (!value.startsWith(expectedPrefix) || !filename || filename.includes('/') || filename === '.' || filename === '..') {
+    throw new HttpsError('permission-denied', 'ID proof must be stored in your verification proof folder.');
+  }
+  return value;
+}
+
 export interface SubmitVerificationRequest {
   applicationType: 'TEACHER' | 'COLLEGE_STAFF';
   employeeId: string;
@@ -57,14 +78,24 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
   const cleanDesignation = String(designation || '').trim().slice(0, 50);
   const cleanOfficialEmail = String(officialEmail || userEmail).trim().toLowerCase().slice(0, 100);
 
-  if (cleanEmployeeId.length < 2) {
-    throw new HttpsError('invalid-argument', 'Valid Employee / Faculty ID is required.');
+  requireSafeText(cleanEmployeeId, 'Employee / Faculty ID', 2);
+  requireSafeText(cleanDept, 'Department', 2);
+  requireSafeText(cleanDesignation, 'Designation', 2);
+  if (cleanOfficialEmail && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanOfficialEmail) || /[<>`]/.test(cleanOfficialEmail))) {
+    throw new HttpsError('invalid-argument', 'Official email is invalid.');
   }
-  if (cleanDept.length < 2) {
-    throw new HttpsError('invalid-argument', 'Valid Department name is required.');
-  }
-  if (cleanDesignation.length < 2) {
-    throw new HttpsError('invalid-argument', 'Valid Designation title is required.');
+  const safeProofPath = validateProofPath(idProofStoragePath, userId);
+  if (safeProofPath) {
+    try {
+      const [metadata] = await admin.storage().bucket().file(safeProofPath).getMetadata();
+      const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+      if (!allowedTypes.has(String(metadata.contentType)) || Number(metadata.size) <= 0 || Number(metadata.size) > 5 * 1024 * 1024) {
+        throw new HttpsError('invalid-argument', 'ID proof has an invalid type or size.');
+      }
+    } catch (error: unknown) {
+      if (error instanceof HttpsError) throw error;
+      throw new HttpsError('failed-precondition', 'Upload a valid ID proof before submitting your application.');
+    }
   }
 
   // Generate unique cryptographic application ID (e.g. FAC-A8F23BC98410)
@@ -88,11 +119,6 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
     if (userData.verificationStatus === 'UNDER_REVIEW') {
       throw new HttpsError('already-exists', 'You already have a pending verification application under review.');
     }
-
-    // Sanitize storage path to prevent directory traversal
-    const safeProofPath = idProofStoragePath
-      ? `faculty_proofs/${userId}_${crypto.randomBytes(6).toString('hex')}`
-      : undefined;
 
     const newApp: VerificationApplication = {
       applicationId,

@@ -1,2 +1,12 @@
 .aider*
 opencode.json
+node_modules/
+lib/
+*.log
+.env*
+*.pem
+*.key
+service-account*.json
+firebase-debug.log
+.firebase/
+firebase-export/

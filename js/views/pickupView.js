@@ -387,11 +387,11 @@ function renderOrderCard(order, isReady) {
           <div style="background: #FEF2F2; border: 1px solid #FCA5A5; border-radius: 8px; padding: 8px; margin-bottom: 8px; text-align: center;">
             <span style="color: #DC2626; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700;">🔒 LOCKED: 3 Failed PIN Attempts</span>
           </div>
-          <button class="unlock-action-btn" data-order-id="${order.orderId || order.id}" style="width: 100%; background: #DC2626; color: #FFF; border: none; border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;">
+          <button class="unlock-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" style="width: 100%; background: #DC2626; color: #FFF; border: none; border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;">
             Manager Override Unlock
           </button>
         ` : (isReady ? `
-          <button class="collect-action-btn" data-order-id="${order.orderId || order.id}" style="width: 100%; background: #16A34A; color: #FFF; border: none; border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
+          <button class="collect-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" style="width: 100%; background: #16A34A; color: #FFF; border: none; border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
             <span>✓ Mark Collected</span>
           </button>
         ` : `

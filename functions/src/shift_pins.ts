@@ -183,6 +183,14 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
 
   const hashedDeviceId = crypto.createHash('sha256').update(`DEVICE_${cleanDeviceId}`).digest('hex').slice(0, 16);
   await enforceRateLimit(cleanDeviceId, 'shift_pin_verification');
+  // Device IDs are client controlled before authentication. Pair them with a
+  // pseudonymous network bucket so rotating a device ID cannot reset the limit.
+  const forwardedFor = request.rawRequest.headers['x-forwarded-for'];
+  const clientIp = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor)?.split(',')[0].trim()
+    || request.rawRequest.ip
+    || 'unknown';
+  const ipBucket = crypto.createHash('sha256').update(`SHIFT_PIN_IP_${clientIp}`).digest('hex').slice(0, 32);
+  await enforceRateLimit(ipBucket, 'shift_pin_verification', { isIpBased: true, natMultiplier: 3 });
 
   const todayStr = getMumbaiDateStr();
   const now = new Date();

@@ -10,6 +10,7 @@ import {
 } from '../firebase.js';
 import { doc, onSnapshot, collection, query, where } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
+import { escapeHtml } from './escapeHtml.js';
 
 let unsubscribeMenu = null;
 let unsubscribeStatus = null;
@@ -136,7 +137,7 @@ export function renderAdminView(container) {
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
                       <div>
                         <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; background: #FFF; border: 1px solid var(--border-light); padding: 2px 8px; border-radius: 6px; color: var(--brand-red);">
-                          ${app.applicationId || app.id}
+                          ${escapeHtml(app.applicationId || app.id)}
                         </span>
                         <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; background: #FEF3C7; color: #92400E; padding: 2px 8px; border-radius: 6px; margin-left: 6px;">
                           ${app.applicationType === 'TEACHER' ? '👨‍🏫 FACULTY' : '🏢 STAFF'}
@@ -149,13 +150,13 @@ export function renderAdminView(container) {
 
                     <div style="margin-top: 8px;">
                       <div style="font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; color: var(--ink-primary);">
-                        ${app.designation || 'Faculty Member'} — ${app.department || 'Department'}
+                        ${escapeHtml(app.designation || 'Faculty Member')} — ${escapeHtml(app.department || 'Department')}
                       </div>
                       <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary); margin-top: 2px;">
-                        Employee ID: <strong>${app.employeeId || 'N/A'}</strong>
+                        Employee ID: <strong>${escapeHtml(app.employeeId || 'N/A')}</strong>
                       </div>
                       <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-top: 2px;">
-                        Email: ${app.officialEmail || 'N/A'}
+                        Email: ${escapeHtml(app.officialEmail || 'N/A')}
                       </div>
                     </div>
                   </div>
@@ -163,14 +164,14 @@ export function renderAdminView(container) {
                   <div style="display: flex; gap: 8px; margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--border-light);">
                     <button 
                       class="approve-app-btn" 
-                      data-app-id="${app.applicationId || app.id}"
+                      data-app-id="${escapeHtml(app.applicationId || app.id)}"
                       style="flex: 1; padding: 8px; border-radius: 8px; border: none; background: #16A34A; color: #FFF; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;"
                     >
                       ✓ Approve Faculty
                     </button>
                     <button 
                       class="reject-app-btn" 
-                      data-app-id="${app.applicationId || app.id}"
+                      data-app-id="${escapeHtml(app.applicationId || app.id)}"
                       style="padding: 8px 12px; border-radius: 8px; border: 1px solid #DC2626; background: #FFF; color: #DC2626; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;"
                     >
                       ✕ Reject
@@ -919,6 +920,5 @@ export function renderAdminView(container) {
     console.warn("Could not query shift PINs:", err);
   }
 }
-
 
 
