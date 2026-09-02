@@ -1,13 +1,12 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import * as crypto from 'crypto';
 import { OrderStatus, UserRole } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
 import { updatePublicLiveQueueProjection } from './tv_projection';
 import { assertActiveWorkstationSession } from './shift_pins';
-import { RazorpayPaymentAdapter } from './payments';
 import { enforceAppVersionPolicy } from './version_policy';
+import { reserveAndExecuteRefund } from './refunds';
 
 const db = admin.firestore();
 
@@ -177,7 +176,8 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
     throw new HttpsError('failed-precondition', 'Order is already being prepared. Please contact counter staff for cancellation.');
   }
 
-  let gatewayRefundId = `rfnd_${crypto.randomBytes(8).toString('hex')}`;
+  let gatewayRefundId: string | undefined;
+  let refundReservationId: string | undefined;
   let refundDispatched = false;
   let amountToRefundPaise = 0;
 
@@ -188,21 +188,17 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
     }
     amountToRefundPaise = amountPaidPaise;
 
-    const isCash = initialOrderData.paymentMethod === 'counter_cash';
-    if (!isCash) {
-      const gatewayPaymentId = initialOrderData.gatewayPaymentId;
-      if (!gatewayPaymentId) {
-        throw new HttpsError('failed-precondition', 'Cannot cancel and refund online order without recorded gateway payment ID.');
-      }
-      try {
-        const adapter = new RazorpayPaymentAdapter();
-        const refundRes = await adapter.createRefund(gatewayPaymentId, amountPaidPaise, cleanReason);
-        gatewayRefundId = refundRes.refundId;
-        refundDispatched = true;
-      } catch (err: any) {
-        throw new HttpsError('internal', `Cancellation refund failed: ${err.message}`);
-      }
-    }
+    const refund = await reserveAndExecuteRefund({
+      orderId,
+      reason: cleanReason,
+      amountPaise: amountPaidPaise,
+      actorId,
+      actorRole,
+      cancellation: true,
+    });
+    gatewayRefundId = refund.refundId;
+    refundReservationId = refund.reservationId;
+    refundDispatched = !refund.isCash;
   }
 
   const cancelResult = await db.runTransaction(async (transaction) => {
@@ -264,7 +260,7 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
     transaction.set(resRef, { status: 'RELEASED', releasedAt: now, releaseReason: cleanReason }, { merge: true });
 
     // 3. If paid, post refund disbursement ledger entry
-    if (orderData.paymentStatus === 'paid') {
+    if (gatewayRefundId) {
       const isCash = orderData.paymentMethod === 'counter_cash';
       const finTxRef = db.collection('financialTransactions').doc(`refund_fin_${gatewayRefundId}`);
 
@@ -293,11 +289,16 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
         refundId: gatewayRefundId,
         refundedAt: now,
         amountRefundedPaise: amountToRefundPaise,
+        amountRefundablePaise: 0,
         refundReason: cleanReason,
         cancelledAt: now,
         cancelledBy: actorId,
         cancellationReason: cleanReason,
         updatedAt: now,
+      });
+      transaction.update(db.collection('refundReservations').doc(refundReservationId!), {
+        status: 'FINALIZED',
+        finalizedAt: now,
       });
     } else {
       transaction.update(orderRef, {
@@ -326,7 +327,7 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
       actorRole,
       timestamp: now,
       reason: `ORDER_CANCELLED: ${cleanReason}`,
-      metadata: { refundDispatched, refundId: gatewayRefundId, previousPaymentStatus: orderData.paymentStatus },
+      metadata: { refundDispatched, refundId: gatewayRefundId, refundReservationId, previousPaymentStatus: orderData.paymentStatus },
     });
 
     return {

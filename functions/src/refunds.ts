@@ -30,6 +30,90 @@ export interface RefundResponse {
 }
 
 /**
+ * Claims a refund balance before any external side effect. Both the staff refund
+ * flow and cancellation flow use this primitive so a retry cannot double-refund.
+ */
+export async function reserveAndExecuteRefund(params: {
+  orderId: string;
+  reason: string;
+  amountPaise: number;
+  actorId: string;
+  actorRole: UserRole;
+  idempotencyKey?: string;
+  cancellation?: boolean;
+}): Promise<{ refundId: string; reservationId: string; isCash: boolean; amountPaidPaise: number; previousRefundedPaise: number }> {
+  const { orderId, reason, amountPaise, actorId, actorRole, idempotencyKey, cancellation = false } = params;
+  const orderRef = db.collection('orders').doc(orderId);
+  const initialSnap = await orderRef.get();
+  if (!initialSnap.exists) throw new HttpsError('not-found', 'Order not found.');
+
+  const initial = initialSnap.data()!;
+  const amountPaidPaise = Number(initial.amountPaidPaise);
+  const previousRefundedPaise = Number(initial.amountRefundedPaise || 0);
+  if (!Number.isSafeInteger(amountPaidPaise) || amountPaidPaise <= 0 || !Number.isSafeInteger(previousRefundedPaise) || previousRefundedPaise < 0) {
+    throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Order ${orderId} has invalid payment totals.`);
+  }
+  if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0 || amountPaise > amountPaidPaise - previousRefundedPaise) {
+    throw new HttpsError('invalid-argument', 'Refund amount exceeds the authoritative remaining balance.');
+  }
+  if (cancellation && amountPaise !== amountPaidPaise - previousRefundedPaise) {
+    throw new HttpsError('failed-precondition', 'Cancellation requires refunding the full remaining balance.');
+  }
+
+  const isCash = initial.paymentMethod === 'counter_cash';
+  const reservationId = crypto.randomBytes(16).toString('hex');
+  const reservationRef = db.collection('refundReservations').doc(reservationId);
+  const now = admin.firestore.Timestamp.now();
+
+  await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(orderRef);
+    if (!snap.exists) throw new HttpsError('not-found', 'Order not found during refund reservation.');
+    const current = snap.data()!;
+    if (current.status === 'cancelled' || current.status === 'collected' || (current.paymentStatus !== 'paid' && current.paymentStatus !== 'partially_refunded')) {
+      throw new HttpsError('failed-precondition', 'Order is not eligible for a refund.');
+    }
+    const currentPaid = Number(current.amountPaidPaise);
+    const currentRefunded = Number(current.amountRefundedPaise || 0);
+    const remaining = currentPaid - currentRefunded;
+    if (!Number.isSafeInteger(currentPaid) || !Number.isSafeInteger(currentRefunded) || amountPaise > remaining || (cancellation && amountPaise !== remaining)) {
+      throw new HttpsError('failed-precondition', 'Concurrent refund detected. Please retry.');
+    }
+    transaction.set(reservationRef, {
+      reservationId, orderId, requestedRefundPaise: amountPaise, amountPaidPaise: currentPaid,
+      curPrevRefunded: currentRefunded, actorUid: actorId, actorRole, reason,
+      status: 'RESERVATION_CREATED', isCash, idempotencyKey: idempotencyKey || null,
+      cancellation, createdAt: now,
+    });
+    transaction.update(orderRef, {
+      amountRefundedPaise: currentRefunded + amountPaise,
+      refundLifecycleStatus: 'REFUND_REQUESTED',
+      updatedAt: now,
+    });
+  });
+
+  let refundId = `rfnd_cash_${reservationId}`;
+  try {
+    if (!isCash) {
+      const gatewayPaymentId = initial.gatewayPaymentId;
+      if (!gatewayPaymentId) throw new HttpsError('failed-precondition', 'Cannot refund online order without a recorded gateway payment ID.');
+      refundId = (await new RazorpayPaymentAdapter().createRefund(gatewayPaymentId, amountPaise, reason)).refundId;
+    }
+    await reservationRef.update({ status: isCash ? 'GATEWAY_SKIPPED_CASH' : 'GATEWAY_SUCCEEDED', gatewayRefundId: refundId, gatewayExecutedAt: admin.firestore.Timestamp.now() });
+  } catch (error: unknown) {
+    await db.runTransaction(async (transaction) => {
+      const current = await transaction.get(orderRef);
+      if (current.exists && Number(current.data()!.amountRefundedPaise) === previousRefundedPaise + amountPaise) {
+        transaction.update(orderRef, { amountRefundedPaise: previousRefundedPaise, refundLifecycleStatus: 'GATEWAY_REFUND_FAILED', updatedAt: admin.firestore.Timestamp.now() });
+      }
+      transaction.update(reservationRef, { status: 'GATEWAY_FAILED', failedAt: admin.firestore.Timestamp.now(), error: error instanceof Error ? error.message : 'Unknown gateway failure' });
+    });
+    throw error;
+  }
+
+  return { refundId, reservationId, isCash, amountPaidPaise, previousRefundedPaise };
+}
+
+/**
  * Formal, Audited Cumulative Refund Engine — Race-Condition-Safe.
  */
 export const processOrderRefund = onCall<RefundRequest>(async (request) => {

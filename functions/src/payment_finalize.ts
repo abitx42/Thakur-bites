@@ -250,6 +250,10 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       paymentStatus: 'paid',
       status: 'confirmed',
       gatewayPaymentId,
+      // These are the authoritative financial values consumed by every refund path.
+      amountPaidPaise: expectedPaise,
+      amountRefundedPaise: 0,
+      amountRefundablePaise: expectedPaise,
       paidAt: now,
       updatedAt: now,
     });
