@@ -16,6 +16,7 @@ import { assertOperationalMode } from './kill_switch';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { assertActiveWorkstationSession } from './shift_pins';
+import { enforceAppVersionPolicy } from './version_policy';
 
 const db = admin.firestore();
 
@@ -141,6 +142,7 @@ export function computeGatewaySignature(gatewayOrderId: string, gatewayPaymentId
  */
 export const createPaymentSession = onCall<PaymentSessionRequest>(async (request) => {
   enforceAppCheck(request);
+  await enforceAppVersionPolicy((request.data as any)?.appVersion);
   await assertOperationalMode('payment');
 
   if (!request.auth || !request.auth.uid) {
@@ -233,6 +235,7 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
  */
 export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) => {
   enforceAppCheck(request);
+  await enforceAppVersionPolicy((request.data as any)?.appVersion);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Student must be authenticated.');
   }
@@ -415,6 +418,7 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
  */
 export const recordCashPayment = onCall<{ orderId: string; idempotencyKey?: string }>(async (request) => {
   enforceAppCheck(request);
+  await enforceAppVersionPolicy((request.data as any)?.appVersion);
   await assertOperationalMode('payment');
 
   if (!request.auth || !request.auth.uid) {

@@ -40,6 +40,7 @@ export interface CheckoutRequest {
   idempotencyKey: string;
   items: CheckoutRequestItem[];
   paymentMethod?: PaymentMethod;
+  appVersion?: string;
 }
 
 export interface OrderItemSnapshot {

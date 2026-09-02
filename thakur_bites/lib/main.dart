@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:provider/provider.dart';
 import 'firebase_options.dart';
 import 'theme/app_theme.dart';
@@ -20,6 +22,26 @@ void main() async {
   } catch (e) {
     debugPrint('[Startup] Firebase initialization: $e');
   }
+
+  // ─── Firebase App Check ───────────────────────────────────────────────────
+  // Prevents unauthorized clients from calling Cloud Functions.
+  // Production: replace ReCaptchaEnterpriseProvider siteKey with your real key.
+  // Android: Use PlayIntegrityProvider. iOS: Use AppAttestProvider.
+  // Web debug mode is active while siteKey is a placeholder.
+  try {
+    await FirebaseAppCheck.instance.activate(
+      // TODO: Replace with your reCAPTCHA Enterprise site key from Firebase Console
+      // → Project Settings → App Check → Web → reCAPTCHA Enterprise
+      providerWeb: kDebugMode
+          ? ReCaptchaV3Provider('6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI') // Google test key
+          : ReCaptchaEnterpriseProvider('YOUR_RECAPTCHA_ENTERPRISE_SITE_KEY'),
+      providerAndroid: const AndroidPlayIntegrityProvider(),
+      providerApple: const AppleAppAttestProvider(),
+    );
+  } catch (e) {
+    debugPrint('[Startup] App Check activation: $e');
+  }
+
   runApp(const ThakurBitesApp());
 }
 

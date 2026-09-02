@@ -1,6 +1,7 @@
 // Student Mobile View for Thakur Bites
 import { MENU_CATEGORIES, MENU_ITEMS } from '../data/menu.js';
 import { appState } from '../state.js';
+import { escapeHtml } from './escapeHtml.js';
 
 export function renderStudentView(container) {
   const { 
@@ -38,9 +39,9 @@ export function renderStudentView(container) {
       <div class="todays-board-content">
         <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
           <span class="board-tag">📢 TODAY'S BOARD</span>
-          <span class="board-sabji-pill">🍛 Sabji 1: ${todaysBoard.sabji1}</span>
-          <span class="board-sabji-pill">🍲 Sabji 2: ${todaysBoard.sabji2}</span>
-          <span class="board-sabji-pill" style="border-color: #F87171; color: #991B1B;">⭐ Special: ${todaysBoard.canteenSpecial}</span>
+          <span class="board-sabji-pill">🍛 Sabji 1: ${escapeHtml(todaysBoard.sabji1)}</span>
+          <span class="board-sabji-pill">🍲 Sabji 2: ${escapeHtml(todaysBoard.sabji2)}</span>
+          <span class="board-sabji-pill" style="border-color: #F87171; color: #991B1B;">⭐ Special: ${escapeHtml(todaysBoard.canteenSpecial)}</span>
         </div>
         <div style="display: flex; align-items: center; gap: 0.5rem;">
           <span class="bread-status-pill ${todaysBoard.rotiAvailable ? 'bread-available' : 'bread-soldout'}">
@@ -374,22 +375,22 @@ export function openCartDrawer() {
             ${cart.map(item => `
               <div style="background: #FFFFFF; border: 1px solid var(--border-light); border-radius: 8px; padding: 0.85rem; display: flex; align-items: center; justify-content: space-between;">
                 <div style="flex-grow: 1;">
-                  <div style="font-weight: 700; font-size: 0.95rem;">${item.name}</div>
+                  <div style="font-weight: 700; font-size: 0.95rem;">${escapeHtml(item.name)}</div>
                   <div style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--ink-muted);">
-                    ${item.variantName !== 'Regular' ? `Variant: ${item.variantName} · ` : ''}
-                    ${item.customOptions?.bread ? `Bread: ${item.customOptions.bread} · ` : ''}
-                    ₹${item.price} each
+                    ${item.variantName !== 'Regular' ? `Variant: ${escapeHtml(item.variantName)} · ` : ''}
+                    ${item.customOptions?.bread ? `Bread: ${escapeHtml(item.customOptions.bread)} · ` : ''}
+                    ₹${escapeHtml(item.price)} each
                   </div>
                 </div>
 
                 <div style="display: flex; align-items: center; gap: 0.75rem;">
                   <div class="stepper-btn-group" style="height: 28px;">
-                    <button class="stepper-btn" style="width: 26px; height: 26px;" data-cart-key="${item.key}" data-delta="-1">−</button>
-                    <span class="stepper-val" style="font-size: 0.8rem;">${item.quantity}</span>
-                    <button class="stepper-btn" style="width: 26px; height: 26px;" data-cart-key="${item.key}" data-delta="1">+</button>
+                    <button class="stepper-btn" style="width: 26px; height: 26px;" data-cart-key="${escapeHtml(item.key)}" data-delta="-1">−</button>
+                    <span class="stepper-val" style="font-size: 0.8rem;">${escapeHtml(item.quantity)}</span>
+                    <button class="stepper-btn" style="width: 26px; height: 26px;" data-cart-key="${escapeHtml(item.key)}" data-delta="1">+</button>
                   </div>
                   <div style="font-family: var(--font-mono); font-weight: 700; font-size: 0.95rem; min-width: 50px; text-align: right;">
-                    ₹${item.price * item.quantity}
+                    ₹${escapeHtml(item.price * item.quantity)}
                   </div>
                 </div>
               </div>
@@ -400,8 +401,8 @@ export function openCartDrawer() {
           <div style="margin-top: 1.25rem; background: #FFFFFF; border: 1px solid var(--border-light); border-radius: 8px; padding: 0.85rem;">
             <div style="font-weight: 700; font-size: 0.8rem; color: var(--ink-secondary); margin-bottom: 0.5rem;">STUDENT VERIFICATION</div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
-              <input type="text" id="student-name-input" value="${currentStudent.name}" placeholder="Your Name" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.8rem;" />
-              <input type="text" id="student-roll-input" value="${currentStudent.rollNo}" placeholder="Roll / ID" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.8rem; font-family: var(--font-mono);" />
+              <input type="text" id="student-name-input" value="${escapeHtml(currentStudent.name)}" placeholder="Your Name" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.8rem;" />
+              <input type="text" id="student-roll-input" value="${escapeHtml(currentStudent.rollNo)}" placeholder="Roll / ID" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.8rem; font-family: var(--font-mono);" />
             </div>
           </div>
 
@@ -531,13 +532,13 @@ export function openActiveTicketModal(order) {
           <!-- Token Big Display -->
           <div style="text-align: center; margin: 1rem 0 0.5rem 0;">
             <div style="font-size: 0.75rem; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.1em;">DIGITAL TOKEN NUMBER</div>
-            <div class="ticket-token-large">${order.tokenNumber}</div>
+            <div class="ticket-token-large">${escapeHtml(order.tokenNumber)}</div>
           </div>
 
           <!-- 4-Digit Pickup PIN -->
           <div class="ticket-pin-box">
             <div style="font-size: 0.7rem; color: var(--ink-muted); text-transform: uppercase; font-weight: 600;">COUNTER PICKUP 4-DIGIT PIN</div>
-            <div style="font-size: 1.75rem; font-weight: 800; letter-spacing: 0.25em; color: var(--ink-primary);">${order.pinCode}</div>
+            <div style="font-size: 1.75rem; font-weight: 800; letter-spacing: 0.25em; color: var(--ink-primary);">${escapeHtml(order.pinCode)}</div>
           </div>
 
           <!-- Status Indicator -->
@@ -554,30 +555,30 @@ export function openActiveTicketModal(order) {
           <div style="font-size: 0.8rem; margin-bottom: 0.75rem;">
             <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
               <span style="color: var(--ink-muted);">Student:</span>
-              <span style="font-weight: 600;">${order.studentName} (${order.studentRoll})</span>
+              <span style="font-weight: 600;">${escapeHtml(order.studentName)} (${escapeHtml(order.studentRoll)})</span>
             </div>
             <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
               <span style="color: var(--ink-muted);">Slot:</span>
-              <span style="font-weight: 600;">${order.pickupSlot}</span>
+              <span style="font-weight: 600;">${escapeHtml(order.pickupSlot)}</span>
             </div>
             <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
               <span style="color: var(--ink-muted);">Payment:</span>
-              <span style="font-weight: 700; color: ${order.paymentStatus === 'PAID' ? 'var(--curry-green)' : 'var(--chili-red)'};">${order.paymentMethod} [${order.paymentStatus}]</span>
+              <span style="font-weight: 700; color: ${order.paymentStatus === 'PAID' ? 'var(--curry-green)' : 'var(--chili-red)'};">${escapeHtml(order.paymentMethod)} [${escapeHtml(order.paymentStatus)}]</span>
             </div>
           </div>
 
           <div style="border-top: 1px dashed #E4E4E7; padding-top: 0.5rem; margin-bottom: 0.5rem;">
             ${order.items.map(item => `
               <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 3px;">
-                <span>${item.quantity}x ${item.name} ${item.variant && item.variant !== 'Regular' ? `(${item.variant})` : ''}</span>
-                <span style="font-weight: 600;">₹${item.price * item.quantity}</span>
+                <span>${escapeHtml(item.quantity)}x ${escapeHtml(item.name)} ${item.variant && item.variant !== 'Regular' ? `(${escapeHtml(item.variant)})` : ''}</span>
+                <span style="font-weight: 600;">₹${escapeHtml(item.price * item.quantity)}</span>
               </div>
             `).join('')}
           </div>
 
           <div style="border-top: 2px solid var(--ink-primary); padding-top: 0.5rem; display: flex; justify-content: space-between; font-size: 1rem; font-weight: 700;">
             <span>TOTAL PAID:</span>
-            <span>₹${order.totalAmount}</span>
+            <span>₹${escapeHtml(order.totalAmount)}</span>
           </div>
 
           <!-- Interactive Test Stage Simulator for demo -->

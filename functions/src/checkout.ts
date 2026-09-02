@@ -9,6 +9,7 @@ import { assertOperationalMode } from './kill_switch';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { updatePublicLiveQueueProjection } from './tv_projection';
+import { enforceAppVersionPolicy } from './version_policy';
 
 const db = admin.firestore();
 
@@ -17,6 +18,7 @@ const db = admin.firestore();
  */
 export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   enforceAppCheck(request);
+  await enforceAppVersionPolicy(request.data?.appVersion);
   await assertOperationalMode('checkout');
 
   // 1. Authenticate user with fail-closed identity verification

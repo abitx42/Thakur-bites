@@ -7,17 +7,7 @@ import '../models/student.dart';
 import '../providers/cart_provider.dart';
 import 'checkout_service.dart';
 
-/// Thrown inside a transaction when an item cannot fulfill the requested quantity.
-class InsufficientStockException implements Exception {
-  final String itemId;
-  final String itemName;
-  final int availableStock;
-
-  InsufficientStockException(this.itemId, this.itemName, this.availableStock);
-
-  @override
-  String toString() => '$itemName has only $availableStock available.';
-}
+// InsufficientStockException is defined in checkout_service.dart
 
 /// Firestore service for Thakur Bites with ACID Transaction Order Placement.
 class FirestoreService {
@@ -197,7 +187,7 @@ class FirestoreService {
     String? idempotencyKey,
   }) async {
     final key = idempotencyKey ?? 'order_${DateTime.now().millisecondsSinceEpoch}';
-    final checkout = CheckoutService(firestore: _db);
+    final checkout = CheckoutService();
     return await checkout.createCheckout(
       idempotencyKey: key,
       entries: cart.entries,

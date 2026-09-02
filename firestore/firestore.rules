@@ -248,6 +248,14 @@ service cloud.firestore {
       allow read, write: if false; // Backend Cloud Function ONLY
     }
 
+    // ─── Refund Reservations (Atomic Race-Condition Lock) ─────────────────
+    // Written atomically before gateway call to prevent double-refund races.
+    // Managers/Admins can inspect for reconciliation. Only backend writes.
+    match /refundReservations/{reservationId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Backend Cloud Function ONLY
+    }
+
     // ─── Orphaned Payments Ledger ────────────────────────────────
     match /orphanedPayments/{orphanId} {
       allow read: if isManagerOrAdmin();

@@ -8,6 +8,7 @@ import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { updatePublicLiveQueueProjection } from './tv_projection';
 import { assertActiveWorkstationSession } from './shift_pins';
+import { enforceAppVersionPolicy } from './version_policy';
 
 const db = admin.firestore();
 
@@ -21,8 +22,9 @@ const db = admin.firestore();
  * 3. One-time QR nonce consumption (`qrConsumedAt`).
  * 4. Multi-staff brute force lockout tracking.
  */
-export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?: string }>(async (request) => {
+export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?: string; appVersion?: string }>(async (request) => {
   enforceAppCheck(request);
+  await enforceAppVersionPolicy(request.data?.appVersion);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
@@ -38,6 +40,20 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
   const { orderId, pinCode, qrToken } = request.data;
   if (!orderId || (!pinCode && !qrToken)) {
     throw new HttpsError('invalid-argument', 'orderId and either pinCode or qrToken are required.');
+  }
+
+  // Early size/format guards — MUST come before any crypto work (DoS prevention)
+  if (orderId.length > 128) {
+    throw new HttpsError('invalid-argument', 'orderId must be <= 128 characters.');
+  }
+  if (pinCode !== undefined) {
+    // Reject before PBKDF2: only 4-8 digits, nothing else
+    if (typeof pinCode !== 'string' || !/^[0-9]{4,8}$/.test(pinCode)) {
+      throw new HttpsError('invalid-argument', 'PIN must be a 4-8 digit numeric string.');
+    }
+  }
+  if (qrToken !== undefined && (typeof qrToken !== 'string' || qrToken.length > 2048)) {
+    throw new HttpsError('invalid-argument', 'QR token must be a string <= 2048 characters.');
   }
 
   const orderRef = db.collection('orders').doc(orderId);

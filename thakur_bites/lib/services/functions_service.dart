@@ -1,0 +1,101 @@
+import 'package:cloud_functions/cloud_functions.dart';
+
+/// Typed, named callable references for all Thakur Bites Cloud Functions.
+///
+/// Use this class instead of calling FirebaseFunctions.instance.httpsCallable()
+/// directly in feature code. It provides a single place to find callable names
+/// and their typed request/response shapes.
+class FunctionsService {
+  final FirebaseFunctions _functions;
+
+  FunctionsService({FirebaseFunctions? functions})
+      : _functions = functions ?? FirebaseFunctions.instance;
+
+  // ─── Checkout ───────────────────────────────────────────────────────────
+
+  /// Creates an authoritative, idempotent checkout order with atomic inventory
+  /// reservation. Returns the orderId and a per-item price snapshot.
+  Future<Map<String, dynamic>> createCheckout({
+    required String idempotencyKey,
+    required List<Map<String, dynamic>> items,
+    required String paymentMethod, // 'online' | 'counter_cash'
+  }) async {
+    final callable = _functions.httpsCallable('createCheckout');
+    final result = await callable.call({
+      'idempotencyKey': idempotencyKey,
+      'items': items,
+      'paymentMethod': paymentMethod,
+      'appVersion': _appVersion,
+    });
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
+  // ─── Payments ────────────────────────────────────────────────────────────
+
+  /// Creates a Razorpay payment session for an existing order.
+  /// Returns: { razorpayOrderId, amount, currency, keyId }
+  Future<Map<String, dynamic>> createPaymentSession({
+    required String orderId,
+  }) async {
+    final callable = _functions.httpsCallable('createPaymentSession');
+    final result = await callable.call({
+      'orderId': orderId,
+      'appVersion': _appVersion,
+    });
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
+  /// Verifies Razorpay payment by confirming HMAC signature server-side.
+  /// Returns: { success, orderId, paymentStatus }
+  Future<Map<String, dynamic>> verifyPayment({
+    required String orderId,
+    required String razorpayPaymentId,
+    required String razorpayOrderId,
+    required String razorpaySignature,
+  }) async {
+    final callable = _functions.httpsCallable('verifyPayment');
+    final result = await callable.call({
+      'orderId': orderId,
+      'razorpayPaymentId': razorpayPaymentId,
+      'razorpayOrderId': razorpayOrderId,
+      'razorpaySignature': razorpaySignature,
+      'appVersion': _appVersion,
+    });
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
+  /// Records a cash payment for an existing counter_cash order.
+  /// Returns: { success, orderId }
+  Future<Map<String, dynamic>> recordCashPayment({
+    required String orderId,
+    required int amountPaise,
+  }) async {
+    final callable = _functions.httpsCallable('recordCashPayment');
+    final result = await callable.call({
+      'orderId': orderId,
+      'amountPaise': amountPaise,
+      'appVersion': _appVersion,
+    });
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
+  // ─── Order State ─────────────────────────────────────────────────────────
+
+  /// Cancels an order and triggers gateway refund if applicable.
+  Future<Map<String, dynamic>> cancelOrder({
+    required String orderId,
+    required String reason,
+  }) async {
+    final callable = _functions.httpsCallable('cancelOrder');
+    final result = await callable.call({
+      'orderId': orderId,
+      'reason': reason,
+      'appVersion': _appVersion,
+    });
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
+  // ─── Version ─────────────────────────────────────────────────────────────
+
+  static const String _appVersion = '1.0.0'; // Keep in sync with pubspec.yaml
+}

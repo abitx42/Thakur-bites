@@ -7,6 +7,7 @@ import { enforceAppCheck } from './app_check';
 import { updatePublicLiveQueueProjection } from './tv_projection';
 import { assertActiveWorkstationSession } from './shift_pins';
 import { RazorpayPaymentAdapter } from './payments';
+import { enforceAppVersionPolicy } from './version_policy';
 
 const db = admin.firestore();
 
@@ -30,8 +31,9 @@ const ALLOWED_OPERATIONAL_TRANSITIONS: Record<OrderStatus, { next: OrderStatus[]
 /**
  * Validates and executes an authoritative kitchen operational order status transition.
  */
-export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStatus }>(async (request) => {
+export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStatus; appVersion?: string }>(async (request) => {
   enforceAppCheck(request);
+  await enforceAppVersionPolicy(request.data?.appVersion);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
@@ -122,6 +124,7 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
 export interface CancelOrderRequest {
   orderId: string;
   reason: string;
+  appVersion?: string;
 }
 
 /**
@@ -129,6 +132,7 @@ export interface CancelOrderRequest {
  */
 export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
   enforceAppCheck(request);
+  await enforceAppVersionPolicy(request.data?.appVersion);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }

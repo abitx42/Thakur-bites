@@ -64,8 +64,14 @@ export function subscribeStaffAuth(callback) {
   return onAuthStateChanged(auth, async (user) => {
     if (user) {
       const tokenResult = await user.getIdTokenResult().catch(() => ({ claims: {} }));
-      const role = tokenResult.claims.role || 'manager';
-      callback({ user, role, isAuthenticated: true });
+      // SECURITY: Do NOT default to 'manager' — a missing role claim must be denied.
+      const role = tokenResult.claims.role || 'unknown';
+      if (role === 'unknown') {
+        // Token has no role claim: treat as unauthenticated for RBAC purposes
+        callback({ user: null, role: null, isAuthenticated: false });
+      } else {
+        callback({ user, role, isAuthenticated: true });
+      }
     } else {
       callback({ user: null, role: null, isAuthenticated: false });
     }

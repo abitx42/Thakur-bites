@@ -7,6 +7,7 @@ import { enforceRateLimit } from './rate_limiter';
 import { assertOperationalMode } from './kill_switch';
 import { enforceAppCheck } from './app_check';
 import { RazorpayPaymentAdapter } from './payments';
+import { enforceAppVersionPolicy } from './version_policy';
 
 const db = admin.firestore();
 
@@ -15,6 +16,7 @@ export interface RefundRequest {
   reason: string;
   amountPaise?: number; // Optional partial refund amount in paise
   idempotencyKey?: string; // Caller-supplied idempotency key
+  appVersion?: string;
 }
 
 export interface RefundResponse {
@@ -28,11 +30,11 @@ export interface RefundResponse {
 }
 
 /**
- * Formal, Audited Cumulative Refund Engine (P0 & Stage 2 Hardened).
- * Strictly guarantees: amountRefundedPaise + requestedRefundPaise <= amountPaidPaise.
+ * Formal, Audited Cumulative Refund Engine — Race-Condition-Safe.
  */
 export const processOrderRefund = onCall<RefundRequest>(async (request) => {
   enforceAppCheck(request);
+  await enforceAppVersionPolicy(request.data?.appVersion);
   await assertOperationalMode('refund');
 
   if (!request.auth || !request.auth.uid) {
@@ -61,7 +63,7 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     throw new HttpsError('invalid-argument', 'Valid refund reason string (1-200 characters) is required.');
   }
 
-  // Idempotency Check
+  // Caller-supplied idempotency key check
   const cleanIdempKey = idempotencyKey && typeof idempotencyKey === 'string' ? idempotencyKey.trim().slice(0, 128) : undefined;
   if (cleanIdempKey) {
     const existingIdempDoc = await db.collection('refundIdempotency').doc(cleanIdempKey).get();
@@ -83,7 +85,7 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
   const orderRef = db.collection('orders').doc(orderId);
   const now = admin.firestore.Timestamp.now();
 
-  // 1. Initial order validation
+  // ─── Step 1: Validate order (pre-flight, non-transactional read) ─────────
   const initialSnap = await orderRef.get();
   if (!initialSnap.exists) {
     throw new HttpsError('not-found', 'Order not found.');
@@ -97,7 +99,7 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     );
   }
 
-  // Strict Fail-Closed Paid Amount Validation (No fallback to orderTotalPaise)
+  // Strict Fail-Closed Paid Amount Validation
   const amountPaidPaise = Number(orderData.amountPaidPaise);
   if (!Number.isSafeInteger(amountPaidPaise) || amountPaidPaise <= 0) {
     throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Order ${orderId} is missing authoritative amountPaidPaise.`);
@@ -120,52 +122,115 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
   }
 
   const isCash = orderData.paymentMethod === 'counter_cash';
-  let refundId = `rfnd_${crypto.randomBytes(8).toString('hex')}`;
+  const reservationId = crypto.randomBytes(16).toString('hex');
+  const reservationRef = db.collection('refundReservations').doc(reservationId);
 
-  // 2. Real Gateway Execution for Online Payments (TB-NEW-001)
+  // ─── Step 2: Atomic Reservation (THE race-condition lock) ─────────────────
+  // This transaction atomically verifies the refundable amount hasn't changed AND
+  // creates the exclusive reservation. Only one concurrent caller can commit this.
+  // The second concurrent caller will see a stale `remainingRefundablePaise` mismatch
+  // and be rejected — BEFORE any gateway call is made.
+  await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(orderRef);
+    if (!snap.exists) {
+      throw new HttpsError('not-found', 'Order not found during reservation.');
+    }
+
+    const currentData = snap.data()!;
+    const curPrevRefunded = Number(currentData.amountRefundedPaise || 0);
+    const curRemaining = Math.max(0, amountPaidPaise - curPrevRefunded);
+
+    // Fail-closed: if another concurrent refund already consumed some amount, reject
+    if (requestedRefundPaise > curRemaining) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Concurrent refund detected: requested amount exceeds remaining refundable balance. Please retry.'
+      );
+    }
+
+    // Create the atomic reservation document — this is the exclusive lock
+    transaction.set(reservationRef, {
+      reservationId,
+      orderId,
+      requestedRefundPaise,
+      amountPaidPaise,
+      curPrevRefunded,
+      actorUid: request.auth!.uid,
+      actorRole,
+      reason: cleanReason,
+      status: 'RESERVATION_CREATED',
+      isCash,
+      idempotencyKey: cleanIdempKey || null,
+      createdAt: now,
+    });
+
+    // Also speculatively increment amountRefundedPaise to block any other concurrent reservation
+    transaction.update(orderRef, {
+      amountRefundedPaise: curPrevRefunded + requestedRefundPaise,
+      refundLifecycleStatus: 'REFUND_REQUESTED',
+      updatedAt: now,
+    });
+  });
+
+  // ─── Step 3: Gateway Execution (AFTER reservation is committed) ───────────
+  // If this fails, the reservation document remains with status=GATEWAY_FAILED
+  // which the reconciliation cron will pick up and reverse the amountRefundedPaise increment.
+  let gatewayRefundId = `rfnd_cash_${reservationId}`;
+
   if (!isCash) {
     const gatewayPaymentId = orderData.gatewayPaymentId;
     if (!gatewayPaymentId) {
+      // Rollback the speculative increment
+      await orderRef.update({
+        amountRefundedPaise: previouslyRefundedPaise,
+        refundLifecycleStatus: 'GATEWAY_REFUND_FAILED',
+        updatedAt: admin.firestore.Timestamp.now(),
+      });
+      await reservationRef.update({ status: 'GATEWAY_FAILED', failedAt: admin.firestore.Timestamp.now() });
       throw new HttpsError('failed-precondition', 'Cannot refund online order without a recorded gateway payment ID.');
     }
 
     try {
       const adapter = new RazorpayPaymentAdapter();
       const refundRes = await adapter.createRefund(gatewayPaymentId, requestedRefundPaise, cleanReason);
-      refundId = refundRes.refundId;
+      gatewayRefundId = refundRes.refundId;
+      await reservationRef.update({ status: 'GATEWAY_SUCCEEDED', gatewayRefundId, gatewayExecutedAt: admin.firestore.Timestamp.now() });
     } catch (err: any) {
+      // Rollback the speculative increment so future refund attempts can proceed
+      await orderRef.update({
+        amountRefundedPaise: previouslyRefundedPaise,
+        refundLifecycleStatus: 'GATEWAY_REFUND_FAILED',
+        updatedAt: admin.firestore.Timestamp.now(),
+      });
+      await reservationRef.update({ status: 'GATEWAY_FAILED', failedAt: admin.firestore.Timestamp.now(), error: err.message });
+
       await logSecurityEvent({
         eventType: 'GATEWAY_REFUND_FAILED',
         severity: 'HIGH',
         orderId,
         actorUid: request.auth.uid,
-        details: { error: err.message, gatewayPaymentId, amountPaise: requestedRefundPaise },
+        details: { error: err.message, gatewayPaymentId, amountPaise: requestedRefundPaise, reservationId },
       });
       throw new HttpsError('internal', `Payment gateway refund failed: ${err.message}`);
     }
   }
 
+  // ─── Step 4: Finalization Transaction ────────────────────────────────────
   return await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(orderRef);
     if (!snap.exists) {
-      throw new HttpsError('not-found', 'Order not found.');
+      throw new HttpsError('not-found', 'Order not found during finalization.');
     }
 
     const currentOrderData = snap.data()!;
-    const curPrevRefunded = Number(currentOrderData.amountRefundedPaise || 0);
-    const curRemaining = Math.max(0, amountPaidPaise - curPrevRefunded);
-
-    if (requestedRefundPaise > curRemaining) {
-      throw new HttpsError('failed-precondition', 'Concurrent refund detected: requested amount exceeds remaining refundable balance.');
-    }
-
-    const newTotalRefundedPaise = curPrevRefunded + requestedRefundPaise;
-    const isFullRefund = newTotalRefundedPaise === amountPaidPaise;
+    // At this point amountRefundedPaise was already speculatively updated in Step 2
+    const newTotalRefundedPaise = Number(currentOrderData.amountRefundedPaise);
+    const isFullRefund = newTotalRefundedPaise >= amountPaidPaise;
     const nextPaymentStatus = isFullRefund ? 'refunded' : 'partially_refunded';
     const nextOrderStatus = isFullRefund ? 'cancelled' : currentOrderData.status;
 
-    // 1. Write to immutable financialTransactions ledger with deterministic ID (TB-NEW-001 & TB-NEW-002)
-    const finTxRef = db.collection('financialTransactions').doc(`refund_fin_${refundId}`);
+    // 1. Write to immutable financialTransactions ledger
+    const finTxRef = db.collection('financialTransactions').doc(`refund_fin_${gatewayRefundId}`);
     const finRecord: FinancialTransactionRecord = {
       transactionId: finTxRef.id,
       orderId,
@@ -174,18 +239,10 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
       amountPaise: requestedRefundPaise,
       currency: 'INR',
       postings: [
-        {
-          account: 'SALES_REVENUE',
-          debitPaise: requestedRefundPaise,
-          creditPaise: 0,
-        },
-        {
-          account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE',
-          debitPaise: 0,
-          creditPaise: requestedRefundPaise,
-        },
+        { account: 'SALES_REVENUE', debitPaise: requestedRefundPaise, creditPaise: 0 },
+        { account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE', debitPaise: 0, creditPaise: requestedRefundPaise },
       ],
-      gatewayTransactionId: refundId,
+      gatewayTransactionId: gatewayRefundId,
       gatewayOrderId: currentOrderData.gatewayOrderId || 'direct',
       actorId: request.auth!.uid,
       timestamp: now,
@@ -193,22 +250,29 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
     };
     transaction.set(finTxRef, finRecord);
 
-    // 2. Update Order State with Cumulative Refund Tracking
+    // 2. Finalize Order State
     transaction.update(orderRef, {
       paymentStatus: nextPaymentStatus,
       refundLifecycleStatus: 'GATEWAY_REFUNDED',
       status: nextOrderStatus,
-      refundId,
+      refundId: gatewayRefundId,
       refundedAt: now,
-      amountRefundedPaise: newTotalRefundedPaise,
       amountRefundablePaise: amountPaidPaise - newTotalRefundedPaise,
       lastRefundAmountPaise: requestedRefundPaise,
       refundReason: cleanReason,
       refundedByStaffId: request.auth!.uid,
+      refundReservationId: reservationId,
       updatedAt: now,
     });
 
-    // 3. Record Immutable Audit Event
+    // 3. Mark reservation as finalized
+    transaction.update(reservationRef, {
+      status: 'FINALIZED',
+      gatewayRefundId,
+      finalizedAt: now,
+    });
+
+    // 4. Immutable Audit Event
     const eventRef = db.collection('orderEvents').doc();
     transaction.set(eventRef, {
       orderId,
@@ -219,7 +283,8 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
       timestamp: now,
       reason: `REFUND_PROCESSED: ${cleanReason}`,
       metadata: {
-        refundId,
+        refundId: gatewayRefundId,
+        reservationId,
         refundAmountPaise: requestedRefundPaise,
         totalRefundedPaise: newTotalRefundedPaise,
         isFullRefund,
@@ -227,12 +292,13 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
       },
     });
 
-    // 4. Record Idempotency Result if requested
+    // 5. Idempotency record
     if (cleanIdempKey) {
       const idempRef = db.collection('refundIdempotency').doc(cleanIdempKey);
       transaction.set(idempRef, {
         idempotencyKey: cleanIdempKey,
-        refundId,
+        refundId: gatewayRefundId,
+        reservationId,
         orderId,
         refundedPaise: requestedRefundPaise,
         totalRefundedPaise: newTotalRefundedPaise,
@@ -244,7 +310,7 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
 
     return {
       success: true,
-      refundId,
+      refundId: gatewayRefundId,
       orderId,
       refundedPaise: requestedRefundPaise,
       totalRefundedPaise: newTotalRefundedPaise,

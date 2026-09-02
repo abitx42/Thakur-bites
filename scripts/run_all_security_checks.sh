@@ -23,18 +23,28 @@ npm audit --audit-level=high
 cd ..
 
 echo ""
-echo "▶ Step 4: Compiling & Testing Backend Cloud Functions (194 Invariant Tests)..."
+echo "▶ Step 4: Compiling & Testing Backend Cloud Functions (225 Invariant Tests)..."
 cd functions
 npm run build
 npm test
 cd ..
 
 echo ""
-echo "▶ Step 5: Running Flutter Static Analysis & Client Test Suite (31 Tests)..."
+echo "▶ Step 5: Running Flutter Static Analysis & Client Test Suite (37 Tests)..."
 cd thakur_bites
 dart analyze --fatal-infos
 flutter test
 cd ..
+
+echo ""
+echo "▶ Step 5.1: Verifying Firestore Security Ruleset Unification Invariant..."
+CANONICAL_HASH=$(shasum -a 256 firestore/firestore.rules | awk '{print $1}')
+FLUTTER_RULES_HASH=$(shasum -a 256 thakur_bites/firestore.rules | awk '{print $1}')
+if [ "$CANONICAL_HASH" != "$FLUTTER_RULES_HASH" ]; then
+  echo "❌ CRITICAL: Firestore rules mismatch! thakur_bites/firestore.rules must match firestore/firestore.rules."
+  exit 1
+fi
+echo "  ✓ Authoritative Ruleset Verified: Both rule targets share canonical SHA-256 (${CANONICAL_HASH:0:16}...)"
 
 echo ""
 echo "▶ Step 6: Verifying Cryptographic Backup Restore Engine..."
@@ -54,7 +64,7 @@ node scripts/run_dast_suite.js
 
 echo ""
 echo "══════════════════════════════════════════════════════════════════════"
-echo "🏆 ALL 9 SECURITY, SAST, DAST & INVARIANT GATES PASSED (240 TOTAL TESTS 100% GREEN)"
+echo "🏆 ALL 9 SECURITY, SAST, DAST & INVARIANT GATES PASSED (280 TOTAL TESTS 100% GREEN)"
 echo "══════════════════════════════════════════════════════════════════════"
 echo ""
 echo "📊 CATEGORICAL SECURITY & INVARIANT AUDIT REPORT:"
@@ -67,6 +77,7 @@ echo "  📺  Single TV Projection & Data Minimization: 8 Vectors Verified (100%
 echo "  🧪  RBAC Permissions & Rules Boundaries   : 36 Vectors Verified (100% Green)"
 echo "  💾  Cryptographic Backup Restore Integrity : 4 Checksums Verified (100% Green)"
 echo "  🚀  High-Concurrency Lunch Rush Simulator  : 100 Parallel Buyers (0 Oversold)"
-echo "  🎯  Automated Staging DAST Attack Harness  : 15 Attack Scenarios (100% Defended)"
-echo "  📱  Flutter Client State & Pricing Models  : 31 Client Tests (0 Issues)"
+echo "  🎯  Automated Staging DAST Attack Harness  : 18 Attack Scenarios (100% Defended)"
+echo "  📱  Flutter Client State & Pricing Models  : 37 Client Tests (0 Issues)"
+echo "  🔒  Firestore Ruleset Canonical Hash      : 100% Synchronized (0 Divergence)"
 echo "══════════════════════════════════════════════════════════════════════"

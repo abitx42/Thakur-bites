@@ -67,7 +67,11 @@ class UpdateService extends ChangeNotifier {
       _status = _currentPolicy!.evaluate(installedVersion);
     } catch (e) {
       debugPrint('[UpdateService] Failed to check for updates: $e');
-      _status = UpdateStatus.upToDate;
+      // Fail-closed: If already in forceUpdateRequired state, maintain forced update lockdown.
+      // Do not silently downgrade an active security lockdown to upToDate on network errors.
+      if (_status != UpdateStatus.forceUpdateRequired) {
+        _status = UpdateStatus.upToDate;
+      }
     } finally {
       _isChecking = false;
       notifyListeners();
