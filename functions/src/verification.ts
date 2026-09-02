@@ -6,6 +6,7 @@ import { enforceAppCheck } from './app_check';
 import { logSecurityEvent } from './security_logger';
 import { syncUserCustomClaims } from './claims_manager';
 import { AccountType, VerificationStatus, PriorityLevel, VerificationApplication } from './types';
+import { assertCapability } from './authorization_policy';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -120,7 +121,7 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
       throw new HttpsError('already-exists', 'You already have a pending verification application under review.');
     }
 
-    const newApp: VerificationApplication = {
+    const newApp: VerificationApplication & Record<string, any> = {
       applicationId,
       userId,
       applicationType,
@@ -128,6 +129,11 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
       department: cleanDept,
       designation: cleanDesignation,
       officialEmail: cleanOfficialEmail,
+      // Formal claimed fields until administrative review approval (Finding 22)
+      claimedEmployeeId: cleanEmployeeId,
+      claimedDepartment: cleanDept,
+      claimedDesignation: cleanDesignation,
+      claimedOfficialEmail: cleanOfficialEmail,
       idProofStoragePath: safeProofPath,
       status: 'SUBMITTED',
       submittedAt: now,
@@ -136,9 +142,9 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
     transaction.set(appRef, newApp);
     transaction.update(userRef, {
       verificationStatus: 'UNDER_REVIEW',
-      department: cleanDept,
-      designation: cleanDesignation,
-      rollNo: cleanEmployeeId,
+      claimedDepartment: cleanDept,
+      claimedDesignation: cleanDesignation,
+      claimedRollNo: cleanEmployeeId,
       updatedAt: now,
     });
   });
@@ -179,7 +185,9 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
   const reviewerUid = request.auth.uid;
   const reviewerRole = (request.auth.token.role as string | undefined) || '';
 
-  if (!['manager', 'admin', 'security_admin'].includes(reviewerRole)) {
+  try {
+    assertCapability(reviewerRole, 'review_verification');
+  } catch (err) {
     await logSecurityEvent({
       eventType: 'UNAUTHORIZED_VERIFICATION_REVIEW_ATTEMPT',
       severity: 'HIGH',
@@ -289,6 +297,19 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
         authClaimsSyncStatus: 'FAILED',
         authClaimsSyncError: String(e.message || e),
         authClaimsSyncFailedAt: admin.firestore.Timestamp.now(),
+      });
+      // Enqueue to durable claims reconciliation queue for background worker recovery (Finding 23)
+      await db.collection('claimsReconciliationQueue').doc(reviewResult.applicantUid).set({
+        uid: reviewResult.applicantUid,
+        targetClaims: {
+          accountType: reviewResult.accountType,
+          verificationStatus: reviewResult.verificationStatus,
+          priorityLevel: reviewResult.priorityLevel,
+        },
+        status: 'PENDING_RETRY',
+        error: String(e.message || e),
+        failedAt: admin.firestore.Timestamp.now(),
+        retryCount: 0,
       });
       await logSecurityEvent({
         eventType: 'AUTH_CLAIMS_SYNC_FAILED',

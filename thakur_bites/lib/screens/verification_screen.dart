@@ -1,9 +1,9 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/user_profile.dart';
 import '../providers/auth_provider.dart';
+import '../services/functions_service.dart';
 import '../theme/app_theme.dart';
 
 /// Platform 2.0 — Faculty & Staff Verification Application Screen
@@ -16,7 +16,6 @@ class VerificationScreen extends StatefulWidget {
 
 class _VerificationScreenState extends State<VerificationScreen> {
   final _formKey = GlobalKey<FormState>();
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   AccountType _selectedType = AccountType.teacher;
   final _employeeIdController = TextEditingController();
@@ -60,23 +59,17 @@ class _VerificationScreenState extends State<VerificationScreen> {
       final user = auth.currentProfile;
       if (user == null) throw Exception('Please sign in first.');
 
-      final hexSuffix = DateTime.now().millisecondsSinceEpoch.toRadixString(16).substring(6).toUpperCase();
-      final appId = '${_selectedType == AccountType.teacher ? 'FAC' : 'STF'}-$hexSuffix';
+      // Server-Authoritative Verification Application Submission (Findings 20, 21, 22)
+      final functionsService = FunctionsService();
+      final result = await functionsService.submitVerificationApplication(
+        applicationType: _selectedType.toDbString(),
+        employeeId: _employeeIdController.text.trim().toUpperCase(),
+        department: _departmentController.text.trim(),
+        designation: _designationController.text.trim(),
+        officialEmail: _officialEmailController.text.trim().toLowerCase(),
+      );
 
-      final appDoc = {
-        'applicationId': appId,
-        'userId': user.uid,
-        'applicationType': _selectedType.toDbString(),
-        'employeeId': _employeeIdController.text.trim().toUpperCase(),
-        'department': _departmentController.text.trim(),
-        'designation': _designationController.text.trim(),
-        'officialEmail': _officialEmailController.text.trim().toLowerCase(),
-        'status': 'SUBMITTED',
-        'submittedAt': Timestamp.now(),
-      };
-
-      // Create application record
-      await _db.collection('verificationApplications').doc(appId).set(appDoc);
+      final appId = (result['applicationId'] as String?) ?? 'Pending';
 
       // Update local profile status
       final updated = user.copyWith(

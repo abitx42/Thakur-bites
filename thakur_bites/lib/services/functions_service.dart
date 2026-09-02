@@ -104,6 +104,33 @@ class FunctionsService {
     return Map<String, dynamic>.from(result.data as Map);
   }
 
+  // ─── Verification ────────────────────────────────────────────────────────
+
+  /// Submits faculty/staff verification application authoritatively.
+  /// Server generates cryptographic ID, timestamps, and marks status UNDER_REVIEW.
+  Future<Map<String, dynamic>> submitVerificationApplication({
+    required String applicationType,
+    required String employeeId,
+    required String department,
+    required String designation,
+    String? officialEmail,
+    String? idProofStoragePath,
+  }) async {
+    final callable = _functions.httpsCallable('submitVerificationApplication');
+    final payload = <String, dynamic>{
+      'applicationType': applicationType,
+      'employeeId': employeeId,
+      'department': department,
+      'designation': designation,
+      'appVersion': _appVersion,
+    };
+    if (officialEmail != null) payload['officialEmail'] = officialEmail;
+    if (idProofStoragePath != null) payload['idProofStoragePath'] = idProofStoragePath;
+
+    final result = await callable.call(payload);
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
   // ─── Version ─────────────────────────────────────────────────────────────
 
   static const String _appVersion = '1.0.0'; // Keep in sync with pubspec.yaml

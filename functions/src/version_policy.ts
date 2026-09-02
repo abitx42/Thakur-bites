@@ -2,15 +2,20 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { UserRole } from './types';
 import { logSecurityEvent } from './security_logger';
-import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
+import { enforceRateLimit } from './rate_limiter';
+import { assertCapability } from './authorization_policy';
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
 
 const db = admin.firestore();
 
 export interface VersionPolicyData {
   latestVersion: string;
   minimumSupportedVersion: string;
-  forceUpdate?: boolean;
+  forceUpdate: boolean;
   message?: string;
   releaseNotes?: string[];
   storeUrl?: string;
@@ -28,69 +33,121 @@ export interface UpdateVersionPolicyRequest {
   storeUrl?: string;
 }
 
+export interface EnforceVersionOptions {
+  requireVersion?: boolean;
+  failClosedOnDbError?: boolean;
+}
+
+// In-memory cache for version policies (TTL 60 seconds) to prevent DoS & fail-open on DB drops
+const policyCache = new Map<string, { policy: VersionPolicyData | null; cachedAt: number }>();
+const CACHE_TTL_MS = 60 * 1000;
+
 /**
- * Pure Semantic Version Comparator.
+ * Pure semver comparison function (major.minor.patch).
+ * Returns:
+ *  -1 if v1 < v2
+ *   0 if v1 == v2
+ *   1 if v1 > v2
  */
 export function compareSemver(v1: string, v2: string): number {
-  const sanitize = (v: string) => {
-    let clean = (v || '').trim();
-    if (clean.includes('+')) clean = clean.split('+')[0];
-    if (clean.includes('-')) clean = clean.split('-')[0];
-    return clean;
-  };
-
-  const p1 = sanitize(v1).split('.').map(x => parseInt(x, 10) || 0);
-  const p2 = sanitize(v2).split('.').map(x => parseInt(x, 10) || 0);
-
-  while (p1.length < 3) p1.push(0);
-  while (p2.length < 3) p2.push(0);
-
-  for (let i = 0; i < 3; i++) {
-    if (p1[i] < p2[i]) return -1;
-    if (p1[i] > p2[i]) return 1;
+  const parse = (v: string) => (v || '').split('-')[0].split('.').map(n => parseInt(n, 10) || 0);
+  const p1 = parse(v1);
+  const p2 = parse(v2);
+  for (let i = 0; i < Math.max(p1.length, p2.length, 3); i++) {
+    const num1 = p1[i] || 0;
+    const num2 = p2[i] || 0;
+    if (num1 < num2) return -1;
+    if (num1 > num2) return 1;
   }
   return 0;
 }
 
 /**
  * Server-Authoritative Version Policy Enforcer.
- * Cloud Functions invoke this to reject calls from obsolete/vulnerable client binaries.
+ * 
+ * Invariants Enforced:
+ * 1. Platform-Specific Lookup with Global Fallback: Resolves `platforms/{platform}` first before global.
+ * 2. Fail-Closed on Sensitive Endpoints: Requires valid version string if requireVersion is set.
+ * 3. Resilient In-Memory Policy Cache: If Firestore read fails, uses cached policy to avoid fail-open posture.
  */
 export async function enforceAppVersionPolicy(
   clientVersion?: string,
-  platform: 'android' | 'ios' | 'web' = 'web'
+  platform: 'android' | 'ios' | 'web' | 'global' = 'web',
+  options: EnforceVersionOptions = {}
 ): Promise<void> {
-  if (!clientVersion) {
-    return; // Allow legacy or unversioned calls unless strictly configured
+  const { requireVersion = false, failClosedOnDbError = false } = options;
+
+  if (!clientVersion || typeof clientVersion !== 'string' || clientVersion.trim().length === 0) {
+    if (requireVersion) {
+      throw new HttpsError(
+        'failed-precondition',
+        'APP_VERSION_REQUIRED: This sensitive endpoint requires a valid client application version.'
+      );
+    }
+    return; // Allow unversioned calls only when requireVersion is false
   }
 
-  try {
-    const docRef = db.collection('appConfig').doc('versions');
-    const snap = await docRef.get();
-    if (!snap.exists) return;
+  const cleanVersion = clientVersion.trim();
+  const cacheKey = `policy_${platform}`;
+  const nowMs = Date.now();
 
-    const data = snap.data() as VersionPolicyData;
-    if (data.forceUpdate === true) {
-      throw new HttpsError(
-        'failed-precondition',
-        'APP_VERSION_DEPRECATED_FORCED_UPDATE: System requires an immediate app update.'
-      );
-    }
+  let policy: VersionPolicyData | null = null;
+  const cached = policyCache.get(cacheKey);
 
-    if (data.minimumSupportedVersion && compareSemver(clientVersion, data.minimumSupportedVersion) < 0) {
-      throw new HttpsError(
-        'failed-precondition',
-        `APP_VERSION_DEPRECATED_FORCED_UPDATE: Installed version (${clientVersion}) is below minimum supported version (${data.minimumSupportedVersion}).`
-      );
+  if (cached && (nowMs - cached.cachedAt < CACHE_TTL_MS)) {
+    policy = cached.policy;
+  } else {
+    try {
+      // 1. Check platform-specific policy document first
+      if (platform && platform !== 'global') {
+        const platSnap = await db.collection('appConfig').doc('versions').collection('platforms').doc(platform).get();
+        if (platSnap.exists) {
+          policy = platSnap.data() as VersionPolicyData;
+        }
+      }
+
+      // 2. Global fallback
+      if (!policy) {
+        const globalSnap = await db.collection('appConfig').doc('versions').get();
+        if (globalSnap.exists) {
+          policy = globalSnap.data() as VersionPolicyData;
+        }
+      }
+
+      policyCache.set(cacheKey, { policy, cachedAt: nowMs });
+    } catch (err: any) {
+      console.error(`[enforceAppVersionPolicy] Error reading policy for ${platform}:`, err);
+      // If we have stale cache, evaluate against it rather than failing open
+      if (cached && cached.policy) {
+        policy = cached.policy;
+      } else if (failClosedOnDbError) {
+        throw new HttpsError(
+          'unavailable',
+          'APP_VERSION_POLICY_UNAVAILABLE: Could not verify client version compliance. Please retry.'
+        );
+      }
     }
-  } catch (err: any) {
-    if (err instanceof HttpsError) throw err;
-    console.error('[enforceAppVersionPolicy] Error reading version config:', err);
+  }
+
+  if (!policy) return;
+
+  if (policy.forceUpdate === true) {
+    throw new HttpsError(
+      'failed-precondition',
+      'APP_VERSION_DEPRECATED_FORCED_UPDATE: System requires an immediate app update.'
+    );
+  }
+
+  if (policy.minimumSupportedVersion && compareSemver(cleanVersion, policy.minimumSupportedVersion) < 0) {
+    throw new HttpsError(
+      'failed-precondition',
+      `APP_VERSION_DEPRECATED_FORCED_UPDATE: Installed version (${cleanVersion}) is below minimum supported version (${policy.minimumSupportedVersion}).`
+    );
   }
 }
 
 /**
- * Security Admin / Admin Authoritative Endpoint to configure App Version Policy in real time.
+ * Developer / Admin Authoritative Endpoint to configure App Version Policy in real time.
  */
 export const updateAppVersionPolicy = onCall<UpdateVersionPolicyRequest>(async (request) => {
   enforceAppCheck(request);
@@ -99,14 +156,16 @@ export const updateAppVersionPolicy = onCall<UpdateVersionPolicyRequest>(async (
   }
 
   const callerRole = (request.auth.token.role as UserRole) || 'student';
-  if (callerRole !== 'security_admin' && callerRole !== 'admin') {
+  try {
+    assertCapability(callerRole, 'manage_version_policy');
+  } catch (err) {
     await logSecurityEvent({
       eventType: 'UNAUTHORIZED_VERSION_POLICY_MUTATION',
       severity: 'HIGH',
       actorUid: request.auth.uid,
       details: { role: callerRole },
     });
-    throw new HttpsError('permission-denied', 'Only security administrators or administrators can update app version policy.');
+    throw new HttpsError('permission-denied', 'Only developers or administrators can update app version policy.');
   }
 
   await enforceRateLimit(request.auth.uid, 'emergency_action');
@@ -142,6 +201,12 @@ export const updateAppVersionPolicy = onCall<UpdateVersionPolicyRequest>(async (
   };
 
   await docRef.set(policyPayload, { merge: true });
+
+  // Invalidate in-memory cache for immediate propagation
+  policyCache.delete(`policy_${platform}`);
+  if (platform === 'global') {
+    policyCache.clear();
+  }
 
   await logSecurityEvent({
     eventType: 'APP_VERSION_POLICY_UPDATED',
