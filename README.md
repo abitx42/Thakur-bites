@@ -1,7 +1,7 @@
 # 🍛 Thakur Bites Platform 2.0 — Smart Campus Canteen Operating System
 
-[![Tests](https://img.shields.io/badge/tests-280%20passing-brightgreen.svg)](scripts/run_all_security_checks.sh)
-[![Security Gate](https://img.shields.io/badge/security%20invariants-201%20vectors%20passed-blue.svg)](functions/test/security_abuse.test.js)
+[![Tests](https://img.shields.io/badge/tests-303%20passing-brightgreen.svg)](scripts/run_all_security_checks.sh)
+[![Security Gate](https://img.shields.io/badge/security%20invariants-213%20vectors%20passed-blue.svg)](functions/test/security_abuse.test.js)
 [![Flutter](https://img.shields.io/badge/flutter-3.29%20Web%20%26%20Mobile-02569B.svg)](thakur_bites/)
 [![Firebase](https://img.shields.io/badge/firebase-Cloud%20Functions%20v2-FFCA28.svg)](functions/)
 
@@ -81,7 +81,7 @@ flowchart TD
 
 ---
 
-## 🧪 Master Test & Verification Suite (247 Tests Total)
+## 🧪 Master Test & Verification Suite (303 Tests & Vectors Total)
 
 Run all 9 enterprise security gates sequentially:
 
@@ -91,13 +91,13 @@ bash scripts/run_all_security_checks.sh
 
 | Verification Gate | Test Count | Status | Description |
 | :--- | :---: | :---: | :--- |
-| **Backend Invariant & Security Abuse Suite** | 201 | `100% PASS` | Tests 1–177 covering identity classification, priority math, PBKDF2 shift PINs, TV minimization, orphaned payments, and step-up challenges. |
-| **Flutter Client Unit & Widget Suite** | 31 | `100% PASS` | Pricing models, UserProfile parser, UserPreferences, ETA Rush scaling, and CartProvider. |
+| **Backend Invariant & Security Abuse Suite** | 237 | `100% PASS` | Tests 1–213 covering canonical RBAC (`DEVELOPER = ADMIN + Engineering`), distributed refund idempotency, delta accounting rollbacks, TV minimization, orphaned payments, and step-up challenges. |
+| **Flutter Client Unit & Widget Suite** | 37 | `100% PASS` | Pricing models, UserProfile parser, UserPreferences, ETA Rush scaling, and CartProvider. |
 | **Flutter Static Analysis** | — | `0 Errors` | `dart analyze --fatal-infos` passing cleanly with 0 warnings. |
 | **Automated Backup & Restore Engine** | 4 | `VERIFIED` | Cryptographic SHA-256 checksum and ledger balance verification. |
 | **Platform 2.0 E2E Lifecycle Smoke Test** | 11 | `100% PASS` | Full student checkout $\to$ webhook $\to$ priority KDS $\to$ QR pickup $\to$ shift PIN $\to$ TV projection. |
 | **100-Order Peak Lunch Rush Simulator** | 100 | `100% PASS` | 100 parallel checkout requests with 0 dropped orders and 0 oversold units. |
-| **Automated Staging DAST Security Harness** | 15 | `100% PASS` | 10 attack classes tested against live cloud function signatures (100% defended). |
+| **Automated Staging DAST Security Harness** | 18 | `100% PASS` | 10 attack classes tested against live cloud function signatures (100% defended). |
 
 ---
 
