@@ -31,16 +31,24 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.role == 'admin';
     }
 
+    function isDeveloper() {
+      return isAuthenticated() && (request.auth.token.role == 'developer' || request.auth.token.role == 'security_admin');
+    }
+
     function isSecurityAdmin() {
-      return isAuthenticated() && request.auth.token.role == 'security_admin';
+      return isDeveloper();
+    }
+
+    function hasAdministrativeAccess() {
+      return isAdmin() || isDeveloper() || isManager();
     }
 
     function isManagerOrAdmin() {
-      return isManager() || isAdmin() || isSecurityAdmin();
+      return hasAdministrativeAccess();
     }
 
     function isOperationalStaff() {
-      return isKitchen() || isPickup() || isCashier() || isManager() || isAdmin() || isSecurityAdmin();
+      return isKitchen() || isPickup() || isCashier() || hasAdministrativeAccess();
     }
 
     function isTeacher() {

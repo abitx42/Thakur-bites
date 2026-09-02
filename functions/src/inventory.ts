@@ -5,6 +5,7 @@ import { logSecurityEvent } from './security_logger';
 import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
 import { assertActiveWorkstationSession } from './shift_pins';
+import { assertCapability } from './authorization_policy';
 
 const db = admin.firestore();
 
@@ -42,7 +43,9 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
   await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin') {
+  try {
+    assertCapability(actorRole, 'adjust_inventory');
+  } catch (err) {
     await logSecurityEvent({
       eventType: 'UNAUTHORIZED_INVENTORY_ADJUSTMENT',
       severity: 'HIGH',

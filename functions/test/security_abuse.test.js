@@ -4227,26 +4227,34 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
   });
 
   it('199. Centralized Capability Registry Role Invariant: Rejects unauthorized actions consistently', () => {
-    const roleMatrix = {
-      student: new Set([]),
-      kitchen: new Set(['view_kitchen_orders', 'update_kitchen_status']),
-      cashier: new Set(['view_cashier_orders', 'record_cash_payment']),
-      manager: new Set(['process_refund', 'adjust_inventory', 'generate_shift_pin']),
-      admin: new Set(['process_refund', 'adjust_inventory', 'generate_shift_pin', 'manage_staff_roles']),
-      security_admin: new Set(['process_refund', 'adjust_inventory', 'generate_shift_pin', 'manage_staff_roles', 'emergency_freeze']),
-    };
+    const { hasCapability, isAdministrativeRole, isDeveloperRole } = require('../lib/authorization_policy');
 
-    function hasCap(role, cap) {
-      const caps = roleMatrix[role];
-      return caps ? caps.has(cap) : false;
-    }
+    // Verify Developer inherits all Admin capabilities + Engineering capabilities
+    assert.strictEqual(hasCapability('developer', 'process_refund'), true);
+    assert.strictEqual(hasCapability('developer', 'adjust_inventory'), true);
+    assert.strictEqual(hasCapability('developer', 'manage_staff_roles'), true);
+    assert.strictEqual(hasCapability('developer', 'view_telemetry'), true);
+    assert.strictEqual(hasCapability('developer', 'emergency_freeze'), true);
+    assert.strictEqual(hasCapability('developer', 'manage_version_policy'), true);
 
-    assert.strictEqual(hasCap('student', 'view_kitchen_orders'), false);
-    assert.strictEqual(hasCap('kitchen', 'view_kitchen_orders'), true);
-    assert.strictEqual(hasCap('kitchen', 'process_refund'), false);
-    assert.strictEqual(hasCap('manager', 'process_refund'), true);
-    assert.strictEqual(hasCap('manager', 'emergency_freeze'), false);
-    assert.strictEqual(hasCap('security_admin', 'emergency_freeze'), true);
+    // Verify Admin has business admin capabilities but NOT developer telemetry or emergency freeze
+    assert.strictEqual(hasCapability('admin', 'process_refund'), true);
+    assert.strictEqual(hasCapability('admin', 'adjust_inventory'), true);
+    assert.strictEqual(hasCapability('admin', 'view_telemetry'), false);
+    assert.strictEqual(hasCapability('admin', 'emergency_freeze'), false);
+
+    // Verify staff station boundaries
+    assert.strictEqual(hasCapability('kitchen', 'view_kitchen_orders'), true);
+    assert.strictEqual(hasCapability('kitchen', 'process_refund'), false);
+    assert.strictEqual(hasCapability('cashier', 'record_cash_payment'), true);
+    assert.strictEqual(hasCapability('student', 'view_kitchen_orders'), false);
+
+    // Verify role helpers
+    assert.strictEqual(isDeveloperRole('developer'), true);
+    assert.strictEqual(isDeveloperRole('admin'), false);
+    assert.strictEqual(isAdministrativeRole('admin'), true);
+    assert.strictEqual(isAdministrativeRole('developer'), true);
+    assert.strictEqual(isAdministrativeRole('kitchen'), false);
   });
 
   it('200. Double-Entry Financial Debit-Credit Net Balance Invariant: Postings always balance', () => {

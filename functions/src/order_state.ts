@@ -7,6 +7,7 @@ import { updatePublicLiveQueueProjection } from './tv_projection';
 import { assertActiveWorkstationSession } from './shift_pins';
 import { enforceAppVersionPolicy } from './version_policy';
 import { reserveAndExecuteRefund } from './refunds';
+import { hasCapability } from './authorization_policy';
 
 const db = admin.firestore();
 
@@ -20,8 +21,8 @@ const ALLOWED_OPERATIONAL_TRANSITIONS: Record<OrderStatus, { next: OrderStatus[]
   draft: [],
   payment_pending: [], // Payment pending cancellations must go through cancelOrExpirePaymentSession or cancelOrder
   paid: [],
-  confirmed: [{ next: ['preparing'], roles: ['kitchen', 'manager', 'admin'] }],
-  preparing: [{ next: ['ready'], roles: ['kitchen', 'manager', 'admin'] }],
+  confirmed: [{ next: ['preparing'], roles: ['kitchen', 'manager', 'admin', 'developer', 'security_admin'] }],
+  preparing: [{ next: ['ready'], roles: ['kitchen', 'manager', 'admin', 'developer', 'security_admin'] }],
   ready: [],
   collected: [],
   cancelled: [],
@@ -162,7 +163,7 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
 
   const initialOrderData = initialSnap.data()!;
   const isOwner = initialOrderData.studentId === actorId;
-  const isStaff = ['manager', 'admin', 'security_admin'].includes(actorRole);
+  const isStaff = hasCapability(actorRole, 'cancel_staff_order');
 
   if (!isOwner && !isStaff) {
     throw new HttpsError('permission-denied', 'You do not have permission to cancel this order.');

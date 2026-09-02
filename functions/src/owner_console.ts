@@ -2,6 +2,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { enforceAppCheck } from './app_check';
 import { logSecurityEvent } from './security_logger';
+import { assertCapability } from './authorization_policy';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -69,9 +70,7 @@ export const getOwnerBusinessMetrics = onCall(async (request): Promise<OwnerBusi
   }
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
-  if (!['manager', 'admin', 'security_admin'].includes(callerRole)) {
-    throw new HttpsError('permission-denied', 'Only managers or administrators can access owner analytics.');
-  }
+  assertCapability(callerRole, 'view_business_analytics', 'Only managers or administrators can access owner analytics.');
 
   const todayStart = getTodayStartTimestamp();
   const now = new Date();
@@ -219,9 +218,7 @@ export const updateOwnerFeatureFlags = onCall<Partial<OwnerFeatureFlags>>(async 
   }
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
-  if (!['manager', 'admin', 'security_admin'].includes(callerRole)) {
-    throw new HttpsError('permission-denied', 'Only managers or administrators can modify campus feature flags.');
-  }
+  assertCapability(callerRole, 'manage_platform_flags', 'Only managers or administrators can modify campus feature flags.');
 
   const {
     onlineOrderingEnabled,

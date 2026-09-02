@@ -5,10 +5,11 @@ import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { syncUserCustomClaims } from './claims_manager';
+import { assertCapability, isDeveloperRole } from './authorization_policy';
 
 const db = admin.firestore();
 
-const VALID_ROLES: UserRole[] = ['student', 'kitchen', 'pickup', 'cashier', 'manager', 'admin', 'security_admin'];
+const VALID_ROLES: UserRole[] = ['customer', 'student', 'kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'];
 
 /**
  * Assigns a verified RBAC role to a staff member with session revocation and permissionsVersion tracking.
@@ -23,7 +24,9 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
   await enforceRateLimit(request.auth.uid, 'role_assignment');
 
   const callerRole = (request.auth.token.role as UserRole) || 'student';
-  if (callerRole !== 'admin' && callerRole !== 'security_admin') {
+  try {
+    assertCapability(callerRole, 'manage_staff_roles');
+  } catch (err) {
     await logSecurityEvent({
       eventType: 'UNAUTHORIZED_ROLE_ASSIGNMENT_ATTEMPT',
       severity: 'CRITICAL',
@@ -38,9 +41,9 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     throw new HttpsError('invalid-argument', 'Valid targetUid (max 128 chars) and role required.');
   }
 
-  // Separation of Duties: Admin cannot promote to security_admin unless caller is security_admin
-  if (newRole === 'security_admin' && callerRole !== 'security_admin') {
-    throw new HttpsError('permission-denied', 'Only security administrators can grant the security_admin role.');
+  // Separation of Duties: Admin cannot promote to developer/security_admin unless caller is an engineering administrator
+  if ((newRole === 'developer' || newRole === 'security_admin') && !isDeveloperRole(callerRole)) {
+    throw new HttpsError('permission-denied', 'Only developers or security administrators can grant engineering administrator roles.');
   }
 
   // 1. Fetch target user record and verify existence
@@ -53,16 +56,16 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     throw new HttpsError('not-found', `Target user ${targetUid} does not exist in Firebase Auth.`);
   }
 
-  // Last Security Admin Protection (TB-NEW-024)
-  if (existingRole === 'security_admin' && newRole !== 'security_admin') {
-    if (callerRole !== 'security_admin') {
-      throw new HttpsError('permission-denied', 'Only security administrators can demote a security administrator.');
+  // Last Engineering Admin (Developer / Security Admin) Protection (TB-NEW-024)
+  if (isDeveloperRole(existingRole) && !isDeveloperRole(newRole)) {
+    if (!isDeveloperRole(callerRole)) {
+      throw new HttpsError('permission-denied', 'Only developers or security administrators can demote an engineering administrator.');
     }
-    const securityAdminsSnap = await db.collection('staffUsers')
-      .where('role', '==', 'security_admin')
+    const devAdminsSnap = await db.collection('staffUsers')
+      .where('role', 'in', ['developer', 'security_admin'])
       .get();
-    if (securityAdminsSnap.docs.length <= 1 && securityAdminsSnap.docs.some(d => d.id === targetUid)) {
-      throw new HttpsError('failed-precondition', 'Cannot demote the last remaining security administrator. System requires at least one active security_admin.');
+    if (devAdminsSnap.docs.length <= 1 && devAdminsSnap.docs.some(d => d.id === targetUid)) {
+      throw new HttpsError('failed-precondition', 'Cannot demote the last remaining developer or security administrator. System requires at least one active engineering administrator.');
     }
   }
 

@@ -1,6 +1,16 @@
 import { Timestamp } from 'firebase-admin/firestore';
 
-export type UserRole = 'student' | 'kitchen' | 'pickup' | 'cashier' | 'manager' | 'admin' | 'security_admin' | 'system';
+export type UserRole =
+  | 'customer'
+  | 'student'
+  | 'kitchen'
+  | 'pickup'
+  | 'cashier'
+  | 'manager'
+  | 'admin'
+  | 'developer'
+  | 'security_admin'
+  | 'system';
 
 export type OrderStatus =
   | 'draft'

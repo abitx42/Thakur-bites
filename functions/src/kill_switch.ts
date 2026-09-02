@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import { UserRole } from './types';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
+import { assertCapability, hasCapability } from './authorization_policy';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -75,12 +76,11 @@ export const setSystemOperationalMode = onCall<{ mode: SystemOperationalMode; re
   }
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin') {
-    throw new HttpsError(
-      'permission-denied',
-      'Permission denied. Only managers and security administrators can toggle system operational modes.'
-    );
-  }
+  assertCapability(
+    actorRole,
+    'manage_platform_flags',
+    'Permission denied. Only managers and security administrators can toggle system operational modes.'
+  );
 
   const { mode, reason } = request.data;
   const validModes: SystemOperationalMode[] = ['NORMAL', 'DEGRADED', 'FINANCIAL_FROZEN', 'EMERGENCY_HALT'];
@@ -98,14 +98,14 @@ export const setSystemOperationalMode = onCall<{ mode: SystemOperationalMode; re
   const currentSnap = await db.collection('systemConfig').doc('global').get();
   const currentMode = (currentSnap.data()?.mode as SystemOperationalMode) || 'NORMAL';
 
-  if (mode === 'EMERGENCY_HALT' && actorRole === 'manager') {
+  if (mode === 'EMERGENCY_HALT' && !hasCapability(actorRole, 'emergency_freeze')) {
     throw new HttpsError(
       'permission-denied',
       'Permission denied. Only Security Administrators and Admins are authorized to initiate an EMERGENCY_HALT.'
     );
   }
 
-  if (mode === 'NORMAL' && (currentMode === 'FINANCIAL_FROZEN' || currentMode === 'EMERGENCY_HALT') && actorRole === 'manager') {
+  if (mode === 'NORMAL' && (currentMode === 'FINANCIAL_FROZEN' || currentMode === 'EMERGENCY_HALT') && !hasCapability(actorRole, 'emergency_freeze')) {
     throw new HttpsError(
       'permission-denied',
       'Permission denied. Restoring NORMAL operations from FINANCIAL_FROZEN or EMERGENCY_HALT requires Security Administrator or Admin authorization.'

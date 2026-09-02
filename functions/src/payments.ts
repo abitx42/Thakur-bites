@@ -17,6 +17,7 @@ import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { assertActiveWorkstationSession } from './shift_pins';
 import { enforceAppVersionPolicy } from './version_policy';
+import { assertCapability } from './authorization_policy';
 
 const db = admin.firestore();
 
@@ -428,9 +429,7 @@ export const recordCashPayment = onCall<{ orderId: string; idempotencyKey?: stri
   await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin' && actorRole !== 'cashier') {
-    throw new HttpsError('permission-denied', 'Only authorized cashiers and managers can record cash payments.');
-  }
+  assertCapability(actorRole, 'record_cash_payment', 'Only authorized cashiers and managers can record cash payments.');
 
   await enforceRateLimit(request.auth.uid, 'cash_payment');
 

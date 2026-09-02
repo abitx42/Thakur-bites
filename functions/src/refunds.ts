@@ -8,6 +8,7 @@ import { assertOperationalMode } from './kill_switch';
 import { enforceAppCheck } from './app_check';
 import { RazorpayPaymentAdapter } from './payments';
 import { enforceAppVersionPolicy } from './version_policy';
+import { assertCapability } from './authorization_policy';
 
 const db = admin.firestore();
 
@@ -126,7 +127,9 @@ export const processOrderRefund = onCall<RefundRequest>(async (request) => {
   }
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  if (actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin') {
+  try {
+    assertCapability(actorRole, 'process_refund');
+  } catch (err) {
     await logSecurityEvent({
       eventType: 'UNAUTHORIZED_REFUND_ATTEMPT',
       severity: 'HIGH',

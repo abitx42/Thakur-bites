@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
+import { assertCapability } from './authorization_policy';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -46,27 +47,27 @@ export function evaluateRBACPermission(role: string, operation: OperationType): 
       description: 'Customer order placement and stock reservation.',
     },
     reviewVerificationApplication: {
-      allowedRoles: ['manager', 'admin', 'security_admin'],
+      allowedRoles: ['manager', 'admin', 'developer', 'security_admin'],
       description: 'Review and approve/reject Teacher & Staff verification applications.',
     },
     generateShiftPin: {
-      allowedRoles: ['manager', 'admin', 'security_admin'],
+      allowedRoles: ['manager', 'admin', 'developer', 'security_admin'],
       description: 'Generate time-bound 6-digit shift PINs for counter workstations.',
     },
     adjustInventoryStock: {
-      allowedRoles: ['manager', 'admin', 'security_admin'],
+      allowedRoles: ['manager', 'admin', 'developer', 'security_admin'],
       description: 'Manually adjust stockOnHand or reservedStock warehouse counts.',
     },
     setSystemOperationalMode: {
-      allowedRoles: ['admin', 'security_admin'],
+      allowedRoles: ['admin', 'developer', 'security_admin'],
       description: 'Trigger emergency kill switch or financial freeze across the campus.',
     },
     reconcileDailyLedger: {
-      allowedRoles: ['manager', 'admin', 'security_admin'],
+      allowedRoles: ['manager', 'admin', 'developer', 'security_admin'],
       description: 'Reconcile double-entry financial ledgers and settlement balances.',
     },
     viewSecurityIncidents: {
-      allowedRoles: ['admin', 'security_admin'],
+      allowedRoles: ['admin', 'developer', 'security_admin'],
       description: 'Inspect live security incidents, attack telemetry, and audit logs.',
     },
   };
@@ -93,7 +94,7 @@ export function evaluateRBACPermission(role: string, operation: OperationType): 
 /**
  * Platform 2.0 — Get Developer Command Cockpit Telemetry
  * 
- * Restricted to security_admin or admin.
+ * Restricted to developer, security_admin or admin.
  */
 export const getDeveloperTelemetry = onCall(async (request) => {
   enforceAppCheck(request);
@@ -105,9 +106,7 @@ export const getDeveloperTelemetry = onCall(async (request) => {
   await enforceRateLimit(request.auth.uid, 'developer_telemetry');
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
-  if (!['admin', 'security_admin'].includes(callerRole)) {
-    throw new HttpsError('permission-denied', 'Only security administrators can access developer telemetry.');
-  }
+  assertCapability(callerRole, 'view_telemetry', 'Only developers or administrators can access developer telemetry.');
 
   // 1. Fetch recent security incidents
   const incidentsSnap = await db
@@ -232,9 +231,7 @@ export const requestEmergencyStepUpChallenge = onCall<RequestStepUpChallengeData
   }
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
-  if (callerRole !== 'security_admin') {
-    throw new HttpsError('permission-denied', 'Separation of Duties: Step-up challenges restricted strictly to security_admin.');
-  }
+  assertCapability(callerRole, 'emergency_freeze', 'Separation of Duties: Step-up challenges restricted strictly to authorized engineering administrators (developer / security_admin).');
 
   const { action, reason } = request.data || {};
   if (!action || !reason || typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 200 || !['FREEZE_FINANCIALS', 'KILL_SWITCH', 'UNFREEZE_PLATFORM'].includes(action)) {
@@ -290,9 +287,7 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
 
   const authUid = request.auth.uid;
   const callerRole = (request.auth.token.role as string | undefined) || '';
-  if (callerRole !== 'security_admin') {
-    throw new HttpsError('permission-denied', 'Separation of Duties: Emergency actions restricted strictly to security_admin.');
-  }
+  assertCapability(callerRole, 'emergency_freeze', 'Separation of Duties: Emergency actions restricted strictly to authorized engineering administrators (developer / security_admin).');
 
   const { action, challengeId, challengeNonce, reason } = request.data || {};
   if (!action || !challengeId || !challengeNonce || !reason) {

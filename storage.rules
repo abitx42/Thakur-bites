@@ -9,12 +9,17 @@ service firebase.storage {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isManagerOrAdmin() {
+    function hasAdministrativeAccess() {
       return isAuthenticated() && (
-        request.auth.token.role == 'manager' ||
         request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'developer' ||
+        request.auth.token.role == 'manager' ||
         request.auth.token.role == 'security_admin'
       );
+    }
+
+    function isManagerOrAdmin() {
+      return hasAdministrativeAccess();
     }
 
     // Faculty Verification ID Proofs (Private & Encrypted at Rest)

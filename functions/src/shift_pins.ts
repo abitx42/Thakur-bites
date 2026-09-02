@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
+import { assertCapability } from './authorization_policy';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -72,9 +73,7 @@ export const generateShiftPin = onCall<GenerateShiftPinRequest>(async (request) 
   }
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
-  if (!['manager', 'admin', 'security_admin'].includes(callerRole)) {
-    throw new HttpsError('permission-denied', 'Only managers or admins can generate shift PINs.');
-  }
+  assertCapability(callerRole, 'generate_shift_pin', 'Only managers or admins can generate shift PINs.');
 
   const { role, shiftWindow, shiftDate = getMumbaiDateStr() } = request.data || {};
 
@@ -344,9 +343,7 @@ export const revokeShiftPin = onCall<RevokeShiftPinRequest>(async (request) => {
   }
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
-  if (!['manager', 'admin', 'security_admin'].includes(callerRole)) {
-    throw new HttpsError('permission-denied', 'Only managers or admins can revoke shift PINs.');
-  }
+  assertCapability(callerRole, 'revoke_shift_pin', 'Only managers or admins can revoke shift PINs.');
 
   const { pinId, reason = 'Administrative revocation' } = request.data || {};
   if (!pinId) {
@@ -432,9 +429,7 @@ export const listActiveShiftPins = onCall(async (request) => {
   }
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
-  if (!['manager', 'admin', 'security_admin'].includes(callerRole)) {
-    throw new HttpsError('permission-denied', 'Only managers or admins can list shift PINs.');
-  }
+  assertCapability(callerRole, 'manage_shift_pins', 'Only managers or admins can list shift PINs.');
 
   const todayStr = getMumbaiDateStr();
   const pinsSnap = await db
