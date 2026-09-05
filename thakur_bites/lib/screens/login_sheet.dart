@@ -24,7 +24,8 @@ class LoginSheet extends StatefulWidget {
 
 class _LoginSheetState extends State<LoginSheet> {
   int _selectedTab = 0; // 0 = Google / Quick, 1 = Institutional Email, 2 = Fast Roll No
-  final _formKey = GlobalKey<FormState>();
+  final _emailFormKey = GlobalKey<FormState>();
+  final _rollFormKey = GlobalKey<FormState>();
 
   // Email Account controllers
   final _emailController = TextEditingController();
@@ -118,7 +119,7 @@ class _LoginSheetState extends State<LoginSheet> {
   }
 
   Future<void> _submitEmailAuth() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!_emailFormKey.currentState!.validate()) return;
     if (_isSubmitting) return;
 
     setState(() => _isSubmitting = true);
@@ -169,7 +170,7 @@ class _LoginSheetState extends State<LoginSheet> {
   }
 
   Future<void> _submitFastLogin() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!_rollFormKey.currentState!.validate()) return;
     if (_isSubmitting) return;
 
     setState(() => _isSubmitting = true);
@@ -435,7 +436,7 @@ class _LoginSheetState extends State<LoginSheet> {
   // ═══════════════════════════════════════════════════════════════════
   Widget _buildEmailTab() {
     return Form(
-      key: _formKey,
+      key: _emailFormKey,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -519,7 +520,7 @@ class _LoginSheetState extends State<LoginSheet> {
   // ═══════════════════════════════════════════════════════════════════
   Widget _buildFastRollTab() {
     return Form(
-      key: _formKey,
+      key: _rollFormKey,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

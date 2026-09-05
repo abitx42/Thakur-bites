@@ -1,7 +1,7 @@
 .aider*
 opencode.json
-node_modules/
-lib/
+/lib/
+functions/lib/
 *.log
 .env*
 *.pem

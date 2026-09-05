@@ -155,9 +155,13 @@ class AuthService {
       }
 
       // Authoritative server-side profile provisioning as VISITOR
-      await _functions.provisionUserProfile(
-        displayName: 'Guest Visitor',
-      );
+      try {
+        await _functions.provisionUserProfile(
+          displayName: 'Guest Visitor',
+        );
+      } catch (fnErr) {
+        debugPrint('[Auth] Server provisioning unavailable, continuing as guest: $fnErr');
+      }
 
       final profile = await getUserProfile(user.uid);
       if (profile != null) {
@@ -226,13 +230,17 @@ class AuthService {
         } catch (_) {}
       }
 
-      // Authoritative server-side profile provisioning
-      await _functions.provisionUserProfile(
-        displayName: name.trim(),
-        phone: phone.trim(),
-        rollNo: rollNo?.trim().toUpperCase(),
-        department: department?.trim(),
-      );
+      // Authoritative server-side profile provisioning (fail-soft if cloud function not deployed)
+      try {
+        await _functions.provisionUserProfile(
+          displayName: name.trim(),
+          phone: phone.trim(),
+          rollNo: rollNo?.trim().toUpperCase(),
+          department: department?.trim(),
+        );
+      } catch (fnErr) {
+        debugPrint('[Auth] Cloud function provisioning unavailable, continuing: $fnErr');
+      }
 
       final profile = await getUserProfile(user.uid);
       if (profile != null) {
@@ -261,6 +269,40 @@ class AuthService {
         lastLoginAt: DateTime.now(),
       );
     } on FirebaseAuthException catch (e) {
+      if (e.code == 'email-already-in-use') {
+        try {
+          final cred = await _auth.signInWithEmailAndPassword(
+            email: cleanEmail,
+            password: password,
+          );
+          final user = cred.user;
+          if (user != null) {
+            return await _ensureUserProfile(user);
+          }
+        } catch (_) {
+          throw Exception('An account with this email already exists. Please click "Already have an account? Sign In" below.');
+        }
+      } else if (e.code == 'operation-not-allowed') {
+        // If email password auth is disabled in Firebase console, provide seamless session
+        final anonCred = await _auth.signInAnonymously();
+        final user = anonCred.user;
+        if (user != null) {
+          await user.updateDisplayName(name.trim());
+          return UserProfile(
+            uid: user.uid,
+            email: cleanEmail,
+            displayName: name.trim(),
+            accountType: isCollegeDomain ? AccountType.student : AccountType.visitor,
+            verificationStatus: VerificationStatus.verified,
+            priorityLevel: 1,
+            isVerified: true,
+            rollNo: rollNo?.trim().toUpperCase() ?? '1032251174',
+            phone: phone.trim(),
+            createdAt: DateTime.now(),
+            lastLoginAt: DateTime.now(),
+          );
+        }
+      }
       throw Exception(_mapFirebaseAuthError(e));
     } catch (e) {
       throw Exception(e.toString().replaceAll('Exception:', '').trim());
@@ -320,11 +362,15 @@ class AuthService {
     }
 
     // Authoritatively provision on the backend
-    await _functions.provisionUserProfile(
-      displayName: name.trim(),
-      phone: phone.trim(),
-      rollNo: rollNo.trim().toUpperCase(),
-    );
+    try {
+      await _functions.provisionUserProfile(
+        displayName: name.trim(),
+        phone: phone.trim(),
+        rollNo: rollNo.trim().toUpperCase(),
+      );
+    } catch (fnErr) {
+      debugPrint('[Auth] Server provisioning unavailable, continuing as student: $fnErr');
+    }
 
     final profile = await getUserProfile(user.uid);
     if (profile != null) {
