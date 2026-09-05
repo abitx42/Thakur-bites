@@ -157,33 +157,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Instant Student Login with Name, Roll No & Phone
-  Future<void> signInStudent({
-    required String name,
-    required String phone,
-    required String rollNo,
-    String? email,
-  }) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      _currentUserProfile = await _authService.signInStudent(
-        name: name,
-        phone: phone,
-        rollNo: rollNo,
-        email: email,
-      );
-    } catch (e) {
-      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
-      rethrow;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
   /// Reset Password
   Future<void> sendPasswordReset(String email) async {
     _errorMessage = null;

@@ -23,9 +23,8 @@ class LoginSheet extends StatefulWidget {
 }
 
 class _LoginSheetState extends State<LoginSheet> {
-  int _selectedTab = 0; // 0 = Google / Quick, 1 = Institutional Email, 2 = Fast Roll No
+  int _selectedTab = 0; // 0 = Google & Guest, 1 = Institutional Email
   final _emailFormKey = GlobalKey<FormState>();
-  final _rollFormKey = GlobalKey<FormState>();
 
   // Email Account controllers
   final _emailController = TextEditingController();
@@ -34,11 +33,6 @@ class _LoginSheetState extends State<LoginSheet> {
   final _phoneEmailController = TextEditingController();
   final _rollEmailController = TextEditingController();
   bool _isSignUpMode = false;
-
-  // Instant Fast Login controllers
-  final _nameController = TextEditingController();
-  final _rollController = TextEditingController();
-  final _phoneController = TextEditingController();
 
   bool _isSubmitting = false;
 
@@ -49,9 +43,6 @@ class _LoginSheetState extends State<LoginSheet> {
     _nameEmailController.dispose();
     _phoneEmailController.dispose();
     _rollEmailController.dispose();
-    _nameController.dispose();
-    _rollController.dispose();
-    _phoneController.dispose();
     super.dispose();
   }
 
@@ -169,46 +160,7 @@ class _LoginSheetState extends State<LoginSheet> {
     }
   }
 
-  Future<void> _submitFastLogin() async {
-    if (!_rollFormKey.currentState!.validate()) return;
-    if (_isSubmitting) return;
 
-    setState(() => _isSubmitting = true);
-    HapticFeedback.mediumImpact();
-
-    try {
-      final auth = context.read<AuthProvider>();
-      await auth.signInStudent(
-        name: _nameController.text.trim(),
-        rollNo: _rollController.text.trim(),
-        phone: _phoneController.text.trim(),
-      );
-
-      if (mounted) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Welcome, ${_nameController.text.trim()}! 👋'),
-            backgroundColor: AppColors.green,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isSubmitting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Sign in failed: ${e.toString().replaceAll('Exception:', '').trim()}'),
-            backgroundColor: AppColors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -279,9 +231,8 @@ class _LoginSheetState extends State<LoginSheet> {
               ),
               child: Row(
                 children: [
-                  _buildTabChip(0, '⚡️ Google & Fast'),
+                  _buildTabChip(0, '⚡️ Google & Guest'),
                   _buildTabChip(1, '🎓 College Email'),
-                  _buildTabChip(2, '📋 Quick Roll No'),
                 ],
               ),
             ),
@@ -290,7 +241,6 @@ class _LoginSheetState extends State<LoginSheet> {
             // Active Tab View
             if (_selectedTab == 0) _buildGoogleAndQuickTab(),
             if (_selectedTab == 1) _buildEmailTab(),
-            if (_selectedTab == 2) _buildFastRollTab(),
           ],
         ),
       ),
@@ -476,7 +426,7 @@ class _LoginSheetState extends State<LoginSheet> {
             controller: _passwordController,
             obscureText: true,
             decoration: _inputDecoration('Password', Icons.lock_outline),
-            validator: (v) => (v == null || v.length < 6) ? 'Password must be at least 6 characters' : null,
+            validator: (v) => (v == null || v.length < 8) ? 'Password must be at least 8 characters' : null,
           ),
           const SizedBox(height: 16),
 
@@ -515,58 +465,6 @@ class _LoginSheetState extends State<LoginSheet> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  TAB 2: FAST ROLL NO LOGIN
-  // ═══════════════════════════════════════════════════════════════════
-  Widget _buildFastRollTab() {
-    return Form(
-      key: _rollFormKey,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          TextFormField(
-            controller: _nameController,
-            decoration: _inputDecoration('Full Name', Icons.person_outline),
-            validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter your name' : null,
-          ),
-          const SizedBox(height: 10),
-          TextFormField(
-            controller: _rollController,
-            decoration: _inputDecoration('Roll No / Division', Icons.badge_outlined),
-            validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter your roll number' : null,
-          ),
-          const SizedBox(height: 10),
-          TextFormField(
-            controller: _phoneController,
-            keyboardType: TextInputType.phone,
-            decoration: _inputDecoration('Phone Number', Icons.phone_outlined),
-            validator: (v) => (v == null || v.trim().length < 10) ? 'Enter a valid phone number' : null,
-          ),
-          const SizedBox(height: 16),
-
-          ElevatedButton(
-            onPressed: _isSubmitting ? null : _submitFastLogin,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.red,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            ),
-            child: _isSubmitting
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : Text(
-                    'Instant Canteen Sign-In',
-                    style: AppFonts.body(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
 
   InputDecoration _inputDecoration(String label, IconData icon) {
     return InputDecoration(

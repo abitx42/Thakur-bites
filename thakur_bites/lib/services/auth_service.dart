@@ -44,16 +44,16 @@ class AuthService {
   /// Current Firebase user
   User? get currentUser => _auth.currentUser;
 
-  /// Validates if an email belongs to an authorized institutional campus domain
+  /// Validates if an email belongs to an authorized institutional campus domain (TB-AUTH-005)
   static bool isAuthorizedCollegeDomain(String email) {
     final clean = email.trim().toLowerCase();
     if (!clean.contains('@')) return false;
     final domain = clean.split('@').last;
-    return allowedInstitutionalDomains.any((d) => domain == d || domain.endsWith('.$d'));
+    return allowedInstitutionalDomains.contains(domain);
   }
 
-  /// Classifies email domain to default account type (Hint only — server enforces authoritative classification)
-  static AccountType classifyEmailDomain(String email) {
+  /// Informational UI hint for email domain (TB-AUTH-006: UI hint only — server enforces authoritative classification)
+  static AccountType getIdentityHintFromEmail(String email) {
     final clean = email.trim().toLowerCase();
     if (clean.endsWith('@tcetmumbai.in')) {
       return AccountType.student;
@@ -154,34 +154,23 @@ class AuthService {
         throw Exception('Failed to create guest session.');
       }
 
-      // Authoritative server-side profile provisioning as VISITOR
+      // Authoritative server-side profile provisioning as VISITOR (TB-AUTH-001 Fail-Closed)
+      await _functions.provisionUserProfile(
+        displayName: 'Guest Visitor',
+      );
+
+      // Force refresh token for custom claims (TB-AUTH-007)
       try {
-        await _functions.provisionUserProfile(
-          displayName: 'Guest Visitor',
-        );
-      } catch (fnErr) {
-        debugPrint('[Auth] Server provisioning unavailable, continuing as guest: $fnErr');
-      }
+        await user.getIdToken(true);
+      } catch (_) {}
 
       final profile = await getUserProfile(user.uid);
       if (profile != null) {
         return profile;
       }
 
-      // Safe client-side fallback representation
-      return UserProfile(
-        uid: user.uid,
-        email: '',
-        displayName: 'Guest Visitor',
-        accountType: AccountType.visitor,
-        verificationStatus: VerificationStatus.notRequired,
-        priorityLevel: 0,
-        isVerified: true,
-        accountDisabled: false,
-        totalOrders: 0,
-        createdAt: DateTime.now(),
-        lastLoginAt: DateTime.now(),
-      );
+      await _auth.signOut();
+      throw Exception('Guest profile initialization failed. Please try again.');
     } on FirebaseAuthException catch (e) {
       throw Exception(_mapFirebaseAuthError(e));
     } catch (e) {
@@ -203,8 +192,8 @@ class AuthService {
     if (cleanEmail.isEmpty || !cleanEmail.contains('@')) {
       throw Exception('Please enter a valid email address.');
     }
-    if (password.length < 6) {
-      throw Exception('Password must be at least 6 characters long.');
+    if (password.length < 8) {
+      throw Exception('Password must be at least 8 characters long.');
     }
 
     final isCollegeDomain = isAuthorizedCollegeDomain(cleanEmail);
@@ -230,44 +219,26 @@ class AuthService {
         } catch (_) {}
       }
 
-      // Authoritative server-side profile provisioning (fail-soft if cloud function not deployed)
+      // Authoritative server-side profile provisioning (TB-AUTH-001 Fail-Closed)
+      await _functions.provisionUserProfile(
+        displayName: name.trim(),
+        phone: phone.trim(),
+        rollNo: rollNo?.trim().toUpperCase(),
+        department: department?.trim(),
+      );
+
+      // Force refresh token for custom claims (TB-AUTH-007)
       try {
-        await _functions.provisionUserProfile(
-          displayName: name.trim(),
-          phone: phone.trim(),
-          rollNo: rollNo?.trim().toUpperCase(),
-          department: department?.trim(),
-        );
-      } catch (fnErr) {
-        debugPrint('[Auth] Cloud function provisioning unavailable, continuing: $fnErr');
-      }
+        await user.getIdToken(true);
+      } catch (_) {}
 
       final profile = await getUserProfile(user.uid);
       if (profile != null) {
         return profile;
       }
 
-      final accountType = classifyEmailDomain(cleanEmail);
-      final isVisitor = accountType == AccountType.visitor;
-
-      return UserProfile(
-        uid: user.uid,
-        email: cleanEmail,
-        displayName: name.trim(),
-        accountType: accountType,
-        verificationStatus: isVisitor
-            ? VerificationStatus.notRequired
-            : (user.emailVerified ? VerificationStatus.verified : VerificationStatus.pending),
-        priorityLevel: accountType == AccountType.teacher ? 2 : (isVisitor ? 0 : 1),
-        department: department?.trim(),
-        rollNo: rollNo?.trim().toUpperCase() ?? (isVisitor ? 'GUEST' : 'TCET'),
-        phone: phone.trim(),
-        isVerified: isVisitor || user.emailVerified,
-        accountDisabled: false,
-        totalOrders: 0,
-        createdAt: DateTime.now(),
-        lastLoginAt: DateTime.now(),
-      );
+      await _auth.signOut();
+      throw Exception('Account initialization failed. The server could not provision your profile. Please try signing up again.');
     } on FirebaseAuthException catch (e) {
       if (e.code == 'email-already-in-use') {
         try {
@@ -281,26 +252,6 @@ class AuthService {
           }
         } catch (_) {
           throw Exception('An account with this email already exists. Please click "Already have an account? Sign In" below.');
-        }
-      } else if (e.code == 'operation-not-allowed') {
-        // If email password auth is disabled in Firebase console, provide seamless session
-        final anonCred = await _auth.signInAnonymously();
-        final user = anonCred.user;
-        if (user != null) {
-          await user.updateDisplayName(name.trim());
-          return UserProfile(
-            uid: user.uid,
-            email: cleanEmail,
-            displayName: name.trim(),
-            accountType: isCollegeDomain ? AccountType.student : AccountType.visitor,
-            verificationStatus: VerificationStatus.verified,
-            priorityLevel: 1,
-            isVerified: true,
-            rollNo: rollNo?.trim().toUpperCase() ?? '1032251174',
-            phone: phone.trim(),
-            createdAt: DateTime.now(),
-            lastLoginAt: DateTime.now(),
-          );
         }
       }
       throw Exception(_mapFirebaseAuthError(e));
@@ -345,54 +296,7 @@ class AuthService {
     }
   }
 
-  /// Provisional quick student session (routed authoritatively through provisionUserProfile)
-  Future<UserProfile> signInStudent({
-    required String name,
-    required String phone,
-    required String rollNo,
-    String? email,
-  }) async {
-    User? user = _auth.currentUser;
-    if (user == null) {
-      final anonCredential = await _auth.signInAnonymously();
-      user = anonCredential.user;
-      if (user == null) {
-        throw Exception('Failed to initialize session.');
-      }
-    }
-
-    // Authoritatively provision on the backend
-    try {
-      await _functions.provisionUserProfile(
-        displayName: name.trim(),
-        phone: phone.trim(),
-        rollNo: rollNo.trim().toUpperCase(),
-      );
-    } catch (fnErr) {
-      debugPrint('[Auth] Server provisioning unavailable, continuing as student: $fnErr');
-    }
-
-    final profile = await getUserProfile(user.uid);
-    if (profile != null) {
-      return profile;
-    }
-
-    return UserProfile(
-      uid: user.uid,
-      email: email?.trim().toLowerCase() ?? user.email ?? '',
-      displayName: name.trim(),
-      accountType: AccountType.visitor,
-      verificationStatus: VerificationStatus.notRequired,
-      priorityLevel: 0,
-      rollNo: rollNo.trim().toUpperCase(),
-      phone: phone.trim(),
-      isVerified: true,
-      createdAt: DateTime.now(),
-      lastLoginAt: DateTime.now(),
-    );
-  }
-
-  /// Helper to ensure a UserProfile document exists in Firestore and is updated
+  /// Helper to ensure an authoritative UserProfile document exists in Firestore and is loaded (TB-AUTH-001)
   Future<UserProfile> _ensureUserProfile(User user) async {
     // 1. Call server-authoritative provisioner to guarantee valid record & claims
     try {
@@ -402,6 +306,11 @@ class AuthService {
     } catch (e) {
       debugPrint('[AuthService] Server provisioning notice: $e');
     }
+
+    // Force refresh ID token to get latest custom claims from the server (TB-AUTH-007)
+    try {
+      await user.getIdToken(true);
+    } catch (_) {}
 
     // 2. Fetch authoritative profile from Firestore
     final userDoc = await _users.doc(user.uid).get();
@@ -414,25 +323,9 @@ class AuthService {
       return profile;
     }
 
-    // Fallback baseline
-    final email = user.email ?? '';
-    final accountType = classifyEmailDomain(email);
-    final isVisitor = accountType == AccountType.visitor;
-
-    return UserProfile(
-      uid: user.uid,
-      email: email,
-      displayName: user.displayName ?? (isVisitor ? 'Guest Customer' : 'TCET Student'),
-      photoURL: user.photoURL,
-      accountType: accountType,
-      verificationStatus: isVisitor
-          ? VerificationStatus.notRequired
-          : (user.emailVerified ? VerificationStatus.verified : VerificationStatus.pending),
-      priorityLevel: accountType == AccountType.teacher ? 2 : (isVisitor ? 0 : 1),
-      isVerified: isVisitor || user.emailVerified,
-      createdAt: DateTime.now(),
-      lastLoginAt: DateTime.now(),
-    );
+    // TB-AUTH-001: Fail closed! Never invent a fake client-side profile.
+    await _auth.signOut();
+    throw Exception('Account initialization failed. The server could not provision your profile. Please try signing in again.');
   }
 
   /// Translates Firebase Auth error codes into human-readable messages
@@ -448,7 +341,7 @@ class AuthService {
       case 'invalid-email':
         return 'The email address is invalid.';
       case 'weak-password':
-        return 'The password is too weak. Please use at least 6 characters.';
+        return 'The password is too weak. Please use at least 8 characters.';
       case 'user-disabled':
         return 'This account has been disabled. Please contact support.';
       case 'too-many-requests':

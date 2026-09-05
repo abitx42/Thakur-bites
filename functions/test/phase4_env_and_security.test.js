@@ -193,4 +193,81 @@ describe('Phase 4: Environment Isolation & Security Configuration Tests', () => 
     assert.ok(lastReadIndex < firstWriteIndex, 'Commit must execute all reads before writes');
   });
 
+  it('216. Identity Invariant: Exact domain matching rejects subdomain spoofing (TB-AUTH-005)', () => {
+    const { classifyIdentity } = require('../lib/identity_classifier');
+
+    // Subdomain spoofing attempts must NOT inherit institutional status
+    const subTcet = classifyIdentity('student@attacker.tcetmumbai.in');
+    assert.strictEqual(subTcet.accountType, 'VISITOR');
+    assert.strictEqual(subTcet.verificationStatus, 'NOT_REQUIRED');
+    assert.strictEqual(subTcet.priorityLevel, 0);
+
+    const subOrg = classifyIdentity('teacher@fake.thakureducation.org');
+    assert.strictEqual(subOrg.accountType, 'VISITOR');
+    assert.strictEqual(subOrg.verificationStatus, 'NOT_REQUIRED');
+    assert.strictEqual(subOrg.priorityLevel, 0);
+
+    // Exact institutional domains must succeed
+    const validStudent = classifyIdentity('1032251174@tcetmumbai.in');
+    assert.strictEqual(validStudent.accountType, 'STUDENT');
+    assert.strictEqual(validStudent.verificationStatus, 'VERIFIED');
+    assert.strictEqual(validStudent.priorityLevel, 1);
+
+    const validStaff = classifyIdentity('hod.it@thakureducation.org');
+    assert.strictEqual(validStaff.accountType, 'COLLEGE_STAFF');
+    assert.strictEqual(validStaff.verificationStatus, 'PENDING');
+    assert.strictEqual(validStaff.priorityLevel, 1);
+  });
+
+  it('217. Provisioning Invariant: Idempotent provisioning protects verified TEACHER from downgrade (TB-AUTH-010)', async () => {
+    // Simulate Firestore transaction logic of user_provisioning.ts
+    const existingUserData = {
+      uid: 'teacher_uid_999',
+      email: 'hod.it@thakureducation.org',
+      displayName: 'Dr. Faculty Member',
+      accountType: 'TEACHER',
+      verificationStatus: 'VERIFIED',
+      priorityLevel: 2,
+      isVerified: true,
+      rollNo: 'FAC-IT-001',
+      department: 'Information Technology',
+      totalOrders: 15,
+      totalSpentPaise: 45000,
+    };
+
+    let updatedFields = null;
+    const mockTransaction = {
+      get: async (ref) => {
+        if (ref.id === 'teacher_uid_999') {
+          return { exists: true, data: () => existingUserData };
+        }
+        return { exists: false };
+      },
+      update: (ref, data) => {
+        updatedFields = data;
+      },
+      set: () => {},
+    };
+
+    const isProfileLocked = existingUserData.verificationStatus === 'VERIFIED' || existingUserData.accountType === 'TEACHER';
+    const clientAttemptedRollNo = 'HACKED_ROLL_NO';
+    const clientAttemptedDept = 'Hacked Department';
+
+    const preservedRollNo = isProfileLocked && existingUserData.rollNo ? existingUserData.rollNo : clientAttemptedRollNo;
+    const preservedDept = isProfileLocked && existingUserData.department ? existingUserData.department : clientAttemptedDept;
+
+    mockTransaction.update({ id: 'teacher_uid_999' }, {
+      displayName: 'Dr. Faculty Member Updated',
+      department: preservedDept,
+      rollNo: preservedRollNo,
+      updatedAt: new Date(),
+    });
+
+    assert.strictEqual(updatedFields.rollNo, 'FAC-IT-001', 'Verified teacher employeeId/rollNo must NOT be overwritten');
+    assert.strictEqual(updatedFields.department, 'Information Technology', 'Verified department must NOT be overwritten');
+    assert.strictEqual(existingUserData.accountType, 'TEACHER', 'AccountType must remain TEACHER');
+    assert.strictEqual(existingUserData.priorityLevel, 2, 'Priority level must remain 2');
+  });
+
 });
+

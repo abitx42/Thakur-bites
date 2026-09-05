@@ -21,8 +21,8 @@ export function classifyIdentity(email: string): IdentityClassification {
   const domain = cleanEmail.split('@').pop() || '';
   const localPart = cleanEmail.split('@')[0] || '';
 
-  // TCET Student: numeric prefix in local part + @tcetmumbai.in (or subdomain)
-  if (domain === 'tcetmumbai.in' || domain.endsWith('.tcetmumbai.in')) {
+  // TCET Student: numeric prefix in local part + exact @tcetmumbai.in (TB-AUTH-005)
+  if (domain === 'tcetmumbai.in') {
     const hasNumericPrefix = /^\d+/.test(localPart);
     return {
       accountType: 'STUDENT',
@@ -36,8 +36,8 @@ export function classifyIdentity(email: string): IdentityClassification {
     };
   }
 
-  // Thakur Education org: likely college staff or faculty (or subdomain)
-  if (domain === 'thakureducation.org' || domain.endsWith('.thakureducation.org')) {
+  // Thakur Education org: college staff or faculty with exact @thakureducation.org (TB-AUTH-005)
+  if (domain === 'thakureducation.org') {
     return {
       accountType: 'COLLEGE_STAFF',
       verificationStatus: 'PENDING',

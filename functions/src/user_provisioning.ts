@@ -75,14 +75,27 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
     }
   }
 
-  // Sanitize client-provided fields
+  // Sanitize client-provided fields (TB-AUTH-011)
   const { displayName, phone, department, year, rollNo } = request.data || {};
   const fallbackDefaultName = isAnonymous ? 'Guest Visitor' : 'Thakur Bites User';
   const cleanName = String(displayName || displayNameFromToken || fallbackDefaultName).trim().slice(0, 100);
-  const cleanPhone = String(phone || '').trim().slice(0, 20);
+  
+  let cleanPhone = String(phone || '').trim().slice(0, 20);
+  if (cleanPhone && !/^\+?[0-9]{7,15}$/.test(cleanPhone)) {
+    cleanPhone = '';
+  }
+
+  const safePhotoURL = photoURL && (photoURL.startsWith('https://') || photoURL.startsWith('data:image/'))
+    ? photoURL.slice(0, 500)
+    : '';
+
   const cleanDept = String(department || '').trim().slice(0, 50);
   const cleanYear = String(year || '').trim().slice(0, 10);
-  const cleanRollNo = String(rollNo || (isAnonymous ? 'GUEST' : '')).trim().toUpperCase().slice(0, 20);
+  
+  let cleanRollNo = String(rollNo || (isAnonymous ? 'GUEST' : '')).trim().toUpperCase().slice(0, 30);
+  if (cleanRollNo && !/^[A-Z0-9_\-\/]+$/.test(cleanRollNo)) {
+    cleanRollNo = isAnonymous ? 'GUEST' : '';
+  }
 
   const userRef = db.collection('users').doc(userId);
   const studentRef = db.collection('students').doc(userId);
@@ -95,15 +108,21 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
     ]);
 
     if (userSnap.exists) {
-      // User already exists — update mutable client-editable fields only
+      // User already exists — update mutable client-editable fields only (TB-AUTH-010)
       const existingData = userSnap.data() as UserDocument;
+
+      // Invariant: verified students/teachers cannot have their rollNo/employeeId or department overwritten by client
+      const isProfileLocked = existingData.verificationStatus === 'VERIFIED' || existingData.accountType === 'TEACHER';
+      const preservedRollNo = isProfileLocked && existingData.rollNo ? existingData.rollNo : (cleanRollNo || existingData.rollNo || '');
+      const preservedDept = isProfileLocked && existingData.department ? existingData.department : (cleanDept || existingData.department || '');
+
       transaction.update(userRef, {
         displayName: cleanName || existingData.displayName,
-        photoURL: photoURL || existingData.photoURL || '',
+        photoURL: safePhotoURL || existingData.photoURL || '',
         phone: cleanPhone || existingData.phone || '',
-        department: cleanDept || existingData.department || '',
+        department: preservedDept,
         year: cleanYear || existingData.year || '',
-        rollNo: cleanRollNo || existingData.rollNo || '',
+        rollNo: preservedRollNo,
         updatedAt: now,
       });
 
