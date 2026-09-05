@@ -45,12 +45,15 @@ cp -rf "${PROJECT_ROOT}"/css "${WEB_DIR}/css"
 cat << 'EOF' > "${WEB_DIR}/serve.json"
 {
   "cleanUrls": false,
+  "directoryListing": false,
   "rewrites": [
     { "source": "/admin", "destination": "/admin.html" },
     { "source": "/staff", "destination": "/staff.html" },
     { "source": "/developer", "destination": "/developer.html" },
     { "source": "/tv", "destination": "/tv.html" },
-    { "source": "/portal", "destination": "/portal.html" }
+    { "source": "/portal", "destination": "/portal.html" },
+    { "source": "/", "destination": "/index.html" },
+    { "source": "/index", "destination": "/index.html" }
   ]
 }
 EOF
