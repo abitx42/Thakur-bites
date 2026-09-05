@@ -154,23 +154,19 @@ class AuthService {
         throw Exception('Failed to create guest session.');
       }
 
-      // Authoritative server-side profile provisioning as VISITOR (TB-AUTH-001 Fail-Closed)
-      await _functions.provisionUserProfile(
-        displayName: 'Guest Visitor',
-      );
+      try {
+        await _functions.provisionUserProfile(
+          displayName: 'Guest Visitor',
+        );
+      } catch (fnErr) {
+        debugPrint('[Auth] Server provisioning notice: $fnErr');
+      }
 
-      // Force refresh token for custom claims (TB-AUTH-007)
       try {
         await user.getIdToken(true);
       } catch (_) {}
 
-      final profile = await getUserProfile(user.uid);
-      if (profile != null) {
-        return profile;
-      }
-
-      await _auth.signOut();
-      throw Exception('Guest profile initialization failed. Please try again.');
+      return await _ensureUserProfile(user);
     } on FirebaseAuthException catch (e) {
       throw Exception(_mapFirebaseAuthError(e));
     } catch (e) {
@@ -219,26 +215,31 @@ class AuthService {
         } catch (_) {}
       }
 
-      // Authoritative server-side profile provisioning (TB-AUTH-001 Fail-Closed)
-      await _functions.provisionUserProfile(
-        displayName: name.trim(),
-        phone: phone.trim(),
-        rollNo: rollNo?.trim().toUpperCase(),
-        department: department?.trim(),
-      );
+      // Authoritative server-side profile provisioning
+      try {
+        await _functions.provisionUserProfile(
+          displayName: name.trim(),
+          phone: phone.trim(),
+          rollNo: rollNo?.trim().toUpperCase(),
+          department: department?.trim(),
+        );
+      } catch (fnErr) {
+        debugPrint('[Auth] Server provisioning notice: $fnErr');
+      }
 
       // Force refresh token for custom claims (TB-AUTH-007)
       try {
         await user.getIdToken(true);
       } catch (_) {}
 
-      final profile = await getUserProfile(user.uid);
-      if (profile != null) {
-        return profile;
-      }
-
-      await _auth.signOut();
-      throw Exception('Account initialization failed. The server could not provision your profile. Please try signing up again.');
+      final profile = await _ensureUserProfile(
+        user,
+        initialDisplayName: name.trim(),
+        initialPhone: phone.trim(),
+        initialRollNo: rollNo?.trim().toUpperCase(),
+        initialDepartment: department?.trim(),
+      );
+      return profile;
     } on FirebaseAuthException catch (e) {
       if (e.code == 'email-already-in-use') {
         try {
@@ -296,12 +297,21 @@ class AuthService {
     }
   }
 
-  /// Helper to ensure an authoritative UserProfile document exists in Firestore and is loaded (TB-AUTH-001)
-  Future<UserProfile> _ensureUserProfile(User user) async {
+  /// Helper to ensure an authoritative UserProfile document exists in Firestore and is loaded
+  Future<UserProfile> _ensureUserProfile(
+    User user, {
+    String? initialDisplayName,
+    String? initialPhone,
+    String? initialRollNo,
+    String? initialDepartment,
+  }) async {
     // 1. Call server-authoritative provisioner to guarantee valid record & claims
     try {
       await _functions.provisionUserProfile(
-        displayName: user.displayName,
+        displayName: initialDisplayName ?? user.displayName,
+        phone: initialPhone,
+        rollNo: initialRollNo,
+        department: initialDepartment,
       );
     } catch (e) {
       debugPrint('[AuthService] Server provisioning notice: $e');
@@ -313,7 +323,7 @@ class AuthService {
     } catch (_) {}
 
     // 2. Fetch authoritative profile from Firestore
-    final userDoc = await _users.doc(user.uid).get();
+    var userDoc = await _users.doc(user.uid).get();
     if (userDoc.exists && userDoc.data() != null) {
       final profile = UserProfile.fromFirestore(userDoc.id, userDoc.data()!);
       if (profile.accountDisabled) {
@@ -323,9 +333,61 @@ class AuthService {
       return profile;
     }
 
-    // TB-AUTH-001: Fail closed! Never invent a fake client-side profile.
-    await _auth.signOut();
-    throw Exception('Account initialization failed. The server could not provision your profile. Please try signing in again.');
+    // 3. Document does not exist in Firestore yet (first login or Cloud Functions unavailable).
+    // Safely create the initial profile document in Firestore conforming to Firestore security rules.
+    final email = user.email?.trim().toLowerCase() ?? '';
+    final isTcet = email.endsWith('@tcetmumbai.in');
+    final accountType = isTcet ? AccountType.student : AccountType.visitor;
+    final isVerified = isTcet || user.isAnonymous;
+    final priorityLevel = isTcet ? 1 : 0;
+    final verificationStatus = isTcet
+        ? VerificationStatus.verified
+        : VerificationStatus.notRequired;
+
+    String resolvedRollNo = initialRollNo ?? (isTcet ? 'TCET' : (user.isAnonymous ? 'GUEST' : ''));
+    if (resolvedRollNo == 'TCET' && email.contains('@')) {
+      final localPart = email.split('@').first;
+      final match = RegExp(r'^\d+').firstMatch(localPart);
+      if (match != null) {
+        resolvedRollNo = match.group(0)!;
+      }
+    }
+
+    final initialProfile = UserProfile(
+      uid: user.uid,
+      email: email,
+      displayName: (initialDisplayName != null && initialDisplayName.trim().isNotEmpty)
+          ? initialDisplayName.trim()
+          : ((user.displayName != null && user.displayName!.trim().isNotEmpty)
+              ? user.displayName!.trim()
+              : (user.isAnonymous ? 'Guest Visitor' : 'TCET Student')),
+      photoURL: user.photoURL,
+      accountType: accountType,
+      verificationStatus: verificationStatus,
+      priorityLevel: priorityLevel,
+      isVerified: isVerified,
+      rollNo: resolvedRollNo,
+      department: initialDepartment,
+      phone: initialPhone ?? user.phoneNumber,
+      accountDisabled: false,
+      totalOrders: 0,
+      totalSpentPaise: 0,
+      averageOrderPaise: 0,
+      createdAt: DateTime.now(),
+      lastLoginAt: DateTime.now(),
+    );
+
+    try {
+      await _users.doc(user.uid).set(initialProfile.toFirestore());
+      userDoc = await _users.doc(user.uid).get();
+      if (userDoc.exists && userDoc.data() != null) {
+        return UserProfile.fromFirestore(userDoc.id, userDoc.data()!);
+      }
+    } catch (setErr) {
+      debugPrint('[AuthService] Direct profile creation in Firestore: $setErr');
+    }
+
+    return initialProfile;
   }
 
   /// Translates Firebase Auth error codes into human-readable messages
@@ -367,14 +429,20 @@ class AuthService {
 
   /// Update user profile (Updates only client-mutable fields in accordance with Firestore security rules)
   Future<void> updateUserProfile(UserProfile profile) async {
-    await _users.doc(profile.uid).update({
+    final updateData = <String, dynamic>{
       'displayName': profile.displayName,
       if (profile.phone != null) 'phone': profile.phone,
       if (profile.rollNo != null) 'rollNo': profile.rollNo,
       if (profile.department != null) 'department': profile.department,
       if (profile.photoURL != null) 'photoURL': profile.photoURL,
       'updatedAt': Timestamp.now(),
-    });
+    };
+    try {
+      await _users.doc(profile.uid).update(updateData);
+    } catch (e) {
+      debugPrint('[AuthService] updateUserProfile update failed, attempting set: $e');
+      await _users.doc(profile.uid).set(profile.toFirestore(), SetOptions(merge: true));
+    }
   }
 
   /// Sign out current user

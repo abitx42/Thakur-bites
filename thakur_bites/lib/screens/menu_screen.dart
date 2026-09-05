@@ -637,67 +637,111 @@ class _MenuScreenState extends State<MenuScreen> {
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: AppColors.line, width: 1.5),
                 ),
-                child: Row(
+                child: Column(
                   children: [
-                    // Avatar Image or Initials
-                    if (student.photoURL != null && student.photoURL!.isNotEmpty)
-                      ClipOval(
-                        child: Image.network(
-                          student.photoURL!,
-                          width: 58,
-                          height: 58,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => _buildAvatarFallback(student),
-                        ),
-                      )
-                    else
-                      _buildAvatarFallback(student),
-                    const SizedBox(width: 14),
-
-                    // Info
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            student.displayName,
-                            style: AppFonts.body(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.ink,
+                    Row(
+                      children: [
+                        // Avatar Image or Initials
+                        if (student.photoURL != null && student.photoURL!.isNotEmpty)
+                          ClipOval(
+                            child: Image.network(
+                              student.photoURL!,
+                              width: 58,
+                              height: 58,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) => _buildAvatarFallback(student),
                             ),
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
+                          )
+                        else
+                          _buildAvatarFallback(student),
+                        const SizedBox(width: 14),
+
+                        // Info
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: AppColors.surface2,
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: AppColors.line, width: 1),
-                                ),
-                                child: Text(
-                                  student.accountType.label,
-                                  style: AppFonts.mono(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.red,
-                                  ),
+                              Text(
+                                student.displayName,
+                                style: AppFonts.body(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.ink,
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  student.email.isNotEmpty ? student.email : student.safePhone,
-                                  style: AppFonts.mono(fontSize: 11.5, color: AppColors.inkSoft),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.surface2,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: AppColors.line, width: 1),
+                                    ),
+                                    child: Text(
+                                      student.accountType.label,
+                                      style: AppFonts.mono(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.red,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      student.email.isNotEmpty ? student.email : student.safePhone,
+                                      style: AppFonts.mono(fontSize: 11.5, color: AppColors.inkSoft),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
-                        ],
-                      ),
+                        ),
+
+                        // Edit Button
+                        IconButton(
+                          icon: const Icon(Icons.edit_outlined, size: 20, color: AppColors.inkSoft),
+                          tooltip: 'Edit Profile',
+                          onPressed: () => _openEditProfileSheet(context, auth),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 14),
+                    const Divider(height: 1, color: AppColors.line),
+                    const SizedBox(height: 12),
+
+                    // Metadata Row: Roll No, Department, Phone
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildProfileMetaItem(
+                            label: 'ROLL NO',
+                            value: (student.rollNo != null && student.rollNo!.isNotEmpty) ? student.rollNo! : 'Not set',
+                            icon: Icons.badge_outlined,
+                          ),
+                        ),
+                        Container(width: 1, height: 28, color: AppColors.line),
+                        Expanded(
+                          child: _buildProfileMetaItem(
+                            label: 'DEPT',
+                            value: (student.department != null && student.department!.isNotEmpty) ? student.department! : 'Not set',
+                            icon: Icons.school_outlined,
+                          ),
+                        ),
+                        Container(width: 1, height: 28, color: AppColors.line),
+                        Expanded(
+                          child: _buildProfileMetaItem(
+                            label: 'PHONE',
+                            value: (student.phone != null && student.phone!.isNotEmpty) ? student.phone! : 'Not set',
+                            icon: Icons.phone_outlined,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -785,6 +829,14 @@ class _MenuScreenState extends State<MenuScreen> {
                 child: Column(
                   children: [
                     _buildProfileMenuTile(
+                      icon: Icons.badge_outlined,
+                      iconColor: AppColors.red,
+                      title: 'Edit Profile & Student Info',
+                      subtitle: 'Update roll number, department, name & phone number',
+                      onTap: () => _openEditProfileSheet(context, auth),
+                    ),
+                    const Divider(height: 1, color: AppColors.line),
+                    _buildProfileMenuTile(
                       icon: Icons.favorite_rounded,
                       iconColor: AppColors.red,
                       title: 'Saved Favourites ❤️',
@@ -864,6 +916,313 @@ class _MenuScreenState extends State<MenuScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildProfileMetaItem({
+    required String label,
+    required String value,
+    required IconData icon,
+  }) {
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 12, color: AppColors.inkSoft),
+            const SizedBox(width: 4),
+            Text(label, style: AppFonts.mono(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.inkSoft)),
+          ],
+        ),
+        const SizedBox(height: 3),
+        Text(
+          value,
+          style: AppFonts.body(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.ink),
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  void _openEditProfileSheet(BuildContext context, AuthProvider auth) {
+    final student = auth.currentProfile;
+    if (student == null) return;
+
+    final nameController = TextEditingController(text: student.displayName);
+    final rollController = TextEditingController(text: student.rollNo ?? '');
+    final phoneController = TextEditingController(text: student.phone ?? '');
+    String selectedDept = (student.department != null && student.department!.isNotEmpty)
+        ? student.department!
+        : 'CMPN';
+
+    final departments = [
+      'CMPN',
+      'INFT',
+      'EXTC',
+      'ETRX',
+      'AIDS',
+      'AIML',
+      'IOT',
+      'CIVIL',
+      'MECH',
+      'MCA',
+      'OTHER',
+    ];
+    if (!departments.contains(selectedDept)) {
+      departments.insert(0, selectedDept);
+    }
+
+    final formKey = GlobalKey<FormState>();
+    bool isSaving = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          final bottomInset = MediaQuery.of(ctx).viewInsets.bottom;
+
+          return Container(
+            decoration: const BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 12,
+              bottom: 24 + bottomInset,
+            ),
+            child: SingleChildScrollView(
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.line,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: AppColors.red.withAlpha(25),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.badge_outlined, color: AppColors.red, size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Edit Student Profile', style: AppFonts.display(fontSize: 20)),
+                              Text(
+                                'Keep your TCET canteen credentials up to date',
+                                style: AppFonts.body(fontSize: 12, color: AppColors.inkSoft),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Full Name
+                    TextFormField(
+                      controller: nameController,
+                      decoration: InputDecoration(
+                        labelText: 'Full Name',
+                        labelStyle: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
+                        prefixIcon: const Icon(Icons.person_outline, size: 20, color: AppColors.inkSoft),
+                        filled: true,
+                        fillColor: AppColors.surface2,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.red, width: 1.5),
+                        ),
+                      ),
+                      validator: (v) => (v == null || v.trim().length < 2) ? 'Name must be at least 2 characters' : null,
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Roll Number
+                    TextFormField(
+                      controller: rollController,
+                      decoration: InputDecoration(
+                        labelText: 'Roll Number (e.g. 1032251174)',
+                        labelStyle: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
+                        prefixIcon: const Icon(Icons.pin_outlined, size: 20, color: AppColors.inkSoft),
+                        filled: true,
+                        fillColor: AppColors.surface2,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.red, width: 1.5),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Department Dropdown
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedDept,
+                      decoration: InputDecoration(
+                        labelText: 'Department',
+                        labelStyle: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
+                        prefixIcon: const Icon(Icons.school_outlined, size: 20, color: AppColors.inkSoft),
+                        filled: true,
+                        fillColor: AppColors.surface2,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.red, width: 1.5),
+                        ),
+                      ),
+                      items: departments
+                          .map((dept) => DropdownMenuItem(
+                                value: dept,
+                                child: Text(dept, style: AppFonts.body(fontSize: 14)),
+                              ))
+                          .toList(),
+                      onChanged: (val) {
+                        if (val != null) {
+                          setSheetState(() => selectedDept = val);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Phone Number
+                    TextFormField(
+                      controller: phoneController,
+                      keyboardType: TextInputType.phone,
+                      decoration: InputDecoration(
+                        labelText: 'Phone Number (10 digits)',
+                        labelStyle: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
+                        prefixIcon: const Icon(Icons.phone_outlined, size: 20, color: AppColors.inkSoft),
+                        filled: true,
+                        fillColor: AppColors.surface2,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.red, width: 1.5),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Save Button
+                    ElevatedButton(
+                      onPressed: isSaving
+                          ? null
+                          : () async {
+                              if (!formKey.currentState!.validate()) return;
+                              setSheetState(() => isSaving = true);
+                              HapticFeedback.mediumImpact();
+
+                              try {
+                                await auth.updateProfileFields(
+                                  displayName: nameController.text.trim(),
+                                  rollNo: rollController.text.trim().toUpperCase(),
+                                  department: selectedDept,
+                                  phone: phoneController.text.trim(),
+                                );
+
+                                if (sheetContext.mounted) {
+                                  Navigator.of(sheetContext).pop();
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: const Text('Profile updated successfully! ✨'),
+                                      backgroundColor: AppColors.green,
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (sheetContext.mounted) {
+                                  setSheetState(() => isSaving = false);
+                                  ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Failed to update profile: $e'),
+                                      backgroundColor: AppColors.red,
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.red,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: isSaving
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : Text(
+                              'Save Profile Changes',
+                              style: AppFonts.body(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white),
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 

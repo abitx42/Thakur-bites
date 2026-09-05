@@ -297,7 +297,38 @@ class _LoginSheetState extends State<LoginSheet> {
           'Sign in with your TCET or Personal Google Account. The backend automatically classifies your student, faculty, or visitor privileges.',
           style: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 14),
+
+        // Recommended TCET Google Account Banner
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEFF6FF),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFBFDBFE), width: 1.2),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('💡', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: RichText(
+                  text: TextSpan(
+                    style: AppFonts.body(fontSize: 12.5, color: const Color(0xFF1E40AF), height: 1.35),
+                    children: const [
+                      TextSpan(text: 'Recommended: ', style: TextStyle(fontWeight: FontWeight.w800)),
+                      TextSpan(text: 'Sign in with your official '),
+                      TextSpan(text: '@tcetmumbai.in', style: TextStyle(fontWeight: FontWeight.w800)),
+                      TextSpan(text: ' Google account for automatic student priority queue access and instant verification!'),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
 
         // Google Sign-In Button
         ElevatedButton(
@@ -326,9 +357,18 @@ class _LoginSheetState extends State<LoginSheet> {
                       errorBuilder: (context, error, stackTrace) => const Icon(Icons.account_circle, color: Colors.blue, size: 20),
                     ),
                     const SizedBox(width: 12),
-                    Text(
-                      'Continue with Google',
-                      style: AppFonts.body(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.ink),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Continue with Google',
+                          style: AppFonts.body(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.ink),
+                        ),
+                        Text(
+                          'Recommended: @tcetmumbai.in ID',
+                          style: AppFonts.body(fontSize: 11, fontWeight: FontWeight.w500, color: AppColors.red),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -390,6 +430,36 @@ class _LoginSheetState extends State<LoginSheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Recommended banner for TCET
+          Container(
+            margin: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFBFDBFE), width: 1.2),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('💡', style: TextStyle(fontSize: 18)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: RichText(
+                    text: TextSpan(
+                      style: AppFonts.body(fontSize: 12.5, color: const Color(0xFF1E40AF), height: 1.35),
+                      children: const [
+                        TextSpan(text: 'Recommended for TCET students: ', style: TextStyle(fontWeight: FontWeight.w800)),
+                        TextSpan(text: 'Use your official '),
+                        TextSpan(text: '@tcetmumbai.in', style: TextStyle(fontWeight: FontWeight.w800)),
+                        TextSpan(text: ' ID for verified student status and priority kitchen queue.'),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
           if (_isSignUpMode) ...[
             TextFormField(
               controller: _nameEmailController,

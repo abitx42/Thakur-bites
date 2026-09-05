@@ -58,11 +58,13 @@ class AppFonts {
     double fontSize = 14,
     FontWeight fontWeight = FontWeight.w400,
     Color color = AppColors.ink,
+    double? height,
   }) =>
       GoogleFonts.inter(
         fontSize: fontSize,
         fontWeight: fontWeight,
         color: color,
+        height: height,
       );
 }
 
