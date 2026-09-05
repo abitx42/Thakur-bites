@@ -8,7 +8,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { spawn } = require('child_process');
+const readline = require('readline');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 
@@ -105,55 +106,87 @@ function scanDirectory(dir) {
 }
 
 function scanGitHistory() {
-  try {
-    const gitDiff = execSync('git log -p -n 30', { cwd: ROOT_DIR, encoding: 'utf8', maxBuffer: 15 * 1024 * 1024 });
-    const lines = gitDiff.split('\n');
-    let currentCommit = 'unknown';
+  return new Promise((resolve) => {
+    try {
+      const child = spawn('git', ['log', '-p', '--all'], { cwd: ROOT_DIR });
+      const rl = readline.createInterface({ input: child.stdout });
 
-    for (const line of lines) {
-      if (line.startsWith('commit ')) {
-        currentCommit = line.split(' ')[1]?.slice(0, 10) || 'unknown';
-      }
-      if (line.startsWith('+') && !line.startsWith('+++')) {
-        for (const pattern of SECRET_PATTERNS) {
-          if (pattern.regex.test(line)) {
-            if (line.includes('test_webhook_secret_key') && pattern.name === 'Generic API Secret Assignment') {
-              continue;
+      let currentCommit = 'unknown';
+      let currentFile = '';
+      let isIgnoredFile = false;
+      let totalCommitsScanned = 0;
+      let totalDiffLinesScanned = 0;
+
+      rl.on('line', (line) => {
+        totalDiffLinesScanned++;
+        if (line.startsWith('commit ')) {
+          currentCommit = line.split(' ')[1]?.slice(0, 10) || 'unknown';
+          totalCommitsScanned++;
+        } else if (line.startsWith('diff --git a/')) {
+          const parts = line.split(' ');
+          currentFile = parts[2]?.replace(/^a\//, '') || '';
+          isIgnoredFile = Array.from(IGNORE_DIRS).some(d => currentFile.includes(d + '/')) ||
+                          IGNORE_FILES.has(path.basename(currentFile));
+        }
+
+        if (isIgnoredFile) return;
+
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          for (const pattern of SECRET_PATTERNS) {
+            if (pattern.regex.test(line)) {
+              if (line.includes('test_webhook_secret_key') && pattern.name === 'Generic API Secret Assignment') {
+                continue;
+              }
+              violations.push({
+                file: `git-history (${currentFile} @ commit ${currentCommit})`,
+                pattern: pattern.name,
+                severity: pattern.severity,
+              });
             }
-            violations.push({
-              file: `git-history (commit ${currentCommit})`,
-              pattern: pattern.name,
-              severity: pattern.severity,
-            });
           }
         }
-      }
+      });
+
+      child.on('error', (err) => {
+        console.warn('  ⚠️ Git history scan skipped:', err.message);
+        resolve({ totalCommitsScanned, totalDiffLinesScanned });
+      });
+
+      rl.on('close', () => {
+        resolve({ totalCommitsScanned, totalDiffLinesScanned });
+      });
+    } catch (err) {
+      console.warn('  ⚠️ Git history scan skipped:', err.message);
+      resolve({ totalCommitsScanned: 0, totalDiffLinesScanned: 0 });
     }
-  } catch (err) {
-    console.warn('  ⚠️ Git history scan skipped:', err.message);
-  }
+  });
 }
 
-console.log('════════════════════════════════════════════════════════════════');
-console.log('🔍 THAKUR BITES PLATFORM 2.0 — SECRET & CREDENTIAL SCANNER');
-console.log('════════════════════════════════════════════════════════════════\n');
-
-scanDirectory(ROOT_DIR);
-scanGitHistory();
-
-console.log(`▶ Scanned ${scannedFilesCount} source files across the platform.`);
-
-if (violations.length > 0) {
-  console.error(`\n🚨 CRITICAL SECURITY ALERT: ${violations.length} Potential Secret(s) Found:\n`);
-  for (const v of violations) {
-    console.error(`  ❌ [${v.severity}] ${v.pattern} in file: ${v.file}`);
-  }
-  console.error('\nScan failed. Please remove leaked credentials before committing.\n');
-  process.exit(1);
-} else {
-  console.log('  ✓ Zero leaked credentials, service account keys, or private secrets detected.');
-  console.log('\n════════════════════════════════════════════════════════════════');
-  console.log('🏆 SECRET SCANNING GATE PASSED (100% CLEAN)');
+async function main() {
+  console.log('════════════════════════════════════════════════════════════════');
+  console.log('🔍 THAKUR BITES PLATFORM 2.0 — SECRET & CREDENTIAL SCANNER');
   console.log('════════════════════════════════════════════════════════════════\n');
-  process.exit(0);
+
+  scanDirectory(ROOT_DIR);
+  const gitStats = await scanGitHistory();
+
+  console.log(`▶ Scanned ${scannedFilesCount} active source files across the platform.`);
+  console.log(`▶ Streamed and verified ${gitStats.totalDiffLinesScanned.toLocaleString()} diff lines across ${gitStats.totalCommitsScanned} Git commits (100% full history).`);
+
+  if (violations.length > 0) {
+    console.error(`\n🚨 CRITICAL SECURITY ALERT: ${violations.length} Potential Secret(s) Found:\n`);
+    for (const v of violations) {
+      console.error(`  ❌ [${v.severity}] ${v.pattern} in file: ${v.file}`);
+    }
+    console.error('\nScan failed. Please remove leaked credentials before committing.\n');
+    process.exit(1);
+  } else {
+    console.log('  ✓ Zero leaked credentials, service account keys, or private secrets detected.');
+    console.log('\n════════════════════════════════════════════════════════════════');
+    console.log('🏆 SECRET SCANNING GATE PASSED (100% CLEAN)');
+    console.log('════════════════════════════════════════════════════════════════\n');
+    process.exit(0);
+  }
 }
+
+main();

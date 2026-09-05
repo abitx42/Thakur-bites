@@ -10,6 +10,10 @@ let scanRunning = false;
 let lastScanResult = null;
 let simulationResult = null;
 let simRunning = false;
+let rateLimitsData = null;
+let rateLimitsLoading = false;
+let rateLimitsSaving = false;
+let rateLimitsFeedback = null;
 
 function escapeHtml(str) {
   if (typeof str !== 'string') str = String(str ?? '');
@@ -184,6 +188,102 @@ export function renderSecurityCenterView(container) {
         </div>
 
         <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 1.5: DYNAMIC SECURITY RATE LIMITS CONFIGURATION      -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 1.2rem; margin-bottom: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,0.03);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 0.8rem;">
+            <div>
+              <div style="font-family: var(--font-mono); font-size: 0.95rem; font-weight: 700; color: var(--ink-primary); display: flex; align-items: center; gap: 8px;">
+                ⚡ DYNAMIC SECURITY RATE LIMITS (FIRESTORE SYSTEMCONFIG)
+                <span style="font-size: 0.7rem; background: #DCFCE7; color: #166534; padding: 2px 6px; border-radius: 4px;">FAIL-CLOSED CACHE</span>
+              </div>
+              <p style="font-family: var(--font-sans); font-size: 0.8rem; color: var(--ink-secondary); margin: 3px 0 0 0;">
+                Configure sliding-window request ceilings dynamically without code deployment. Backed by 60s in-memory TTL caching.
+              </p>
+            </div>
+            <button id="refresh-rate-limits-btn" style="background: var(--bg-surface); border: 1px solid var(--border-light); padding: 6px 12px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+              🔄 Refresh Active Limits
+            </button>
+          </div>
+
+          ${rateLimitsFeedback ? `
+            <div style="margin-bottom: 1rem; padding: 8px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; background: ${rateLimitsFeedback.type === 'error' ? '#FEE2E2' : '#DCFCE7'}; color: ${rateLimitsFeedback.type === 'error' ? '#DC2626' : '#166534'}; border: 1px solid ${rateLimitsFeedback.type === 'error' ? '#FCA5A5' : '#86EFAC'};">
+              ${escapeHtml(rateLimitsFeedback.message)}
+            </div>
+          ` : ''}
+
+          <!-- Update Form Grid -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; align-items: flex-end; background: var(--bg-surface); padding: 12px; border-radius: 10px; border: 1px solid var(--border-light); margin-bottom: 1rem;">
+            <div>
+              <label style="display: block; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; color: var(--ink-secondary); margin-bottom: 4px;">
+                TARGET ENDPOINT:
+              </label>
+              <select id="rate-limit-endpoint-select" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-light); font-family: var(--font-mono); font-size: 0.8rem;">
+                <option value="checkout">checkout (Order Placement)</option>
+                <option value="payment_session">payment_session (Gateway Session)</option>
+                <option value="pickup_verify">pickup_verify (Token Pickup QR)</option>
+                <option value="role_assignment">role_assignment (Staff Role Update)</option>
+                <option value="emergency_action">emergency_action (Kill Switch)</option>
+                <option value="refund">refund (Ledger Refund)</option>
+                <option value="inventory_adjustment">inventory_adjustment (Stock Edit)</option>
+                <option value="cash_payment">cash_payment (Cashier Record)</option>
+                <option value="developer_telemetry">developer_telemetry (Logs Query)</option>
+              </select>
+            </div>
+
+            <div>
+              <label style="display: block; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; color: var(--ink-secondary); margin-bottom: 4px;">
+                MAX REQUESTS (1–1000):
+              </label>
+              <input type="number" id="rate-limit-max-input" min="1" max="1000" placeholder="e.g. 15" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-light); font-family: var(--font-mono); font-size: 0.8rem; box-sizing: border-box;" />
+            </div>
+
+            <div>
+              <label style="display: block; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; color: var(--ink-secondary); margin-bottom: 4px;">
+                WINDOW SECONDS (5–3600):
+              </label>
+              <input type="number" id="rate-limit-window-input" min="5" max="3600" placeholder="e.g. 60" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-light); font-family: var(--font-mono); font-size: 0.8rem; box-sizing: border-box;" />
+            </div>
+
+            <div>
+              <label style="display: block; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; color: var(--ink-secondary); margin-bottom: 4px;">
+                AUDIT REASON:
+              </label>
+              <input type="text" id="rate-limit-reason-input" placeholder="e.g. Lunch rush traffic spike" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-light); font-family: var(--font-sans); font-size: 0.8rem; box-sizing: border-box;" />
+            </div>
+
+            <div>
+              <button id="save-rate-limit-btn" ${rateLimitsSaving ? 'disabled' : ''} style="width: 100%; padding: 9px; border-radius: 6px; background: #0F172A; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+                ${rateLimitsSaving ? 'Updating...' : 'Save Limit Policy'}
+              </button>
+            </div>
+          </div>
+
+          <!-- Active Effective Limits Summary -->
+          ${rateLimitsData ? `
+            <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-bottom: 6px;">
+              Active Dynamic Overrides: ${Object.keys(rateLimitsData.overrides || {}).length} configured ${rateLimitsData.updatedAt ? `(Last updated: ${new Date(rateLimitsData.updatedAt).toLocaleTimeString()})` : ''}
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; max-height: 180px; overflow-y: auto;">
+              ${Object.entries(rateLimitsData.effective || {}).map(([ep, cfg]) => {
+                const isOverridden = Boolean(rateLimitsData.overrides && rateLimitsData.overrides[ep]);
+                return `
+                  <div style="padding: 6px 10px; border-radius: 6px; background: ${isOverridden ? '#FEF3C7' : '#F8FAFC'}; border: 1px solid ${isOverridden ? '#FDE68A' : '#E2E8F0'}; font-family: var(--font-mono); font-size: 0.72rem;">
+                    <strong style="color: var(--ink-primary);">${ep}</strong>: 
+                    <span style="font-weight: 700; color: ${isOverridden ? '#B45309' : '#0F172A'};">${cfg.maxRequests} req / ${cfg.windowSeconds}s</span>
+                    ${isOverridden ? `<span style="font-size: 0.65rem; background: #F59E0B; color: #FFF; padding: 1px 4px; border-radius: 3px; margin-left: 4px;">DYNAMIC</span>` : ''}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : `
+            <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary); padding: 10px; text-align: center;">
+              ⏳ Loading dynamic rate limit policies from Firestore...
+            </div>
+          `}
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
         <!-- SECTION 2: LIVE SECURITY EVENT & INCIDENT STREAM            -->
         <!-- ═══════════════════════════════════════════════════════════ -->
         <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 1.2rem; box-shadow: 0 1px 4px rgba(0,0,0,0.03);">
@@ -291,6 +391,86 @@ export function renderSecurityCenterView(container) {
         }
       });
     }
+
+    // Refresh Rate Limits Listener
+    const refreshLimitsBtn = container.querySelector('#refresh-rate-limits-btn');
+    if (refreshLimitsBtn) {
+      refreshLimitsBtn.addEventListener('click', async () => {
+        rateLimitsFeedback = null;
+        await loadRateLimits();
+      });
+    }
+
+    // Save Rate Limit Policy Listener
+    const saveLimitBtn = container.querySelector('#save-rate-limit-btn');
+    if (saveLimitBtn) {
+      saveLimitBtn.addEventListener('click', async () => {
+        const endpoint = container.querySelector('#rate-limit-endpoint-select')?.value;
+        const maxReq = parseInt(container.querySelector('#rate-limit-max-input')?.value || '', 10);
+        const winSec = parseInt(container.querySelector('#rate-limit-window-input')?.value || '', 10);
+        const reason = container.querySelector('#rate-limit-reason-input')?.value?.trim() || '';
+
+        if (!endpoint || isNaN(maxReq) || isNaN(winSec)) {
+          rateLimitsFeedback = { type: 'error', message: 'Please select an endpoint and provide valid integers for max requests and window seconds.' };
+          render();
+          return;
+        }
+
+        if (maxReq < 1 || maxReq > 1000) {
+          rateLimitsFeedback = { type: 'error', message: 'Max requests must be between 1 and 1,000.' };
+          render();
+          return;
+        }
+
+        if (winSec < 5 || winSec > 3600) {
+          rateLimitsFeedback = { type: 'error', message: 'Window seconds must be between 5 and 3,600.' };
+          render();
+          return;
+        }
+
+        try {
+          rateLimitsSaving = true;
+          render();
+          const functions = getFunctions();
+          const updateFn = httpsCallable(functions, 'updateSecurityRateLimits');
+          const res = await updateFn({
+            limits: {
+              [endpoint]: { maxRequests: maxReq, windowSeconds: winSec },
+            },
+            reason,
+          });
+
+          rateLimitsFeedback = { type: 'success', message: res.data?.message || 'Rate limit updated successfully.' };
+          await loadRateLimits();
+        } catch (err) {
+          rateLimitsFeedback = { type: 'error', message: err.message || 'Failed to update rate limit.' };
+          render();
+        } finally {
+          rateLimitsSaving = false;
+          render();
+        }
+      });
+    }
+  }
+
+  async function loadRateLimits() {
+    if (rateLimitsLoading) return;
+    try {
+      rateLimitsLoading = true;
+      const functions = getFunctions();
+      const getFn = httpsCallable(functions, 'getSecurityRateLimits');
+      const res = await getFn();
+      rateLimitsData = res.data;
+    } catch (err) {
+      console.warn('Could not load security rate limits:', err);
+    } finally {
+      rateLimitsLoading = false;
+      render();
+    }
+  }
+
+  if (!rateLimitsData && !rateLimitsLoading) {
+    loadRateLimits();
   }
 
   // Subscribe to real-time security events

@@ -86,6 +86,14 @@
         }
       ],
       "rewrites": [
+        { "source": "/staff", "destination": "/staff.html" },
+        { "source": "/staff/**", "destination": "/staff.html" },
+        { "source": "/admin", "destination": "/admin.html" },
+        { "source": "/admin/**", "destination": "/admin.html" },
+        { "source": "/developer", "destination": "/developer.html" },
+        { "source": "/developer/**", "destination": "/developer.html" },
+        { "source": "/tv", "destination": "/tv.html" },
+        { "source": "/tv/**", "destination": "/tv.html" },
         { "source": "**", "destination": "/index.html" }
       ]
     }

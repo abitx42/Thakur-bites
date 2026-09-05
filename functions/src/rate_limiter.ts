@@ -1,6 +1,8 @@
 import * as admin from 'firebase-admin';
-import { HttpsError } from 'firebase-functions/v2/https';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logSecurityEvent } from './security_logger';
+import { enforceAppCheck } from './app_check';
+import { assertCapability, hasCapability } from './authorization_policy';
 
 function getDb(): admin.firestore.Firestore {
   if (!admin.apps.length) {
@@ -24,7 +26,7 @@ export type RateLimitPolicy =
   | 'ADMIN'
   | 'DEVELOPER';
 
-export const RATE_LIMIT_POLICIES: Record<RateLimitPolicy, RateLimitConfig> = {
+export const DEFAULT_RATE_LIMIT_POLICIES: Record<RateLimitPolicy, RateLimitConfig> = {
   AUTH_LOGIN: { maxRequests: 5, windowSeconds: 300 },
   STAFF_PIN: { maxRequests: 5, windowSeconds: 60 },
   AUTH_VERIFICATION: { maxRequests: 5, windowSeconds: 300 },
@@ -35,7 +37,9 @@ export const RATE_LIMIT_POLICIES: Record<RateLimitPolicy, RateLimitConfig> = {
   DEVELOPER: { maxRequests: 60, windowSeconds: 60 },
 };
 
-export const ENDPOINT_LIMITS: Record<string, RateLimitConfig> = {
+export const RATE_LIMIT_POLICIES: Record<RateLimitPolicy, RateLimitConfig> = DEFAULT_RATE_LIMIT_POLICIES;
+
+export const DEFAULT_ENDPOINT_LIMITS: Record<string, RateLimitConfig> = {
   checkout: { maxRequests: 10, windowSeconds: 60 },
   pickup_verify: { maxRequests: 20, windowSeconds: 60 },
   payment_session: { maxRequests: 15, windowSeconds: 60 },
@@ -57,6 +61,79 @@ export const ENDPOINT_LIMITS: Record<string, RateLimitConfig> = {
   permission_simulation: { maxRequests: 30, windowSeconds: 60 },
 };
 
+export const ENDPOINT_LIMITS: Record<string, RateLimitConfig> = DEFAULT_ENDPOINT_LIMITS;
+
+// In-memory cache for dynamic rate limits fetched from systemConfig/securityRateLimits
+interface CachedRateLimits {
+  limits: Record<string, RateLimitConfig>;
+  cachedAt: number;
+}
+let memoryCachedLimits: CachedRateLimits | null = null;
+const CACHE_TTL_MS = 60000; // 60-second TTL
+
+/**
+ * Resets the in-memory rate limit cache (useful on config updates or in tests).
+ */
+export function clearRateLimitsCache(): void {
+  memoryCachedLimits = null;
+}
+
+/**
+ * Retrieves the effective endpoint rate limits by merging hardcoded defaults
+ * with dynamic Firestore overrides from systemConfig/securityRateLimits.
+ * Employs in-memory caching and safe fail-closed fallbacks.
+ */
+export async function getEffectiveEndpointLimits(): Promise<Record<string, RateLimitConfig>> {
+  const now = Date.now();
+  if (memoryCachedLimits && (now - memoryCachedLimits.cachedAt) < CACHE_TTL_MS) {
+    return memoryCachedLimits.limits;
+  }
+
+  const merged: Record<string, RateLimitConfig> = { ...DEFAULT_ENDPOINT_LIMITS };
+
+  try {
+    const configSnap = await getDb().collection('systemConfig').doc('securityRateLimits').get();
+    if (configSnap.exists) {
+      const data = configSnap.data();
+      const overrides = data?.limits;
+      if (overrides && typeof overrides === 'object') {
+        for (const [endpoint, conf] of Object.entries(overrides)) {
+          if (
+            conf &&
+            typeof conf === 'object' &&
+            typeof (conf as any).maxRequests === 'number' &&
+            typeof (conf as any).windowSeconds === 'number'
+          ) {
+            merged[endpoint] = {
+              maxRequests: Math.max(1, Math.min(1000, Math.floor((conf as any).maxRequests))),
+              windowSeconds: Math.max(5, Math.min(3600, Math.floor((conf as any).windowSeconds))),
+            };
+          }
+        }
+      }
+    }
+    memoryCachedLimits = {
+      limits: merged,
+      cachedAt: now,
+    };
+  } catch (err: any) {
+    console.warn('⚠️ Failed to load dynamic securityRateLimits from Firestore, using fallbacks:', err?.message);
+    if (!memoryCachedLimits) {
+      memoryCachedLimits = { limits: merged, cachedAt: now };
+    }
+  }
+
+  return memoryCachedLimits.limits;
+}
+
+/**
+ * Resolves the active RateLimitConfig for a specific endpoint.
+ */
+export async function getEffectiveRateLimit(endpoint: string): Promise<RateLimitConfig> {
+  const limits = await getEffectiveEndpointLimits();
+  return limits[endpoint] || DEFAULT_ENDPOINT_LIMITS[endpoint] || { maxRequests: 30, windowSeconds: 60 };
+}
+
 /**
  * Checks and updates sliding window rate limit for an actor on a specific endpoint.
  * College NAT-Aware Architecture:
@@ -68,7 +145,7 @@ export async function enforceRateLimit(
   endpoint: string,
   options?: { isIpBased?: boolean; natMultiplier?: number }
 ): Promise<void> {
-  const baseConfig = ENDPOINT_LIMITS[endpoint] || { maxRequests: 30, windowSeconds: 60 };
+  const baseConfig = await getEffectiveRateLimit(endpoint);
   const multiplier = options?.isIpBased ? (options.natMultiplier || 10) : 1;
   const maxAllowed = baseConfig.maxRequests * multiplier;
 
@@ -230,4 +307,105 @@ export async function recordAuthSuccess(
   const backoffRef = getDb().collection('authBackoffs').doc(docKey);
   await backoffRef.delete().catch(() => {});
 }
+
+/**
+ * Platform 2.0 — Retrieve Active Security Rate Limits
+ * Restricted to users with view_telemetry or manage_platform_flags capabilities (admin / developer).
+ */
+export const getSecurityRateLimits = onCall(async (request) => {
+  enforceAppCheck(request);
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'Staff authentication is required.');
+  }
+  const callerRole = (request.auth.token.role as string | undefined) || '';
+  if (!hasCapability(callerRole, 'view_telemetry') && !hasCapability(callerRole, 'manage_platform_flags')) {
+    throw new HttpsError('permission-denied', 'Access denied: Requires administrator or engineering telemetry permissions.');
+  }
+
+  const snap = await getDb().collection('systemConfig').doc('securityRateLimits').get();
+  const docData = snap.exists ? snap.data() || {} : {};
+  const overrides: Record<string, RateLimitConfig> = (docData.limits && typeof docData.limits === 'object') ? docData.limits : {};
+  const effective = await getEffectiveEndpointLimits();
+
+  return {
+    success: true,
+    defaults: DEFAULT_ENDPOINT_LIMITS,
+    overrides,
+    effective,
+    updatedAt: docData.updatedAt ? docData.updatedAt.toDate().toISOString() : null,
+    updatedBy: docData.updatedBy || null,
+    reason: docData.reason || null,
+  };
+});
+
+/**
+ * Platform 2.0 — Dynamically Configure Security Rate Limits
+ * Restricted strictly to users with manage_platform_flags capability (admin / manager / developer).
+ */
+export const updateSecurityRateLimits = onCall(async (request) => {
+  enforceAppCheck(request);
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'Staff authentication is required.');
+  }
+  const callerRole = (request.auth.token.role as string | undefined) || '';
+  assertCapability(callerRole, 'manage_platform_flags', 'Only managers or administrators can modify rate limit policies.');
+
+  const { limits, reason } = request.data || {};
+  if (!limits || typeof limits !== 'object' || Array.isArray(limits)) {
+    throw new HttpsError('invalid-argument', 'limits object is required.');
+  }
+
+  const validatedOverrides: Record<string, RateLimitConfig> = {};
+  for (const [endpoint, conf] of Object.entries(limits)) {
+    if (typeof endpoint !== 'string' || !endpoint.trim()) {
+      continue;
+    }
+    const cleanEndpoint = endpoint.trim().toLowerCase();
+    if (!conf || typeof conf !== 'object') {
+      throw new HttpsError('invalid-argument', `Invalid rate limit configuration for ${cleanEndpoint}.`);
+    }
+    const { maxRequests, windowSeconds } = conf as any;
+    if (typeof maxRequests !== 'number' || !Number.isSafeInteger(maxRequests) || maxRequests < 1 || maxRequests > 1000) {
+      throw new HttpsError('invalid-argument', `maxRequests for ${cleanEndpoint} must be an integer between 1 and 1000.`);
+    }
+    if (typeof windowSeconds !== 'number' || !Number.isSafeInteger(windowSeconds) || windowSeconds < 5 || windowSeconds > 3600) {
+      throw new HttpsError('invalid-argument', `windowSeconds for ${cleanEndpoint} must be an integer between 5 and 3600.`);
+    }
+
+    validatedOverrides[cleanEndpoint] = {
+      maxRequests,
+      windowSeconds,
+    };
+  }
+
+  const now = admin.firestore.Timestamp.now();
+  const updatePayload = {
+    limits: validatedOverrides,
+    updatedAt: now,
+    updatedBy: request.auth.uid,
+    reason: typeof reason === 'string' ? reason.slice(0, 200) : 'Security policy threshold tuning',
+  };
+
+  await getDb().collection('systemConfig').doc('securityRateLimits').set(updatePayload, { merge: true });
+
+  // Invalidate in-memory cache immediately so changes take effect across subsequent function invocations
+  clearRateLimitsCache();
+
+  await logSecurityEvent({
+    eventType: 'SECURITY_RATE_LIMITS_UPDATED',
+    severity: 'MEDIUM',
+    actorUid: request.auth.uid,
+    details: {
+      updatedEndpoints: Object.keys(validatedOverrides),
+      reason: updatePayload.reason,
+    },
+  });
+
+  return {
+    success: true,
+    message: `Security rate limits successfully updated for ${Object.keys(validatedOverrides).length} endpoint(s).`,
+    overrides: validatedOverrides,
+  };
+});
+
 

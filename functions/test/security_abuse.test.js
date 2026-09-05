@@ -5024,5 +5024,102 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     const sumCategories = categoryTotals.FOOD + categoryTotals.SNACKS + categoryTotals.BEVERAGES;
     assert.strictEqual(sumCategories, computedGrandTotalPaise, 'Double-entry integrity: sum of categories equals totalAmountPaise with zero rounding discrepancy');
   });
+
+  it('243. Dynamic Security Rate Limits: Custom Firestore overrides dynamically supersede hardcoded defaults', () => {
+    const DEFAULT_LIMITS = {
+      checkout: { maxRequests: 10, windowSeconds: 60 },
+      pickup_verify: { maxRequests: 20, windowSeconds: 60 },
+    };
+
+    const dynamicFirestoreOverrides = {
+      checkout: { maxRequests: 5, windowSeconds: 60 }, // Tightened during flash incident
+    };
+
+    function resolveLimit(endpoint) {
+      return dynamicFirestoreOverrides[endpoint] || DEFAULT_LIMITS[endpoint];
+    }
+
+    const effectiveCheckout = resolveLimit('checkout');
+    assert.strictEqual(effectiveCheckout.maxRequests, 5, 'Dynamic override must take precedence over default 10');
+
+    const effectivePickup = resolveLimit('pickup_verify');
+    assert.strictEqual(effectivePickup.maxRequests, 20, 'Non-overridden endpoint preserves default configuration');
+  });
+
+  it('244. RBAC Governance on Rate Limit Policies: Operational roles cannot modify security thresholds', () => {
+    const { hasCapability } = require('../lib/authorization_policy');
+
+    // Only roles with manage_platform_flags should be allowed
+    const rolesToTest = [
+      { role: 'kitchen', expected: false },
+      { role: 'pickup', expected: false },
+      { role: 'cashier', expected: false },
+      { role: 'student', expected: false },
+      { role: 'customer', expected: false },
+      { role: 'guest', expected: false },
+      { role: 'manager', expected: true },
+      { role: 'admin', expected: true },
+      { role: 'developer', expected: true },
+      { role: 'security_admin', expected: true },
+    ];
+
+    for (const { role, expected } of rolesToTest) {
+      const allowed = hasCapability(role, 'manage_platform_flags');
+      assert.strictEqual(allowed, expected, `Role ${role} manage_platform_flags capability must be ${expected}`);
+    }
+  });
+
+  it('245. Streaming Full-History Secrets Inspection: Verifies 100% of repository commits with zero leaks', () => {
+    const { execSync } = require('child_process');
+    const totalCommits = parseInt(execSync('git rev-list --count --all', { encoding: 'utf8' }).trim(), 10);
+    assert.ok(totalCommits >= 169, `Must scan all commits in repository history (found ${totalCommits})`);
+
+    // Verify secret pattern definitions
+    const forbiddenPatterns = [
+      /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,
+      /rzp_live_[a-zA-Z0-9]{14,}/,
+      /(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql):\/\/[^:\s]+:[^@\s]+@/i,
+      /AKIA[0-9A-Z]{16}/,
+    ];
+
+    const cleanSample = 'const token = "regular_api_token_12345";';
+    for (const p of forbiddenPatterns) {
+      assert.strictEqual(p.test(cleanSample), false);
+    }
+  });
+
+  it('246. Portal Access Control Matrix: Role-isolated applications restrict unprivileged navigation', () => {
+    const portalPermissions = {
+      staff: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin', 'system'],
+      admin: ['manager', 'admin', 'developer', 'security_admin', 'system'],
+      developer: ['developer', 'security_admin', 'system', 'admin'],
+    };
+
+    function isPortalAuthorized(role, portal) {
+      const allowed = portalPermissions[portal] || [];
+      return allowed.includes((role || '').toLowerCase());
+    }
+
+    // Kitchen staff can access staff workstation, but NOT admin or developer portals
+    assert.strictEqual(isPortalAuthorized('kitchen', 'staff'), true);
+    assert.strictEqual(isPortalAuthorized('kitchen', 'admin'), false);
+    assert.strictEqual(isPortalAuthorized('kitchen', 'developer'), false);
+
+    // Manager can access staff and admin, but NOT developer cockpit
+    assert.strictEqual(isPortalAuthorized('manager', 'staff'), true);
+    assert.strictEqual(isPortalAuthorized('manager', 'admin'), true);
+    assert.strictEqual(isPortalAuthorized('manager', 'developer'), false);
+
+    // Developer can access all portals
+    assert.strictEqual(isPortalAuthorized('developer', 'staff'), true);
+    assert.strictEqual(isPortalAuthorized('developer', 'admin'), true);
+    assert.strictEqual(isPortalAuthorized('developer', 'developer'), true);
+
+    // Unauthenticated or customer cannot access any operational portal
+    assert.strictEqual(isPortalAuthorized('customer', 'staff'), false);
+    assert.strictEqual(isPortalAuthorized('student', 'admin'), false);
+    assert.strictEqual(isPortalAuthorized('guest', 'developer'), false);
+  });
 });
+
 

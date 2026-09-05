@@ -56,3 +56,8 @@ export {
   bulkImportMenuItems,
   deleteMenuItemAdmin,
 } from './menu_management';
+export {
+  getSecurityRateLimits,
+  updateSecurityRateLimits,
+} from './rate_limiter';
+
