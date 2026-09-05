@@ -52,5 +52,7 @@ export {
   toggleMenuItemAvailability,
   updateMenuItemDetails,
   upsertMenuItem,
+  archiveMenuItem,
+  bulkImportMenuItems,
   deleteMenuItemAdmin,
 } from './menu_management';

@@ -6,8 +6,10 @@ import {
   updateItemStockCount, 
   updateItemDetails, 
   saveMenuItem, 
+  archiveMenuItem,
   deleteMenuItem 
 } from '../firebase.js';
+import { staffAuth } from '../auth.js';
 import { doc, onSnapshot, collection, query, where } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
@@ -23,6 +25,8 @@ let showAddModal = false;
 let editingItem = null; // Item object currently being edited in details modal
 let currentMode = 'NORMAL';
 let modeLoading = false;
+let selectedParentFilter = 'ALL';
+let selectedSubFilter = 'ALL';
 
 export function renderAdminView(container) {
   if (unsubscribeMenu) unsubscribeMenu();
@@ -31,8 +35,21 @@ export function renderAdminView(container) {
   if (unsubscribePins) unsubscribePins();
 
   function render() {
-    const cookedItems = currentItems.filter(i => i.type === 'cooked');
-    const storeItems = currentItems.filter(i => i.type === 'instant');
+    const nonArchivedItems = currentItems.filter(i => !i.isArchived);
+    const visibleItems = nonArchivedItems.filter(item => {
+      if (selectedParentFilter !== 'ALL') {
+        const p = (item.parentCategory || '').toUpperCase();
+        if (p && p !== selectedParentFilter) return false;
+      }
+      if (selectedSubFilter !== 'ALL') {
+        const s = (item.subCategory || item.category || '').toLowerCase();
+        if (s !== selectedSubFilter.toLowerCase()) return false;
+      }
+      return true;
+    });
+
+    const cookedItems = visibleItems.filter(i => i.type === 'cooked');
+    const storeItems = visibleItems.filter(i => i.type === 'instant');
 
     const modeColors = {
       NORMAL: { bg: '#F0FDF4', border: '#86EFAC', text: '#166534', badge: '#16A34A' },
@@ -256,6 +273,42 @@ export function renderAdminView(container) {
         </div>
 
         <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- MENU TAXONOMY & CATEGORY FILTER BAR                        -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 1rem 1.2rem; margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary); margin-right: 4px;">FILTER CATEGORY:</span>
+            ${[
+              { id: 'ALL', label: 'All Items' },
+              { id: 'FOOD', label: '🍛 Food' },
+              { id: 'SNACKS', label: '🍟 Snacks' },
+              { id: 'BEVERAGES', label: '🥤 Drinks' }
+            ].map(cat => `
+              <button class="cat-filter-btn" data-category="${cat.id}" style="padding: 6px 14px; border-radius: 999px; border: 1.5px solid ${selectedParentFilter === cat.id ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedParentFilter === cat.id ? 'var(--brand-red)' : 'var(--bg-surface)'}; color: ${selectedParentFilter === cat.id ? '#FFF' : 'var(--ink-primary)'}; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; cursor: pointer;">
+                ${cat.label}
+              </button>
+            `).join('')}
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary);">SUBCATEGORY:</span>
+            <select id="subcat-filter-select" style="padding: 6px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.85rem; background: var(--bg-surface); cursor: pointer;">
+              <option value="ALL" ${selectedSubFilter === 'ALL' ? 'selected' : ''}>All Subcategories</option>
+              <option value="South Indian" ${selectedSubFilter === 'South Indian' ? 'selected' : ''}>🍛 South Indian</option>
+              <option value="Sandwiches" ${selectedSubFilter === 'Sandwiches' ? 'selected' : ''}>🥪 Sandwiches</option>
+              <option value="Chinese" ${selectedSubFilter === 'Chinese' ? 'selected' : ''}>🍜 Chinese</option>
+              <option value="Lunch & Meals" ${selectedSubFilter === 'Lunch & Meals' ? 'selected' : ''}>🍱 Lunch & Meals</option>
+              <option value="Pav Items" ${selectedSubFilter === 'Pav Items' ? 'selected' : ''}>🥖 Pav & Samosa</option>
+              <option value="Fries" ${selectedSubFilter === 'Fries' ? 'selected' : ''}>🍟 French Fries</option>
+              <option value="Tea & Coffee" ${selectedSubFilter === 'Tea & Coffee' ? 'selected' : ''}>☕ Tea & Coffee</option>
+              <option value="Cold Drinks" ${selectedSubFilter === 'Cold Drinks' ? 'selected' : ''}>🥤 Cold Drinks</option>
+              <option value="Milkshakes" ${selectedSubFilter === 'Milkshakes' ? 'selected' : ''}>🥛 Milkshakes</option>
+              <option value="Juices" ${selectedSubFilter === 'Juices' ? 'selected' : ''}>🧃 Juices</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
         <!-- SECTION 1: CANTEEN KITCHEN ITEMS (COOKED - TOGGLE ONLY)     -->
         <!-- ═══════════════════════════════════════════════════════════ -->
         <div style="margin-bottom: 2.5rem;">
@@ -449,9 +502,11 @@ export function renderAdminView(container) {
         <!-- ═══════════════════════════════════════════════════════════ -->
         <!-- MODAL: EDIT ITEM DETAILS & PRICE (Infrequent changes)       -->
         <!-- ═══════════════════════════════════════════════════════════ -->
-        ${editingItem ? `
+        ${editingItem ? (() => {
+          const canEditPrice = ['admin', 'manager'].includes(staffAuth.getRole() || '');
+          return `
           <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
-            <div style="background: #FFF; border-radius: 18px; width: 100%; max-width: 500px; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.25);">
+            <div style="background: #FFF; border-radius: 18px; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.25);">
               
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
                 <div>
@@ -469,14 +524,16 @@ export function renderAdminView(container) {
                 <!-- Dish Name -->
                 <div style="margin-bottom: 1.2rem;">
                   <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Dish Name</label>
-                  <input type="text" id="edit-name" value="${editingItem.name}" required style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 1rem; box-sizing: border-box;" />
+                  <input type="text" id="edit-name" value="${escapeHtml(editingItem.name)}" required style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 1rem; box-sizing: border-box;" />
                 </div>
 
                 <!-- Price & Prep Time -->
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
                   <div>
-                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Price (₹)</label>
-                    <input type="number" id="edit-price" value="${editingItem.price}" required style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; box-sizing: border-box;" />
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">
+                      Price (₹) ${!canEditPrice ? '<span style="color:#DC2626; font-size:0.7rem;">(🔒 Manager/Admin only)</span>' : ''}
+                    </label>
+                    <input type="number" id="edit-price" value="${editingItem.price}" required ${!canEditPrice ? 'disabled title="Price edits restricted to Manager or Admin"' : ''} style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; box-sizing: border-box; ${!canEditPrice ? 'background: #F3F4F6; cursor: not-allowed;' : ''}" />
                   </div>
 
                   <div>
@@ -485,17 +542,31 @@ export function renderAdminView(container) {
                   </div>
                 </div>
 
-                <!-- Category & Type -->
+                <!-- Taxonomy: Parent Category & Subcategory -->
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
                   <div>
-                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Category</label>
-                    <select id="edit-category" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
-                      <option value="dosa" ${editingItem.category === 'dosa' ? 'selected' : ''}>Dosa</option>
-                      <option value="rotibhaji" ${editingItem.category === 'rotibhaji' ? 'selected' : ''}>Roti-Bhaji</option>
-                      <option value="drinks" ${editingItem.category === 'drinks' ? 'selected' : ''}>Drinks</option>
-                      <option value="snacks" ${editingItem.category === 'snacks' ? 'selected' : ''}>Snacks</option>
-                      <option value="lunch" ${editingItem.category === 'lunch' ? 'selected' : ''}>Lunch / Meals</option>
-                      <option value="chinese" ${editingItem.category === 'chinese' ? 'selected' : ''}>Chinese</option>
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Parent Category</label>
+                    <select id="edit-parent-category" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
+                      <option value="FOOD" ${editingItem.parentCategory === 'FOOD' ? 'selected' : ''}>🍛 FOOD</option>
+                      <option value="SNACKS" ${editingItem.parentCategory === 'SNACKS' ? 'selected' : ''}>🍟 SNACKS</option>
+                      <option value="BEVERAGES" ${editingItem.parentCategory === 'BEVERAGES' ? 'selected' : ''}>🥤 BEVERAGES</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Subcategory</label>
+                    <input type="text" id="edit-sub-category" value="${escapeHtml(editingItem.subCategory || editingItem.category || '')}" placeholder="e.g. South Indian, Sandwiches" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;" />
+                  </div>
+                </div>
+
+                <!-- Dietary & Type -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                  <div>
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Dietary Classification</label>
+                    <select id="edit-dietary-type" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
+                      <option value="VEG" ${editingItem.dietaryType === 'VEG' ? 'selected' : ''}>🟢 VEG</option>
+                      <option value="NON_VEG" ${editingItem.dietaryType === 'NON_VEG' ? 'selected' : ''}>🔴 NON-VEG</option>
+                      <option value="EGG" ${editingItem.dietaryType === 'EGG' ? 'selected' : ''}>🟡 EGG</option>
                     </select>
                   </div>
 
@@ -515,13 +586,13 @@ export function renderAdminView(container) {
                 </div>
 
                 <!-- Actions -->
-                <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                   <button 
                     type="button" 
-                    id="delete-edit-item-btn"
-                    style="background: transparent; border: none; color: #DC2626; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer; padding: 8px;"
+                    id="archive-edit-item-btn"
+                    style="background: #FEF3C7; border: 1px solid #F59E0B; color: #92400E; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; padding: 8px 12px; border-radius: 8px;"
                   >
-                    🗑️ Delete Item
+                    📦 Archive Item (Soft Delete)
                   </button>
 
                   <div style="display: flex; gap: 10px;">
@@ -544,7 +615,8 @@ export function renderAdminView(container) {
 
             </div>
           </div>
-        ` : ''}
+          `;
+        })() : ''}
 
         <!-- ═══════════════════════════════════════════════════════════ -->
         <!-- MODAL: ADD NEW DISH                                        -->
@@ -579,14 +651,26 @@ export function renderAdminView(container) {
 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
                   <div>
-                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Category</label>
-                    <select id="add-category" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
-                      <option value="dosa">Dosa</option>
-                      <option value="rotibhaji">Roti-Bhaji</option>
-                      <option value="drinks">Drinks</option>
-                      <option value="snacks">Snacks</option>
-                      <option value="lunch">Lunch / Meals</option>
-                      <option value="chinese">Chinese</option>
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Parent Category</label>
+                    <select id="add-parent-category" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
+                      <option value="FOOD">🍛 FOOD</option>
+                      <option value="SNACKS">🍟 SNACKS</option>
+                      <option value="BEVERAGES">🥤 BEVERAGES</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Subcategory</label>
+                    <input type="text" id="add-sub-category" required placeholder="e.g. South Indian, Sandwiches" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;" />
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                  <div>
+                    <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Dietary</label>
+                    <select id="add-dietary-type" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
+                      <option value="VEG">🟢 VEG</option>
+                      <option value="NON_VEG">🔴 NON-VEG</option>
+                      <option value="EGG">🟡 EGG</option>
                     </select>
                   </div>
                   <div>
@@ -685,15 +769,34 @@ export function renderAdminView(container) {
       });
     });
 
+    // 4b. Menu Category & Subcategory Filter Listeners
+    container.querySelectorAll('.cat-filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedParentFilter = btn.getAttribute('data-category');
+        render();
+      });
+    });
+
+    const subcatSelect = container.querySelector('#subcat-filter-select');
+    if (subcatSelect) {
+      subcatSelect.addEventListener('change', (e) => {
+        selectedSubFilter = e.target.value;
+        render();
+      });
+    }
+
     // 5. Edit Details Form Submission
     const editForm = container.querySelector('#edit-dish-form');
     if (editForm && editingItem) {
       editForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const name = editForm.querySelector('#edit-name').value;
-        const price = editForm.querySelector('#edit-price').value;
-        const prepMinutes = editForm.querySelector('#edit-prep').value;
-        const category = editForm.querySelector('#edit-category').value;
+        const priceInput = editForm.querySelector('#edit-price');
+        const price = priceInput && !priceInput.disabled ? Number(priceInput.value) : editingItem.price;
+        const prepMinutes = Number(editForm.querySelector('#edit-prep').value || 0);
+        const parentCategory = editForm.querySelector('#edit-parent-category').value;
+        const subCategory = editForm.querySelector('#edit-sub-category').value;
+        const dietaryType = editForm.querySelector('#edit-dietary-type').value;
         const type = editForm.querySelector('#edit-type').value;
         const batchDate = editForm.querySelector('#edit-batch').value;
 
@@ -701,7 +804,10 @@ export function renderAdminView(container) {
           name,
           price,
           prepMinutes,
-          category,
+          category: parentCategory,
+          parentCategory,
+          subCategory,
+          dietaryType,
           type,
           batchDate
         });
@@ -710,10 +816,29 @@ export function renderAdminView(container) {
         render();
       });
 
+      const archiveBtn = editForm.querySelector('#archive-edit-item-btn');
+      if (archiveBtn) {
+        archiveBtn.addEventListener('click', async () => {
+          if (confirm(`Archive "${editingItem.name}"? It will be removed from customer view while preserving historical receipts.`)) {
+            archiveBtn.disabled = true;
+            archiveBtn.textContent = 'Archiving...';
+            try {
+              await archiveMenuItem(editingItem.id, 'Soft-archived from staff hub');
+              editingItem = null;
+              render();
+            } catch (err) {
+              alert('Archive Error: ' + (err.message || err));
+              archiveBtn.disabled = false;
+              archiveBtn.textContent = '📦 Archive Dish (Soft Delete)';
+            }
+          }
+        });
+      }
+
       const deleteBtn = editForm.querySelector('#delete-edit-item-btn');
       if (deleteBtn) {
         deleteBtn.addEventListener('click', async () => {
-          if (confirm(`Are you sure you want to delete "${editingItem.name}"?`)) {
+          if (confirm(`Are you sure you want to permanently delete "${editingItem.name}"? (Recommended: use Archive instead to preserve order history)`)) {
             await deleteMenuItem(editingItem.id);
             editingItem = null;
             render();
@@ -728,19 +853,24 @@ export function renderAdminView(container) {
       addForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const name = addForm.querySelector('#add-name').value;
-        const price = addForm.querySelector('#add-price').value;
-        const stockCount = addForm.querySelector('#add-stock').value;
-        const category = addForm.querySelector('#add-category').value;
+        const price = Number(addForm.querySelector('#add-price').value);
+        const stockCount = Number(addForm.querySelector('#add-stock').value || 0);
+        const parentCategory = addForm.querySelector('#add-parent-category').value;
+        const subCategory = addForm.querySelector('#add-sub-category').value;
+        const dietaryType = addForm.querySelector('#add-dietary-type').value;
         const type = addForm.querySelector('#add-type').value;
-        const prepMinutes = addForm.querySelector('#add-prep').value;
+        const prepMinutes = Number(addForm.querySelector('#add-prep').value || 0);
 
         await saveMenuItem({
           name,
-          price: Number(price),
-          stockOnHand: type === 'instant' ? Number(stockCount) : 100,
+          price,
+          category: parentCategory,
+          parentCategory,
+          subCategory,
+          dietaryType,
+          stockOnHand: type === 'instant' ? stockCount : 100,
           reservedStock: 0,
-          prepMinutes: type === 'instant' ? 0 : Number(prepMinutes),
-          category,
+          prepMinutes: type === 'instant' ? 0 : prepMinutes,
           type,
           isPublished: true,
           isOrderable: true,

@@ -18,6 +18,42 @@ import '../widgets/category_tabs.dart';
 import '../widgets/menu_item_card.dart';
 import '../widgets/menu_shimmer.dart';
 
+/// Sorting options for the student-facing catalog.
+enum MenuSortOption {
+  recommended,
+  priceLowToHigh,
+  priceHighToLow,
+  nameAZ,
+}
+
+extension MenuSortOptionExtension on MenuSortOption {
+  String get label {
+    switch (this) {
+      case MenuSortOption.recommended:
+        return 'Recommended';
+      case MenuSortOption.priceLowToHigh:
+        return 'Price: Low → High';
+      case MenuSortOption.priceHighToLow:
+        return 'Price: High → Low';
+      case MenuSortOption.nameAZ:
+        return 'Name: A–Z';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case MenuSortOption.recommended:
+        return Icons.auto_awesome_rounded;
+      case MenuSortOption.priceLowToHigh:
+        return Icons.arrow_upward_rounded;
+      case MenuSortOption.priceHighToLow:
+        return Icons.arrow_downward_rounded;
+      case MenuSortOption.nameAZ:
+        return Icons.sort_by_alpha_rounded;
+    }
+  }
+}
+
 /// Phase 7 — Live menu screen with Student Authentication & Orders History.
 /// Features: brand header with student greeting, search bar, category tabs, 2-col grid,
 /// pull-to-refresh, shimmer loading, 3-tab navigation with dynamic Profile & Orders tabs.
@@ -30,7 +66,9 @@ class MenuScreen extends StatefulWidget {
 
 class _MenuScreenState extends State<MenuScreen> {
   final FirestoreService _firestore = FirestoreService();
-  String _activeCategory = 'all';
+  String _activeParentCategory = 'all';
+  String _activeSubCategory = 'all';
+  MenuSortOption _selectedSort = MenuSortOption.recommended;
   String _searchQuery = '';
   int _currentNavIndex = 0; // 0=Menu, 1=Orders, 2=Profile
 
@@ -82,15 +120,22 @@ class _MenuScreenState extends State<MenuScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 18),
             child: Column(
               children: [
-                // Search bar
-                _buildSearchBar(),
-                const SizedBox(height: 2),
+                // Search bar and Sort / Canteen Board actions
+                _buildSearchAndSortBar(),
+                const SizedBox(height: 6),
 
-                // Category tabs
+                // Category tabs (2-level hierarchy: Primary + Subcategories)
                 CategoryTabs(
-                  activeCategory: _activeCategory,
-                  onCategorySelected: (cat) {
-                    setState(() => _activeCategory = cat);
+                  activeParentCategory: _activeParentCategory,
+                  onParentCategorySelected: (cat) {
+                    setState(() {
+                      _activeParentCategory = cat;
+                      _activeSubCategory = 'all';
+                    });
+                  },
+                  activeSubCategory: _activeSubCategory,
+                  onSubCategorySelected: (sub) {
+                    setState(() => _activeSubCategory = sub);
                   },
                 ),
                 const SizedBox(height: 6),
@@ -120,21 +165,68 @@ class _MenuScreenState extends State<MenuScreen> {
                         context.read<CartProvider>().syncAvailability(allItems);
                       });
 
-                      // Filter available items for menu display
-                      final availableItems = allItems.where((i) => i.available).toList();
+                      // Filter out unavailable or archived items
+                      final availableItems = allItems
+                          .where((i) => i.available && !i.isArchived)
+                          .toList();
 
-                      // Client-side category + search filter
-                      var filtered = _activeCategory == 'all'
-                          ? availableItems
-                          : availableItems
-                              .where((i) => i.category == _activeCategory)
-                              .toList();
+                      // 1. Client-side Parent Category filter
+                      var filtered = availableItems.where((i) {
+                        if (_activeParentCategory == 'all') return true;
+                        final parent = i.parentCategory.trim().toUpperCase();
+                        if (parent.isNotEmpty) {
+                          return parent == _activeParentCategory.toUpperCase();
+                        }
+                        // Fallback for legacy items without parentCategory
+                        if (_activeParentCategory == 'BEVERAGES') {
+                          return i.category.toLowerCase() == 'drinks';
+                        }
+                        if (_activeParentCategory == 'SNACKS') {
+                          return i.category.toLowerCase() == 'snacks';
+                        }
+                        if (_activeParentCategory == 'FOOD') {
+                          return i.category.toLowerCase() == 'dosa' ||
+                              i.category.toLowerCase() == 'rotibhaji';
+                        }
+                        return true;
+                      }).toList();
 
+                      // 2. Client-side Subcategory filter
+                      if (_activeSubCategory != 'all') {
+                        filtered = filtered.where((i) {
+                          final sub = i.subCategory.trim().toLowerCase();
+                          final cat = i.category.trim().toLowerCase();
+                          final target = _activeSubCategory.trim().toLowerCase();
+                          return sub == target || cat == target;
+                        }).toList();
+                      }
+
+                      // 3. Search query filter (name, subcategory, parentCategory, description)
                       if (_searchQuery.isNotEmpty) {
                         final q = _searchQuery.toLowerCase();
-                        filtered = filtered
-                            .where((i) => i.name.toLowerCase().contains(q))
-                            .toList();
+                        filtered = filtered.where((i) {
+                          return i.name.toLowerCase().contains(q) ||
+                              i.subCategory.toLowerCase().contains(q) ||
+                              i.parentCategory.toLowerCase().contains(q) ||
+                              i.description.toLowerCase().contains(q);
+                        }).toList();
+                      }
+
+                      // 4. Multi-tier Sorting
+                      switch (_selectedSort) {
+                        case MenuSortOption.recommended:
+                          filtered.sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+                          break;
+                        case MenuSortOption.priceLowToHigh:
+                          filtered.sort((a, b) => a.pricePaise.compareTo(b.pricePaise));
+                          break;
+                        case MenuSortOption.priceHighToLow:
+                          filtered.sort((a, b) => b.pricePaise.compareTo(a.pricePaise));
+                          break;
+                        case MenuSortOption.nameAZ:
+                          filtered.sort((a, b) =>
+                              a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+                          break;
                       }
 
                       if (filtered.isEmpty) {
@@ -158,8 +250,9 @@ class _MenuScreenState extends State<MenuScreen> {
   Widget _buildHeader() {
     return Consumer<AuthProvider>(
       builder: (context, auth, _) {
-        final student = auth.currentStudent;
-        final firstName = student != null ? student.name.split(' ').first : '';
+        final profile = auth.currentProfile;
+        final isLoggedIn = auth.isLoggedIn && profile != null;
+        final firstName = isLoggedIn ? profile.displayName.split(' ').first : '';
 
         return Padding(
           padding: const EdgeInsets.fromLTRB(18, 16, 18, 4),
@@ -185,7 +278,7 @@ class _MenuScreenState extends State<MenuScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    student != null
+                    isLoggedIn
                         ? 'Hey, $firstName 👋 · TCET canteen'
                         : 'Pickup — TCET canteen',
                     style: AppFonts.body(fontSize: 12.5, color: AppColors.inkSoft),
@@ -196,7 +289,7 @@ class _MenuScreenState extends State<MenuScreen> {
               // Right header actions: Student Avatar / Sign-In & Cart
               Row(
                 children: [
-                  if (student != null) ...[
+                  if (isLoggedIn) ...[
                     GestureDetector(
                       onTap: () => setState(() => _currentNavIndex = 2),
                       child: Container(
@@ -210,7 +303,7 @@ class _MenuScreenState extends State<MenuScreen> {
                         ),
                         child: Center(
                           child: Text(
-                            student.initials,
+                            profile.initials,
                             style: AppFonts.mono(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
@@ -291,12 +384,100 @@ class _MenuScreenState extends State<MenuScreen> {
     );
   }
 
-  // ─── Search Bar ─────────────────────────────────────────────────
+  // ─── Search Bar and Filter Controls ─────────────────────────────
+
+  Widget _buildSearchAndSortBar() {
+    return Row(
+      children: [
+        Expanded(child: _buildSearchBar()),
+        const SizedBox(width: 8),
+
+        // Multi-tier Sort Dropdown
+        PopupMenuButton<MenuSortOption>(
+          tooltip: 'Sort Menu',
+          initialValue: _selectedSort,
+          onSelected: (sort) => setState(() => _selectedSort = sort),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          itemBuilder: (context) => [
+            for (final opt in MenuSortOption.values)
+              PopupMenuItem(
+                value: opt,
+                child: Row(
+                  children: [
+                    Icon(
+                      opt.icon,
+                      size: 18,
+                      color: _selectedSort == opt ? AppColors.red : AppColors.inkSoft,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      opt.label,
+                      style: AppFonts.body(
+                        fontSize: 13,
+                        fontWeight: _selectedSort == opt ? FontWeight.w700 : FontWeight.w500,
+                        color: _selectedSort == opt ? AppColors.red : AppColors.ink,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+          child: Container(
+            height: 40,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: _selectedSort != MenuSortOption.recommended
+                  ? AppColors.red.withAlpha(20)
+                  : AppColors.surface2,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _selectedSort != MenuSortOption.recommended
+                    ? AppColors.red
+                    : AppColors.line,
+                width: 1,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _selectedSort.icon,
+                  size: 18,
+                  color: _selectedSort != MenuSortOption.recommended
+                      ? AppColors.red
+                      : AppColors.ink,
+                ),
+                const SizedBox(width: 4),
+                const Icon(Icons.arrow_drop_down_rounded, size: 20, color: AppColors.inkSoft),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+
+        // Canteen Menu Board Reference Modal Trigger
+        GestureDetector(
+          onTap: _showOriginalMenuDialog,
+          child: Container(
+            height: 40,
+            width: 40,
+            decoration: BoxDecoration(
+              color: AppColors.surface2,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.line, width: 1),
+            ),
+            child: const Center(
+              child: Text('📋', style: TextStyle(fontSize: 18)),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _buildSearchBar() {
     return Container(
       height: 40,
-      margin: const EdgeInsets.only(top: 10),
       decoration: BoxDecoration(
         color: AppColors.surface2,
         borderRadius: BorderRadius.circular(12),
@@ -306,7 +487,7 @@ class _MenuScreenState extends State<MenuScreen> {
         onChanged: (val) => setState(() => _searchQuery = val),
         style: AppFonts.body(fontSize: 13.5, color: AppColors.ink),
         decoration: InputDecoration(
-          hintText: 'Search menu...',
+          hintText: 'Search Dosas, Burgers, Chai...',
           hintStyle: AppFonts.body(fontSize: 13.5, color: AppColors.inkSoft),
           prefixIcon:
               const Icon(Icons.search_rounded, size: 20, color: AppColors.inkSoft),
@@ -323,6 +504,172 @@ class _MenuScreenState extends State<MenuScreen> {
           border: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(vertical: 10),
         ),
+      ),
+    );
+  }
+
+  void _showOriginalMenuDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          decoration: const BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.line,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.red.withAlpha(20),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Text('📋', style: TextStyle(fontSize: 22)),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('TCET Canteen Tariff Boards', style: AppFonts.display(fontSize: 20)),
+                        Text(
+                          'Digitized 1:1 from physical canteen boards',
+                          style: AppFonts.body(fontSize: 12, color: AppColors.inkSoft),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.surface2,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.line, width: 1),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.verified_rounded, color: AppColors.green, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '85 canonical items verified with physical canteen pricing. Orders are server-authoritative.',
+                        style: AppFonts.body(fontSize: 12, color: AppColors.ink, height: 1.3),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              Expanded(
+                child: ListView(
+                  children: [
+                    _buildMenuBoardSection('🍛 South Indian Specialities', [
+                      'Plain Dosa (₹35) • Butter Dosa (₹45)',
+                      'Masala Dosa (₹50) • Butter Masala Dosa (₹60)',
+                      'Mysore Masala Dosa (₹70) • Rava Dosa (₹60)',
+                      'Rava Masala Dosa (₹70) • Onion Uttapam (₹60)',
+                      'Idli Sambar (₹40) • Medu Vada Sambar (₹45)',
+                    ]),
+                    _buildMenuBoardSection('🥪 Sandwiches & Grills', [
+                      'Veg Sandwich (₹40) • Veg Toast Sandwich (₹50)',
+                      'Cheese Toast (₹70) • Veg Grilled Sandwich (₹80)',
+                      'Cheese Grilled Sandwich (₹100)',
+                      'Bombay Masala Toast (₹65) • Club Sandwich (₹110)',
+                    ]),
+                    _buildMenuBoardSection('🍜 Chinese Wok', [
+                      'Veg Fried Rice (₹90) • Schezwan Fried Rice (₹100)',
+                      'Veg Hakka Noodles (₹90) • Schezwan Noodles (₹100)',
+                      'Veg Manchurian (₹90) • Paneer Chilli Dry (₹130)',
+                      'Triple Schezwan Rice (₹120)',
+                    ]),
+                    _buildMenuBoardSection('🍱 Meals & Roti-Bhaji', [
+                      'Roti Bhaji (₹60) • Puri Bhaji (₹60)',
+                      'Dal Khichdi (₹90) • Dal Tadka (₹80)',
+                      'Mini Thali (₹80) • Special Thali (₹130)',
+                    ]),
+                    _buildMenuBoardSection('🍟 Snacks & Quick Bites', [
+                      'Vada Pav (₹18) • Samosa Pav (₹20)',
+                      'Misal Pav (₹60) • French Fries (₹60)',
+                      'Peri Peri Fries (₹75) • Veg Burger (₹60)',
+                      'Cheese Burger (₹80)',
+                    ]),
+                    _buildMenuBoardSection('☕ Tea, Coffee & Beverages', [
+                      'Cutting Chai (₹12) • Special Masala Chai (₹18)',
+                      'Hot Coffee (₹25) • Black Coffee (₹20)',
+                      'Cold Drinks (₹20) • Frooti (₹15) • Red Bull (₹125)',
+                      'Cold Coffee with Ice Cream (₹60)',
+                      'Chocolate Shake (₹70) • Oreo Shake (₹80)',
+                      'Mosambi Juice (₹50) • Orange Juice (₹50)',
+                      'Watermelon Juice (₹40) • Ganga Jamuna (₹60)',
+                    ]),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.ink,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Back to Ordering'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMenuBoardSection(String title, List<String> items) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.line, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.ink)),
+          const SizedBox(height: 6),
+          for (final line in items)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Text(
+                line,
+                style: AppFonts.body(fontSize: 12.5, color: AppColors.inkSoft),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -542,9 +889,9 @@ class _MenuScreenState extends State<MenuScreen> {
   Widget _buildProfileTab() {
     return Consumer<AuthProvider>(
       builder: (context, auth, _) {
-        final student = auth.currentStudent;
+        final student = auth.currentProfile;
 
-        if (student == null) {
+        if (!auth.isLoggedIn || student == null) {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(32),

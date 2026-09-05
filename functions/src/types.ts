@@ -288,3 +288,46 @@ export interface PriorityConfig {
   priorityCooldownMinutes: number;
   maxPriorityQueueSize: number;
 }
+
+export type ParentCategory = 'FOOD' | 'SNACKS' | 'BEVERAGES' | 'DESSERTS';
+
+export type FoodSubcategory =
+  | 'SOUTH_INDIAN'
+  | 'SANDWICHES'
+  | 'CHINESE'
+  | 'LUNCH_MEALS'
+  | 'SNACKS_QUICK_BITES'
+  | 'COLD_DRINKS'
+  | 'TEA_COFFEE'
+  | 'MILKSHAKES'
+  | 'JUICES';
+
+export type DietaryType = 'VEG' | 'NON_VEG' | 'EGG' | 'JAIN_AVAILABLE';
+
+export interface MenuItemDocument {
+  id: string;
+  name: string;
+  normalizedName?: string;
+  price: number;
+  parentCategory: ParentCategory;
+  category: string;
+  subCategory?: string;
+  dietaryType?: DietaryType;
+  description?: string;
+  type: 'instant' | 'cooked';
+  prepMinutes: number;
+  available: boolean;
+  isArchived: boolean;
+  availabilityStatus?: 'AVAILABLE' | 'SOLD_OUT' | 'UNAVAILABLE';
+  stockOnHand: number;
+  reservedStock: number;
+  availableStock: number;
+  stockCount?: number;
+  batchDate?: string;
+  imageUrl?: string;
+  iconKey?: string;
+  displayOrder?: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  updatedBy?: string;
+}

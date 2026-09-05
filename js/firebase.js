@@ -224,6 +224,14 @@ export async function saveMenuItem(itemData) {
 }
 
 /**
+ * Soft-archive a menu item via authoritative Cloud Function
+ */
+export async function archiveMenuItem(itemId, reason = 'Archived by manager') {
+  const archiveFn = httpsCallable(functions, 'archiveMenuItem');
+  await archiveFn({ itemId, reason });
+}
+
+/**
  * Delete a menu item via authoritative Cloud Function
  */
 export async function deleteMenuItem(itemId) {

@@ -225,28 +225,51 @@ class MenuItemCard extends StatelessWidget {
   }
 
   Widget _buildMenuVisual(Color iconBg, Color accentInk) {
-    if (item.imageUrl.startsWith('assets/')) {
-      return SizedBox(
-        width: 88,
-        height: 68,
-        child: Image.asset(
-          item.imageUrl,
-          fit: BoxFit.contain,
-          errorBuilder: (context, error, stackTrace) => _buildIconFallback(iconBg, accentInk),
-        ),
-      );
+    if (item.imageUrl.isNotEmpty) {
+      if (item.imageUrl.startsWith('assets/')) {
+        return SizedBox(
+          width: 88,
+          height: 68,
+          child: Image.asset(
+            item.imageUrl,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) => _buildIconFallback(iconBg, accentInk),
+          ),
+        );
+      } else if (item.imageUrl.startsWith('http://') || item.imageUrl.startsWith('https://')) {
+        return SizedBox(
+          width: 88,
+          height: 68,
+          child: Image.network(
+            item.imageUrl,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) => _buildIconFallback(iconBg, accentInk),
+          ),
+        );
+      }
     }
 
     return _buildIconFallback(iconBg, accentInk);
   }
 
   Widget _buildIconFallback(Color iconBg, Color accentInk) {
+    final icon = _resolveHierarchicalIcon(item);
     return Container(
       width: 58,
       height: 58,
-      decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
+      decoration: BoxDecoration(
+        color: iconBg,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(10),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: Center(
-        child: Icon(_iconForKey(item.iconKey), size: 26, color: accentInk),
+        child: Icon(icon, size: 28, color: accentInk),
       ),
     );
   }
@@ -345,6 +368,50 @@ class MenuItemCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  static IconData _resolveHierarchicalIcon(MenuItem item) {
+    final sub = item.subCategory.toLowerCase();
+    final cat = item.category.toLowerCase();
+    final name = item.name.toLowerCase();
+
+    if (sub.contains('dosa') || cat.contains('dosa') || name.contains('dosa')) {
+      return Icons.breakfast_dining_rounded;
+    }
+    if (sub.contains('uttappa') || name.contains('uttappa') || sub.contains('idli') || name.contains('idli') || name.contains('vada')) {
+      return Icons.flatware_rounded;
+    }
+    if (sub.contains('sandwich') || cat.contains('sandwich') || name.contains('sandwich') || name.contains('toast') || name.contains('grill')) {
+      return Icons.lunch_dining_rounded;
+    }
+    if (sub.contains('noodle') || cat.contains('chinese') || name.contains('noodle') || name.contains('chowmein') || name.contains('manchurian')) {
+      return Icons.ramen_dining_rounded;
+    }
+    if (sub.contains('rice') || name.contains('rice') || name.contains('biryani')) {
+      return Icons.rice_bowl_rounded;
+    }
+    if (sub.contains('thali') || name.contains('thali') || cat.contains('rotibhaji') || name.contains('roti') || name.contains('bhaji') || name.contains('puri') || name.contains('chole')) {
+      return Icons.dinner_dining_rounded;
+    }
+    if (sub.contains('fries') || name.contains('fries') || name.contains('chips')) {
+      return Icons.fastfood_rounded;
+    }
+    if (sub.contains('pav') || name.contains('samosa') || name.contains('vada pav') || name.contains('cutlet')) {
+      return Icons.bakery_dining_rounded;
+    }
+    if (sub.contains('tea') || sub.contains('coffee') || cat.contains('tea') || cat.contains('coffee') || name.contains('chai') || name.contains('coffee')) {
+      return Icons.local_cafe_rounded;
+    }
+    if (sub.contains('shake') || name.contains('shake')) {
+      return Icons.icecream_rounded;
+    }
+    if (sub.contains('juice') || name.contains('juice')) {
+      return Icons.local_bar_rounded;
+    }
+    if (sub.contains('drink') || cat.contains('drink') || name.contains('soda') || name.contains('coke') || name.contains('sprite')) {
+      return Icons.local_drink_rounded;
+    }
+    return _iconForKey(item.iconKey);
   }
 
   static IconData _iconForKey(String key) {

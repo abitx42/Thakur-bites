@@ -12,6 +12,8 @@
 
 const admin = require('firebase-admin');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 // Environment isolation guardrail: strictly prevent seeding production project
 const targetProject = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'adi-thakur-bite-staging';
@@ -99,79 +101,125 @@ async function seedDemoData() {
   console.log(`\n  🔑 RUNTIME DYNAMIC SHIFT PIN FOR ALL STATIONS: ${dynamicPin}`);
   console.log(`     (Salted SHA-256 hash stored in Firestore; dynamic PIN printed ONLY to local stdout)\n`);
 
-  // 3. Seed Menu Items
-  console.log('▶ Step 3: Seeding Campus Menu Catalog...');
-  const menuItems = [
+  // 3. Seed Menu Items (Verified 85 physical menu items + backward compat demo items)
+  console.log('▶ Step 3: Seeding Campus Menu Catalog (Physical Canteen Digitized)...');
+  let verifiedItems = [];
+  const seedJsonPath = path.join(__dirname, 'data', 'verified_menu_seed.json');
+  if (fs.existsSync(seedJsonPath)) {
+    try {
+      verifiedItems = JSON.parse(fs.readFileSync(seedJsonPath, 'utf8'));
+    } catch (e) {
+      console.warn('  ⚠️ Could not parse verified_menu_seed.json:', e.message);
+    }
+  }
+
+  const legacyDemoItems = [
     {
       id: 'masala_dosa_01',
       name: 'Mysore Masala Dosa',
       price: 70,
+      pricePaise: 7000,
       type: 'cooked',
-      category: 'dosa',
+      category: 'FOOD',
+      parentCategory: 'FOOD',
+      subCategory: 'South Indian',
+      dietaryType: 'VEG',
       station: 'dosa',
       available: true,
-      stockOnHand: 0,
+      stockOnHand: 100,
       reservedStock: 0,
+      prepMinutes: 6,
       description: 'Crispy butter dosa layered with spicy red garlic chutney and spiced potato masala.',
     },
     {
       id: 'punjabi_samosa_01',
       name: 'Punjabi Samosa (2 pcs)',
       price: 30,
+      pricePaise: 3000,
       type: 'instant',
-      category: 'snack',
+      category: 'SNACKS',
+      parentCategory: 'SNACKS',
+      subCategory: 'Pav Items',
+      dietaryType: 'VEG',
       station: 'counter',
       available: true,
       stockOnHand: 25,
       reservedStock: 2,
+      prepMinutes: 0,
       description: 'Golden flaky pastry stuffed with seasoned potatoes, green peas, and whole spices.',
     },
     {
       id: 'cold_coffee_01',
       name: 'Cold Coffee Thick Shake',
       price: 45,
+      pricePaise: 4500,
       type: 'instant',
-      category: 'beverage',
+      category: 'BEVERAGES',
+      parentCategory: 'BEVERAGES',
+      subCategory: 'Milkshakes',
+      dietaryType: 'VEG',
       station: 'beverage',
       available: true,
       stockOnHand: 18,
       reservedStock: 1,
+      prepMinutes: 0,
       description: 'Chilled blended brew with creamy dairy and cocoa drizzle.',
     },
     {
       id: 'veg_grilled_sandwich_01',
       name: 'Bombay Veg Cheese Grill',
       price: 80,
+      pricePaise: 8000,
       type: 'cooked',
-      category: 'sandwich',
+      category: 'FOOD',
+      parentCategory: 'FOOD',
+      subCategory: 'Sandwiches',
+      dietaryType: 'VEG',
       station: 'sandwich',
       available: true,
-      stockOnHand: 0,
+      stockOnHand: 100,
       reservedStock: 0,
+      prepMinutes: 8,
       description: 'Triple-layer sandwich with beetroot, cucumber, mint chutney, and melted cheese.',
     },
     {
       id: 'amul_buttermilk_01',
       name: 'Amul Masala Buttermilk (200ml)',
       price: 15,
+      pricePaise: 1500,
       type: 'instant',
-      category: 'beverage',
+      category: 'BEVERAGES',
+      parentCategory: 'BEVERAGES',
+      subCategory: 'Cold Drinks',
+      dietaryType: 'VEG',
       station: 'beverage',
       available: true,
       stockOnHand: 40,
       reservedStock: 0,
+      prepMinutes: 0,
       description: 'Refreshing spiced buttermilk pouch.',
     }
   ];
 
-  for (const item of menuItems) {
-    await db.collection('menuItems').doc(item.id).set({
+  const allItemsToSeed = [...legacyDemoItems, ...verifiedItems];
+  // Deduplicate by ID
+  const itemMap = new Map();
+  for (const it of allItemsToSeed) {
+    itemMap.set(it.id, it);
+  }
+
+  const batch = db.batch();
+  for (const [id, item] of itemMap) {
+    const ref = db.collection('menuItems').doc(id);
+    batch.set(ref, {
       ...item,
+      pricePaise: item.pricePaise || Math.round((item.price || 0) * 100),
+      isArchived: item.isArchived || false,
       updatedAt: now,
     }, { merge: true });
-    console.log(`  ✓ Menu item: ${item.name} (₹${item.price}) [${item.type}]`);
   }
-  console.log('');
+  await batch.commit();
+  console.log(`  ✓ Successfully committed ${itemMap.size} menu items (${verifiedItems.length} verified physical items).\n`);
 
   // 4. Seed Faculty Verification Applications
   console.log('▶ Step 4: Seeding Faculty Verification Applications...');

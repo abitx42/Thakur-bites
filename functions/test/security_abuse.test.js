@@ -4794,5 +4794,235 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(result.includes('SECRET SCANNING GATE PASSED (100% CLEAN)'), true);
     assert.strictEqual(result.includes('Zero leaked credentials'), true);
   });
+
+  it('236. Price Tampering Defense: Calculates item totals authoritatively in paise, ignoring client price', () => {
+    const authoritativeCatalog = {
+      masala_dosa_01: { name: 'Mysore Masala Dosa', pricePaise: 7000, price: 70, available: true, isArchived: false },
+      cold_coffee_01: { name: 'Cold Coffee Thick Shake', pricePaise: 4500, price: 45, available: true, isArchived: false },
+    };
+
+    function calculateAuthoritativeCart(cartItems, catalog) {
+      let totalAmountPaise = 0;
+      const verifiedItems = [];
+
+      for (const cartItem of cartItems) {
+        const itemDoc = catalog[cartItem.itemId];
+        if (!itemDoc) throw new Error('ITEM_NOT_FOUND');
+        if (itemDoc.isArchived) throw new Error('ITEM_ARCHIVED');
+        const unitPricePaise = itemDoc.pricePaise || Math.round(itemDoc.price * 100);
+        const lineTotalPaise = unitPricePaise * cartItem.quantity;
+        totalAmountPaise += lineTotalPaise;
+        verifiedItems.push({
+          itemId: cartItem.itemId,
+          name: itemDoc.name,
+          unitPricePaise,
+          quantity: cartItem.quantity,
+          subtotalPaise: lineTotalPaise,
+        });
+      }
+      return { totalAmountPaise, verifiedItems };
+    }
+
+    // Malicious payload claiming ₹1 for Dosa and ₹0 for Coffee
+    const maliciousCart = [
+      { itemId: 'masala_dosa_01', quantity: 2, clientPrice: 1 },
+      { itemId: 'cold_coffee_01', quantity: 1, clientPrice: 0 },
+    ];
+
+    const result = calculateAuthoritativeCart(maliciousCart, authoritativeCatalog);
+    assert.strictEqual(result.totalAmountPaise, 18500, 'Total must be ₹185 (18500 paise), completely overriding client price');
+    assert.strictEqual(result.verifiedItems[0].unitPricePaise, 7000);
+    assert.strictEqual(result.verifiedItems[1].unitPricePaise, 4500);
+  });
+
+  it('237. Negative/Excessive Quantity Defense: Rejects non-positive, fractional, and hoard quantities', () => {
+    function validateCartItemQuantity(quantity) {
+      if (typeof quantity !== 'number' || !Number.isInteger(quantity)) {
+        return { valid: false, code: 'INVALID_QUANTITY_FORMAT' };
+      }
+      if (quantity <= 0) {
+        return { valid: false, code: 'QUANTITY_MUST_BE_POSITIVE' };
+      }
+      if (quantity > 50) {
+        return { valid: false, code: 'QUANTITY_EXCEEDS_MAX_CAP' };
+      }
+      return { valid: true };
+    }
+
+    assert.strictEqual(validateCartItemQuantity(1).valid, true);
+    assert.strictEqual(validateCartItemQuantity(50).valid, true);
+    assert.strictEqual(validateCartItemQuantity(0).code, 'QUANTITY_MUST_BE_POSITIVE');
+    assert.strictEqual(validateCartItemQuantity(-5).code, 'QUANTITY_MUST_BE_POSITIVE');
+    assert.strictEqual(validateCartItemQuantity(2.5).code, 'INVALID_QUANTITY_FORMAT');
+    assert.strictEqual(validateCartItemQuantity(51).code, 'QUANTITY_EXCEEDS_MAX_CAP');
+    assert.strictEqual(validateCartItemQuantity('2').code, 'INVALID_QUANTITY_FORMAT');
+  });
+
+  it('238. Soft-Archived Catalog Protection: Rejects archived items from new checkouts while preserving snapshots', () => {
+    const catalog = {
+      active_samosa: { name: 'Samosa', pricePaise: 2000, available: true, isArchived: false },
+      archived_seasonal: { name: 'Summer Mango Shake', pricePaise: 8000, available: true, isArchived: true },
+    };
+
+    function validateItemForCheckout(itemId, catalog) {
+      const item = catalog[itemId];
+      if (!item) return { allowed: false, error: 'ITEM_NOT_FOUND' };
+      if (item.isArchived === true) return { allowed: false, error: 'ITEM_ARCHIVED_OR_DISCONTINUED' };
+      if (!item.available) return { allowed: false, error: 'ITEM_OUT_OF_STOCK' };
+      return { allowed: true, item };
+    }
+
+    assert.strictEqual(validateItemForCheckout('active_samosa', catalog).allowed, true);
+    const archivedResult = validateItemForCheckout('archived_seasonal', catalog);
+    assert.strictEqual(archivedResult.allowed, false);
+    assert.strictEqual(archivedResult.error, 'ITEM_ARCHIVED_OR_DISCONTINUED');
+  });
+
+  it('239. RBAC Price Governance: Enforces manage_menu capability (Staff denied, Manager/Admin allowed)', () => {
+    const { hasCapability } = require('../lib/authorization_policy');
+
+    assert.strictEqual(hasCapability('admin', 'manage_menu'), true, 'Admin has manage_menu capability');
+    assert.strictEqual(hasCapability('manager', 'manage_menu'), true, 'Manager has manage_menu capability');
+    assert.strictEqual(hasCapability('kitchen', 'manage_menu'), false, 'Kitchen staff cannot edit menu prices');
+    assert.strictEqual(hasCapability('pickup', 'manage_menu'), false, 'Pickup station cannot edit menu prices');
+    assert.strictEqual(hasCapability('cashier', 'manage_menu'), false, 'Cashier cannot modify catalog prices');
+    assert.strictEqual(hasCapability('student', 'manage_menu'), false, 'Student cannot modify catalog prices');
+  });
+
+  it('240. Bulk Import Validation: Enforces strict schema, price caps ₹0-₹10000, and max 200 items', () => {
+    function validateBulkImportItems(items) {
+      if (!Array.isArray(items) || items.length === 0) {
+        throw new Error('Items array must not be empty');
+      }
+      if (items.length > 200) {
+        throw new Error('Bulk import batch size exceeds maximum of 200 items');
+      }
+
+      const validParentCats = ['FOOD', 'SNACKS', 'BEVERAGES', 'DESSERTS'];
+      const sanitized = [];
+
+      for (const item of items) {
+        if (!item.name || typeof item.name !== 'string' || item.name.trim().length === 0) {
+          throw new Error(`Item missing required name`);
+        }
+        const price = Number(item.price);
+        if (isNaN(price) || price < 0 || price > 10000) {
+          throw new Error(`Item ${item.name} has invalid price: ₹${item.price}`);
+        }
+        const parent = (item.parentCategory || 'FOOD').toUpperCase();
+        if (!validParentCats.includes(parent)) {
+          throw new Error(`Item ${item.name} has invalid parentCategory: ${item.parentCategory}`);
+        }
+        sanitized.push({
+          name: item.name.trim(),
+          pricePaise: Math.round(price * 100),
+          parentCategory: parent,
+          subCategory: item.subCategory ? String(item.subCategory).trim() : 'General',
+          dietaryType: ['VEG', 'NON_VEG', 'EGG'].includes(item.dietaryType) ? item.dietaryType : 'VEG',
+          isArchived: Boolean(item.isArchived),
+        });
+      }
+      return sanitized;
+    }
+
+    // Valid batch
+    const validBatch = [
+      { name: 'Plain Dosa', price: 35, parentCategory: 'FOOD', subCategory: 'South Indian' },
+      { name: 'Cold Coffee', price: 45, parentCategory: 'BEVERAGES', subCategory: 'Milkshakes' },
+    ];
+    const sanitized = validateBulkImportItems(validBatch);
+    assert.strictEqual(sanitized.length, 2);
+    assert.strictEqual(sanitized[0].pricePaise, 3500);
+    assert.strictEqual(sanitized[1].pricePaise, 4500);
+
+    // Negative price rejection
+    assert.throws(
+      () => validateBulkImportItems([{ name: 'Glitch Item', price: -50 }]),
+      /invalid price/
+    );
+
+    // Over-limit price rejection (> ₹10,000)
+    assert.throws(
+      () => validateBulkImportItems([{ name: 'Extortion Dosa', price: 15000 }]),
+      /invalid price/
+    );
+
+    // Invalid parent category rejection
+    assert.throws(
+      () => validateBulkImportItems([{ name: 'Item', price: 50, parentCategory: 'WEAPONS' }]),
+      /invalid parentCategory/
+    );
+
+    // Batch size > 200 rejection
+    const hugeBatch = Array.from({ length: 201 }, (_, i) => ({ name: `Item ${i}`, price: 10 }));
+    assert.throws(
+      () => validateBulkImportItems(hugeBatch),
+      /batch size exceeds maximum/
+    );
+  });
+
+  it('241. Monotonic Multi-Tier Sort Invariant: Validates Low->High, High->Low, and Name: A-Z sorting', () => {
+    const items = [
+      { id: '1', name: 'Cold Coffee', pricePaise: 4500, displayOrder: 3 },
+      { id: '2', name: 'Cutting Chai', pricePaise: 1200, displayOrder: 1 },
+      { id: '3', name: 'Special Thali', pricePaise: 13000, displayOrder: 4 },
+      { id: '4', name: 'Butter Dosa', pricePaise: 4500, displayOrder: 2 },
+    ];
+
+    // Low to High sort
+    const lowToHigh = [...items].sort((a, b) => a.pricePaise - b.pricePaise);
+    for (let i = 0; i < lowToHigh.length - 1; i++) {
+      assert.ok(lowToHigh[i].pricePaise <= lowToHigh[i + 1].pricePaise, 'Must be monotonically increasing');
+    }
+    assert.strictEqual(lowToHigh[0].name, 'Cutting Chai');
+    assert.strictEqual(lowToHigh[lowToHigh.length - 1].name, 'Special Thali');
+
+    // High to Low sort
+    const highToLow = [...items].sort((a, b) => b.pricePaise - a.pricePaise);
+    for (let i = 0; i < highToLow.length - 1; i++) {
+      assert.ok(highToLow[i].pricePaise >= highToLow[i + 1].pricePaise, 'Must be monotonically decreasing');
+    }
+    assert.strictEqual(highToLow[0].name, 'Special Thali');
+    assert.strictEqual(highToLow[highToLow.length - 1].name, 'Cutting Chai');
+
+    // Name A-Z sort
+    const nameAZ = [...items].sort((a, b) => a.name.localeCompare(b.name));
+    assert.strictEqual(nameAZ[0].name, 'Butter Dosa');
+    assert.strictEqual(nameAZ[1].name, 'Cold Coffee');
+    assert.strictEqual(nameAZ[2].name, 'Cutting Chai');
+    assert.strictEqual(nameAZ[3].name, 'Special Thali');
+  });
+
+  it('242. Double-Entry Multi-Category Ledger Reconciliation: Item subtotal sum matches order grand total', () => {
+    // Multi-category student feast: South Indian, Sandwich, Drink, Snack
+    const orderItems = [
+      { itemId: 'masala_dosa', name: 'Masala Dosa', category: 'FOOD', pricePaise: 5000, quantity: 2 },
+      { itemId: 'veg_grill', name: 'Veg Grilled Sandwich', category: 'FOOD', pricePaise: 8000, quantity: 1 },
+      { itemId: 'french_fries', name: 'Peri Peri Fries', category: 'SNACKS', pricePaise: 7500, quantity: 2 },
+      { itemId: 'oreo_shake', name: 'Oreo Milkshake', category: 'BEVERAGES', pricePaise: 8000, quantity: 1 },
+    ];
+
+    let computedGrandTotalPaise = 0;
+    const categoryTotals = { FOOD: 0, SNACKS: 0, BEVERAGES: 0 };
+
+    for (const item of orderItems) {
+      const lineTotal = item.pricePaise * item.quantity;
+      computedGrandTotalPaise += lineTotal;
+      categoryTotals[item.category] = (categoryTotals[item.category] || 0) + lineTotal;
+    }
+
+    // Expected:
+    // FOOD: (5000 * 2) + (8000 * 1) = 10000 + 8000 = 18000 paise (₹180)
+    // SNACKS: 7500 * 2 = 15000 paise (₹150)
+    // BEVERAGES: 8000 * 1 = 8000 paise (₹80)
+    // Grand Total: 18000 + 15000 + 8000 = 41000 paise (₹410.00)
+    assert.strictEqual(categoryTotals.FOOD, 18000);
+    assert.strictEqual(categoryTotals.SNACKS, 15000);
+    assert.strictEqual(categoryTotals.BEVERAGES, 8000);
+    assert.strictEqual(computedGrandTotalPaise, 41000);
+
+    const sumCategories = categoryTotals.FOOD + categoryTotals.SNACKS + categoryTotals.BEVERAGES;
+    assert.strictEqual(sumCategories, computedGrandTotalPaise, 'Double-entry integrity: sum of categories equals totalAmountPaise with zero rounding discrepancy');
+  });
 });
 

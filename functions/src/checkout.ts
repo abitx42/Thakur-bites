@@ -168,6 +168,9 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         }
 
         const menuData = snap.data()!;
+        if (menuData.isArchived === true) {
+          throw new HttpsError('failed-precondition', `${menuData.name} has been discontinued/archived.`);
+        }
         const isAvail = menuData.available !== false;
         const type = menuData.type || 'instant';
         

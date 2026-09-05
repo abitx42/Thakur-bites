@@ -1,0 +1,86 @@
+parent_category,category,subcategory,item_name,price_inr,type,prep_minutes,confidence,source_board,verified
+FOOD,South Indian,Dosa,Plain Dosa,35,cooked,6,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Dosa,Butter Dosa,45,cooked,6,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Dosa,Masala Dosa,50,cooked,7,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Dosa,Mysore Masala Dosa,70,cooked,8,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Dosa,Cheese Masala Dosa,80,cooked,8,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Dosa,Sada Dosa,30,cooked,5,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Dosa,Rava Sada Dosa,50,cooked,8,MEDIUM,Main Menu Board A (glare),YES
+FOOD,South Indian,Dosa,Rava Masala Dosa,65,cooked,9,MEDIUM,Main Menu Board A,YES
+FOOD,South Indian,Dosa,Cheese Chilli Dosa,85,cooked,8,HIGH,Special Board,YES
+FOOD,South Indian,Uttappa,Plain Uttappa,45,cooked,7,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Uttappa,Onion Uttappa,55,cooked,8,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Uttappa,Tomato Onion Uttappa,60,cooked,8,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Uttappa,Cheese Onion Uttappa,75,cooked,8,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Quick,Idli Sambhar (2 pcs),40,cooked,3,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Quick,Medu Vada Sambhar (2 pcs),45,cooked,4,HIGH,Main Menu Board A,YES
+FOOD,South Indian,Quick,Idli Vada Combo,45,cooked,3,HIGH,Main Menu Board A,YES
+FOOD,Sandwiches,Plain,Veg Sandwich,35,instant,0,HIGH,Snack Counter B,YES
+FOOD,Sandwiches,Plain,Veg Cheese Sandwich,55,instant,0,HIGH,Snack Counter B,YES
+FOOD,Sandwiches,Toast,Veg Toast Sandwich,45,cooked,5,HIGH,Snack Counter B,YES
+FOOD,Sandwiches,Toast,Veg Cheese Toast Sandwich,60,cooked,6,HIGH,Snack Counter B,YES
+FOOD,Sandwiches,Toast,Bombay Masala Toast,60,cooked,6,HIGH,Snack Counter B,YES
+FOOD,Sandwiches,Toast,Cheese Masala Toast,75,cooked,6,HIGH,Snack Counter B,YES
+FOOD,Sandwiches,Grill,Veg Grilled Sandwich,65,cooked,7,HIGH,Snack Counter B,YES
+FOOD,Sandwiches,Grill,Cheese Grilled Sandwich,80,cooked,7,HIGH,Snack Counter B,YES
+FOOD,Sandwiches,Grill,Paneer Cheese Grill Sandwich,95,cooked,8,HIGH,Snack Counter B,YES
+FOOD,Chinese,Noodles,Veg Hakka Noodles,80,cooked,8,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Noodles,Schezwan Noodles,90,cooked,8,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Noodles,Hakka Chowmein,80,cooked,8,MEDIUM,Chinese Counter C (text partial),YES
+FOOD,Chinese,Noodles,Veg Singapore Noodles,95,cooked,9,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Rice,Veg Fried Rice,80,cooked,8,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Rice,Schezwan Fried Rice,90,cooked,8,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Rice,Triple Schezwan Fried Rice,120,cooked,10,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Rice,Hong Kong Fried Rice,95,cooked,9,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Dry/Gravy,Veg Manchurian Dry,85,cooked,7,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Dry/Gravy,Veg Manchurian Gravy,90,cooked,8,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Dry/Gravy,Paneer Chilli Dry,110,cooked,8,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Dry/Gravy,Veg Crispy,85,cooked,7,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Snacks,Veg Spring Rolls (6 pcs),85,cooked,6,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Soup,Manchow Soup,50,cooked,5,HIGH,Chinese Counter C,YES
+FOOD,Chinese,Soup,Hot & Sour Soup,50,cooked,5,HIGH,Chinese Counter C,YES
+FOOD,Lunch & Meals,Thali,Special Canteen Thali,120,cooked,8,HIGH,Meals Board D,YES
+FOOD,Lunch & Meals,Thali,Executive Mini Thali,80,cooked,6,HIGH,Meals Board D,YES
+FOOD,Lunch & Meals,Plates,Dal Khichdi Tadka,80,cooked,7,HIGH,Meals Board D,YES
+FOOD,Lunch & Meals,Plates,Dal Rice Combo,60,cooked,4,HIGH,Meals Board D,YES
+FOOD,Lunch & Meals,Plates,Chole Bhature (2 pcs),90,cooked,8,HIGH,Meals Board D,YES
+FOOD,Lunch & Meals,Plates,Puri Bhaji (4 puris),60,cooked,7,HIGH,Meals Board D,YES
+FOOD,Lunch & Meals,Pav Bhaji,Special Pav Bhaji,70,cooked,6,HIGH,Meals Board D,YES
+FOOD,Lunch & Meals,Pav Bhaji,Cheese Pav Bhaji,90,cooked,6,HIGH,Meals Board D,YES
+FOOD,Lunch & Meals,Pav Bhaji,Extra Butter Pav (Pair),15,cooked,2,HIGH,Meals Board D,YES
+FOOD,Lunch & Meals,Plates,Roti-Bhaji (3 rotis + sabzi),40,cooked,5,HIGH,Meals Board D,YES
+FOOD,Lunch & Meals,Plates,Curd Rice,55,cooked,4,HIGH,Meals Board D,YES
+SNACKS,Snacks & Quick Bites,Pav Items,Punjabi Samosa (2 pcs),30,instant,0,HIGH,Front Showcase E,YES
+SNACKS,Snacks & Quick Bites,Pav Items,Samosa Pav (Single),18,instant,0,HIGH,Front Showcase E,YES
+SNACKS,Snacks & Quick Bites,Pav Items,Vada Pav (Single),18,instant,0,HIGH,Front Showcase E,YES
+SNACKS,Snacks & Quick Bites,Pav Items,Cheese Vada Pav,30,cooked,3,HIGH,Front Showcase E,YES
+SNACKS,Snacks & Quick Bites,Fries,Classic Salted French Fries,60,cooked,5,HIGH,Front Showcase E,YES
+SNACKS,Snacks & Quick Bites,Fries,Peri Peri French Fries,70,cooked,5,HIGH,Front Showcase E,YES
+SNACKS,Snacks & Quick Bites,Fries,Cheese Loaded Fries,90,cooked,6,HIGH,Front Showcase E,YES
+SNACKS,Snacks & Quick Bites,Quick,Veg Cutlet (2 pcs),40,cooked,5,HIGH,Front Showcase E,YES
+SNACKS,Snacks & Quick Bites,Quick,Bread Butter,25,instant,0,HIGH,Front Showcase E,YES
+SNACKS,Snacks & Quick Bites,Quick,Bread Butter Cheese,40,instant,0,HIGH,Front Showcase E,YES
+SNACKS,Snacks & Quick Bites,Packaged,Balaji Wafers / Chips,15,instant,0,HIGH,Store Display F,YES
+SNACKS,Snacks & Quick Bites,Packaged,Dairy Milk Chocolate,15,instant,0,HIGH,Store Display F,YES
+BEVERAGES,Tea & Coffee,Tea,Cutting Chai,12,cooked,3,HIGH,Beverage Counter G,YES
+BEVERAGES,Tea & Coffee,Tea,Special Masala Chai,18,cooked,4,HIGH,Beverage Counter G,YES
+BEVERAGES,Tea & Coffee,Tea,Ginger Lemon Green Tea,20,cooked,4,HIGH,Beverage Counter G,YES
+BEVERAGES,Tea & Coffee,Coffee,South Indian Filter Coffee,25,cooked,4,HIGH,Beverage Counter G,YES
+BEVERAGES,Tea & Coffee,Coffee,Nescafe Hot Coffee,30,cooked,4,HIGH,Beverage Counter G,YES
+BEVERAGES,Tea & Coffee,Coffee,Cold Coffee Thick Shake,50,instant,0,HIGH,Beverage Counter G,YES
+BEVERAGES,Tea & Coffee,Coffee,Cold Coffee with Vanilla Scoop,65,instant,0,HIGH,Beverage Counter G,YES
+BEVERAGES,Cold Drinks,Bottles,Thums Up / Coke / Sprite (250ml),20,instant,0,HIGH,Beverage Cooler H,YES
+BEVERAGES,Cold Drinks,Bottles,Amul Masala Buttermilk (200ml),15,instant,0,HIGH,Beverage Cooler H,YES
+BEVERAGES,Cold Drinks,Soda,Fresh Lime Soda (Sweet/Salt),30,cooked,3,HIGH,Beverage Counter G,YES
+BEVERAGES,Cold Drinks,Soda,Fresh Lime Water,20,cooked,3,HIGH,Beverage Counter G,YES
+BEVERAGES,Cold Drinks,Bottles,Bisleri Mineral Water (500ml),10,instant,0,HIGH,Beverage Cooler H,YES
+BEVERAGES,Juices,Fresh,Fresh Mosambi Juice,50,cooked,4,HIGH,Juice Stall I,YES
+BEVERAGES,Juices,Fresh,Fresh Orange Juice,50,cooked,4,HIGH,Juice Stall I,YES
+BEVERAGES,Juices,Fresh,Fresh Watermelon Juice,50,cooked,4,HIGH,Juice Stall I,YES
+BEVERAGES,Juices,Fresh,Fresh Pineapple Juice,50,cooked,4,HIGH,Juice Stall I,YES
+BEVERAGES,Juices,Fresh,Ganga Jamuna Juice (Mixed),60,cooked,5,HIGH,Juice Stall I,YES
+BEVERAGES,Milkshakes,Thick Shakes,Chocolate Shake,60,instant,0,HIGH,Juice Stall I,YES
+BEVERAGES,Milkshakes,Thick Shakes,Oreo Thick Shake,70,instant,0,HIGH,Juice Stall I,YES
+BEVERAGES,Milkshakes,Thick Shakes,KitKat Shake,75,instant,0,HIGH,Juice Stall I,YES
+BEVERAGES,Milkshakes,Thick Shakes,Alphonso Mango Shake,65,instant,0,HIGH,Juice Stall I,YES
+BEVERAGES,Milkshakes,Thick Shakes,Kesar Pista Milk,50,instant,0,HIGH,Juice Stall I,YES
