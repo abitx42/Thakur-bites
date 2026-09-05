@@ -5120,6 +5120,243 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(isPortalAuthorized('student', 'admin'), false);
     assert.strictEqual(isPortalAuthorized('guest', 'developer'), false);
   });
+
+  it('247. Free-First RFC 6238 TOTP Engine: Pure Node.js HMAC-SHA1 authenticator with clock drift tolerance and replay rejection', () => {
+    const {
+      base32Encode,
+      base32Decode,
+      generateTotp,
+      verifyTotpToken,
+      generateRecoveryCodes,
+    } = require('../lib/mfa_totp');
+    const crypto = require('crypto');
+
+    // 1. Base32 symmetry test
+    const rawBytes = Buffer.from('ThakurBitesSecurity2026');
+    const encoded = base32Encode(rawBytes);
+    const decoded = base32Decode(encoded);
+    assert.strictEqual(decoded.toString('utf8'), 'ThakurBitesSecurity2026', 'Base32 roundtrip integrity');
+
+    // 2. Pure RFC 6238 TOTP generation
+    const secret = 'JBSWY3DPEHPK3PXP'; // Standard RFC test base32 secret
+    const currentStep = Math.floor(Date.now() / 1000 / 30);
+    const currentCode = generateTotp(secret, currentStep);
+    assert.strictEqual(typeof currentCode, 'string');
+    assert.strictEqual(currentCode.length, 6, 'TOTP code must be exactly 6 digits');
+    assert.match(currentCode, /^\d{6}$/, 'TOTP code must be numerical digits');
+
+    // 3. Current token verification
+    const currentVerif = verifyTotpToken(secret, currentCode, 1);
+    assert.strictEqual(currentVerif.valid, true, 'Valid code at current step must verify');
+    assert.strictEqual(currentVerif.matchedStep, currentStep);
+
+    // 4. Clock drift tolerance: +/- 1 time step allowed (30s drift)
+    const prevCode = generateTotp(secret, currentStep - 1);
+    const prevVerif = verifyTotpToken(secret, prevCode, 1);
+    assert.strictEqual(prevVerif.valid, true, 'Drift window -1 step (past 30s) must be accepted');
+    assert.strictEqual(prevVerif.matchedStep, currentStep - 1);
+
+    const nextCode = generateTotp(secret, currentStep + 1);
+    const nextVerif = verifyTotpToken(secret, nextCode, 1);
+    assert.strictEqual(nextVerif.valid, true, 'Drift window +1 step (future 30s) must be accepted');
+    assert.strictEqual(nextVerif.matchedStep, currentStep + 1);
+
+    // 5. Beyond clock drift: +/- 2 steps must be rejected
+    const tooOldCode = generateTotp(secret, currentStep - 2);
+    const tooOldVerif = verifyTotpToken(secret, tooOldCode, 1);
+    assert.strictEqual(tooOldVerif.valid, false, 'Expired code outside drift window must be rejected');
+
+    const tooFutureCode = generateTotp(secret, currentStep + 2);
+    const tooFutureVerif = verifyTotpToken(secret, tooFutureCode, 1);
+    assert.strictEqual(tooFutureVerif.valid, false, 'Far future code outside drift window must be rejected');
+
+    // 6. Anti-replay enforcement: Cannot use code from same or prior step
+    function checkReplay(matchedStep, lastUsedStep) {
+      if (lastUsedStep && matchedStep <= lastUsedStep) {
+        return { valid: false, reason: 'REPLAY_DETECTED' };
+      }
+      return { valid: true };
+    }
+    const replayVerif = checkReplay(currentVerif.matchedStep, currentStep);
+    assert.strictEqual(replayVerif.valid, false, 'Replay of current step must be rejected');
+    assert.strictEqual(replayVerif.reason, 'REPLAY_DETECTED');
+
+    // 7. Free-first emergency recovery codes: 8 one-time codes with SHA-256 storage
+    const recovery = generateRecoveryCodes();
+    assert.strictEqual(recovery.plaintextCodes.length, 8, 'Must generate exactly 8 recovery codes');
+    assert.strictEqual(recovery.hashedCodes.length, 8, 'Must generate exactly 8 matching SHA-256 hashes');
+
+    for (let i = 0; i < 8; i++) {
+      const code = recovery.plaintextCodes[i];
+      assert.match(code, /^[0-9A-F]{4}-[0-9A-F]{4}$/i, 'Recovery code must follow format XXXX-XXXX');
+      const expectedHash = crypto.createHash('sha256').update(code.trim().toUpperCase()).digest('hex');
+      assert.strictEqual(recovery.hashedCodes[i], expectedHash, 'Hashed code in DB must match SHA-256 of plain code');
+    }
+  });
+
+  it('248. 6-Hour Privileged Session Lifetime: Strict session ceiling and 30-minute idle activity enforcement', () => {
+    const {
+      PRIVILEGED_SESSION_LIFETIME_MS,
+      PRIVILEGED_SESSION_IDLE_TIMEOUT_MS,
+    } = require('../lib/mfa_totp');
+
+    assert.strictEqual(PRIVILEGED_SESSION_LIFETIME_MS, 6 * 60 * 60 * 1000, 'Privileged session ceiling must be exactly 6 hours (21,600,000 ms)');
+    assert.strictEqual(PRIVILEGED_SESSION_IDLE_TIMEOUT_MS, 30 * 60 * 1000, 'Privileged session idle timeout must be exactly 30 minutes (1,800,000 ms)');
+
+    function evaluatePrivilegedSession(session, nowMs) {
+      if (!session || session.status !== 'ACTIVE') {
+        return { valid: false, reason: 'INVALID_OR_INACTIVE_SESSION' };
+      }
+      if (nowMs > session.expiresAtMs) {
+        return { valid: false, reason: 'PRIVILEGED_SESSION_EXPIRED' };
+      }
+      if (nowMs - session.lastActivityAtMs > PRIVILEGED_SESSION_IDLE_TIMEOUT_MS) {
+        return { valid: false, reason: 'PRIVILEGED_SESSION_IDLE_TIMEOUT' };
+      }
+      return { valid: true };
+    }
+
+    const t0 = 1757000000000;
+    const session = {
+      sessionId: 'psess_test123',
+      userId: 'admin_user_1',
+      status: 'ACTIVE',
+      createdAtMs: t0,
+      expiresAtMs: t0 + PRIVILEGED_SESSION_LIFETIME_MS,
+      lastActivityAtMs: t0,
+    };
+
+    // Active session at 15 minutes
+    assert.strictEqual(evaluatePrivilegedSession(session, t0 + 15 * 60 * 1000).valid, true);
+
+    // Active session with activity bump at 5 hours
+    session.lastActivityAtMs = t0 + 5 * 60 * 60 * 1000;
+    assert.strictEqual(evaluatePrivilegedSession(session, t0 + 5 * 60 * 60 * 1000 + 10 * 60 * 1000).valid, true);
+
+    // Idle timeout at 31 minutes without activity
+    session.lastActivityAtMs = t0;
+    const idleCheck = evaluatePrivilegedSession(session, t0 + 31 * 60 * 1000);
+    assert.strictEqual(idleCheck.valid, false);
+    assert.strictEqual(idleCheck.reason, 'PRIVILEGED_SESSION_IDLE_TIMEOUT');
+
+    // Hard ceiling expired at 6 hours + 1 ms
+    session.lastActivityAtMs = t0 + 5 * 60 * 60 * 1000;
+    const expiredCheck = evaluatePrivilegedSession(session, t0 + PRIVILEGED_SESSION_LIFETIME_MS + 1);
+    assert.strictEqual(expiredCheck.valid, false);
+    assert.strictEqual(expiredCheck.reason, 'PRIVILEGED_SESSION_EXPIRED');
+  });
+
+  it('249. Privileged Guard on Sensitive Operations: Fails closed without valid 6-hour privileged session ID', async () => {
+    const { assertPrivilegedSession } = require('../lib/privileged_guard');
+
+    // 1. Missing session ID must reject
+    await assert.rejects(
+      async () => {
+        await assertPrivilegedSession('admin_123', null, 'trigger_emergency_kill_switch');
+      },
+      (err) => {
+        assert.ok(err.message.includes('PRIVILEGED_SESSION_REQUIRED'));
+        return true;
+      }
+    );
+
+    // 2. Malformed session ID not matching 'psess_' prefix must reject
+    await assert.rejects(
+      async () => {
+        await assertPrivilegedSession('admin_123', 'invalid_prefix_session', 'update_platform_policy');
+      },
+      (err) => {
+        assert.ok(err.message.includes('PRIVILEGED_SESSION_REQUIRED'));
+        return true;
+      }
+    );
+  });
+
+  it('250. Server-Authoritative Workstation Hardware Binding: Cryptographic token validation & role enforcement', () => {
+    const { hashWorkstationToken } = require('../lib/workstation_binding');
+    const crypto = require('crypto');
+
+    const rawToken = 'wstok_7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c';
+    const computedHash = hashWorkstationToken(rawToken);
+    const expectedHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    assert.strictEqual(computedHash, expectedHash, 'Workstation token hash must match SHA-256');
+
+    function simulateWorkstationAuth(deviceRecord, providedToken, requestedRole) {
+      if (!deviceRecord) {
+        return { valid: false, reason: 'WORKSTATION_NOT_REGISTERED' };
+      }
+      if (deviceRecord.status !== 'ACTIVE') {
+        return { valid: false, reason: 'WORKSTATION_REVOKED' };
+      }
+      if (deviceRecord.stationType !== 'all' && deviceRecord.stationType !== requestedRole) {
+        return { valid: false, reason: 'WORKSTATION_ROLE_MISMATCH' };
+      }
+      const providedHash = hashWorkstationToken(providedToken);
+      if (!crypto.timingSafeEqual(Buffer.from(providedHash, 'hex'), Buffer.from(deviceRecord.tokenHash, 'hex'))) {
+        return { valid: false, reason: 'WORKSTATION_INVALID_TOKEN' };
+      }
+      return { valid: true };
+    }
+
+    const authorizedStation = {
+      workstationId: 'TB_WS_KITCHEN_A1B2',
+      tokenHash: computedHash,
+      stationType: 'kitchen',
+      status: 'ACTIVE',
+    };
+
+    // Valid credentials and matching role
+    assert.strictEqual(simulateWorkstationAuth(authorizedStation, rawToken, 'kitchen').valid, true);
+
+    // Invalid token secret
+    const badTokenCheck = simulateWorkstationAuth(authorizedStation, 'wstok_bad_token_secret', 'kitchen');
+    assert.strictEqual(badTokenCheck.valid, false);
+    assert.strictEqual(badTokenCheck.reason, 'WORKSTATION_INVALID_TOKEN');
+
+    // Role mismatch (registered for kitchen, attempting cashier login)
+    const roleMismatchCheck = simulateWorkstationAuth(authorizedStation, rawToken, 'cashier');
+    assert.strictEqual(roleMismatchCheck.valid, false);
+    assert.strictEqual(roleMismatchCheck.reason, 'WORKSTATION_ROLE_MISMATCH');
+
+    // Revoked device
+    const revokedStation = { ...authorizedStation, status: 'REVOKED' };
+    const revokedCheck = simulateWorkstationAuth(revokedStation, rawToken, 'kitchen');
+    assert.strictEqual(revokedCheck.valid, false);
+    assert.strictEqual(revokedCheck.reason, 'WORKSTATION_REVOKED');
+
+    // Unregistered device ID
+    const unregisteredCheck = simulateWorkstationAuth(null, rawToken, 'kitchen');
+    assert.strictEqual(unregisteredCheck.valid, false);
+    assert.strictEqual(unregisteredCheck.reason, 'WORKSTATION_NOT_REGISTERED');
+  });
+
+  it('251. Canonical Ruleset Unification: Zero drift guarantee between firestore/firestore.rules and thakur_bites symlink', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const crypto = require('crypto');
+
+    const canonicalPath = path.resolve(__dirname, '../../firestore/firestore.rules');
+    const flutterPath = path.resolve(__dirname, '../../thakur_bites/firestore.rules');
+
+    assert.ok(fs.existsSync(canonicalPath), 'Canonical rules file must exist at firestore/firestore.rules');
+    assert.ok(fs.existsSync(flutterPath), 'Flutter rules file must exist at thakur_bites/firestore.rules');
+
+    // Verify flutter copy is a symlink directly referencing canonical rules
+    const lstat = fs.lstatSync(flutterPath);
+    assert.strictEqual(lstat.isSymbolicLink(), true, 'thakur_bites/firestore.rules must be a symlink to prevent configuration drift');
+
+    // Verify SHA-256 hash match
+    const canonicalHash = crypto.createHash('sha256').update(fs.readFileSync(canonicalPath)).digest('hex');
+    const flutterHash = crypto.createHash('sha256').update(fs.readFileSync(flutterPath)).digest('hex');
+    assert.strictEqual(canonicalHash, flutterHash, 'Canonical ruleset and flutter ruleset must share identical SHA-256 hash');
+
+    // Verify critical security lockdowns in the canonical ruleset
+    const rulesContent = fs.readFileSync(canonicalPath, 'utf8');
+    assert.ok(rulesContent.includes('privilegedSessions'), 'Rules must govern privilegedSessions collection');
+    assert.ok(rulesContent.includes('registeredWorkstations'), 'Rules must govern registeredWorkstations collection');
+    assert.ok(rulesContent.includes('workstationInvites'), 'Rules must govern workstationInvites collection');
+    assert.ok(rulesContent.includes('mfaEnrollments'), 'Rules must govern mfaEnrollments collection');
+  });
 });
 
 

@@ -10,6 +10,7 @@ import {
 } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
 import { assertCapability } from './authorization_policy';
+import { verifyWorkstationCredentials } from './workstation_binding';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -30,6 +31,7 @@ export interface VerifyShiftPinRequest {
   role: 'kitchen' | 'pickup' | 'cashier';
   deviceId: string;
   deviceName?: string;
+  workstationToken?: string;
 }
 
 export interface RevokeShiftPinRequest {
@@ -170,7 +172,7 @@ export const generateShiftPin = onCall<GenerateShiftPinRequest>(async (request) 
 export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
   enforceAppCheck(request);
 
-  const { pin, role, deviceId } = request.data || {};
+  const { pin, role, deviceId, workstationToken } = request.data || {};
 
   if (!pin || typeof pin !== 'string' || pin.trim().length !== 6) {
     throw new HttpsError('invalid-argument', 'Valid 6-digit shift PIN is required.');
@@ -183,6 +185,20 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
   const cleanDeviceId = String(deviceId || 'unknown_device').trim().slice(0, 100);
   if (cleanDeviceId.length < 4) {
     throw new HttpsError('invalid-argument', 'Valid device identifier is required for workstation binding.');
+  }
+
+  // Authoritative Workstation Hardware Binding: Verify registered workstation token
+  if (cleanDeviceId.startsWith('TB_WS_') || workstationToken) {
+    const wsResult = await verifyWorkstationCredentials(cleanDeviceId, String(workstationToken || ''), role);
+    if (!wsResult.valid) {
+      await logSecurityEvent({
+        eventType: 'UNREGISTERED_WORKSTATION_BLOCKED',
+        severity: 'HIGH',
+        actorUid: cleanDeviceId,
+        details: { role, reason: wsResult.reason },
+      });
+      throw new HttpsError('permission-denied', wsResult.reason || 'Workstation hardware authorization failed.');
+    }
   }
 
   const hashedDeviceId = crypto.createHash('sha256').update(`DEVICE_${cleanDeviceId}`).digest('hex').slice(0, 16);

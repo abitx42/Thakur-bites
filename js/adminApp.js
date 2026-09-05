@@ -1,9 +1,11 @@
 // Thakur Bites — Dedicated Business Administration Portal (Menu, Stock, Roles & Analytics)
-import { staffAuth, renderPinPadModal } from './auth.js?v=8';
+import { staffAuth, renderPinPadModal, getPrivilegedSession } from './auth.js?v=8';
 import { renderAdminView } from './views/adminView.js?v=5';
 import { renderAnalyticsView } from './views/analyticsView.js?v=5';
+import { renderWorkstationView } from './views/workstationView.js?v=1';
+import { renderPrivilegedAuthModal } from './views/mfaModal.js?v=1';
 
-let currentAdminView = 'menu'; // 'menu' | 'analytics'
+let currentAdminView = 'menu'; // 'menu' | 'analytics' | 'workstations'
 
 function initAdminPortal() {
   const root = document.getElementById('app-root');
@@ -53,6 +55,16 @@ function initAdminPortal() {
     }
 
     const isDeveloper = ['developer', 'security_admin', 'system'].includes(currentRole);
+    const privSession = getPrivilegedSession();
+    let privTimeLeftStr = '';
+    if (privSession) {
+      const msLeft = new Date(privSession.expiresAt).getTime() - Date.now();
+      if (msLeft > 0) {
+        const hrs = Math.floor(msLeft / 3600000);
+        const mins = Math.floor((msLeft % 3600000) / 60000);
+        privTimeLeftStr = `${hrs}h ${mins}m`;
+      }
+    }
 
     root.innerHTML = `
       <!-- Admin Portal Header -->
@@ -76,6 +88,15 @@ function initAdminPortal() {
                 <span style="background: #E2E8F0; color: #1E293B; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; text-transform: uppercase;">
                   ROLE: ${currentRole}
                 </span>
+                ${privSession && privTimeLeftStr ? `
+                  <span style="background: #DCFCE7; color: #166534; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 800;">
+                    ⏳ 6-HR PRIVILEGED (${privTimeLeftStr})
+                  </span>
+                ` : `
+                  <button id="activate-priv-session-btn" style="background: #DC2626; color: #FFF; border: none; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer;">
+                    🔐 MFA ACTIVATE (6-HR)
+                  </button>
+                `}
               </div>
             </div>
           </div>
@@ -87,6 +108,9 @@ function initAdminPortal() {
             </button>
             <button class="admin-nav-btn ${currentAdminView === 'analytics' ? 'active' : ''}" data-view="analytics">
               📊 Analytics & Financials
+            </button>
+            <button class="admin-nav-btn ${currentAdminView === 'workstations' ? 'active' : ''}" data-view="workstations">
+              🖥️ Terminals & Workstations
             </button>
           </nav>
 
@@ -109,6 +133,9 @@ function initAdminPortal() {
 
       <!-- Main Admin Target -->
       <main id="admin-view-target" style="min-height: calc(100vh - 80px); background: var(--bg-primary);"></main>
+
+      <!-- Modal Container -->
+      <div id="admin-modal-container"></div>
     `;
 
     root.querySelectorAll('.admin-nav-btn').forEach(btn => {
@@ -116,6 +143,15 @@ function initAdminPortal() {
         currentAdminView = btn.getAttribute('data-view');
         render();
       });
+    });
+
+    root.querySelector('#activate-priv-session-btn')?.addEventListener('click', () => {
+      const modalCont = root.querySelector('#admin-modal-container');
+      if (modalCont) {
+        renderPrivilegedAuthModal(modalCont, {
+          onSuccess: () => render(),
+        });
+      }
     });
 
     root.querySelector('#signout-admin-btn')?.addEventListener('click', async () => {
@@ -130,6 +166,8 @@ function initAdminPortal() {
       renderAdminView(viewTarget);
     } else if (currentAdminView === 'analytics') {
       renderAnalyticsView(viewTarget);
+    } else if (currentAdminView === 'workstations') {
+      renderWorkstationView(viewTarget);
     }
   }
 

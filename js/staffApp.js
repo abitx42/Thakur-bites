@@ -1,5 +1,5 @@
 // Thakur Bites — Dedicated Staff Operations Workstation (Kitchen KDS & Pickup Counter)
-import { staffAuth, renderPinPadModal } from './auth.js?v=8';
+import { staffAuth, renderPinPadModal, getRegisteredWorkstation } from './auth.js?v=8';
 import { renderKitchenView } from './views/kitchenView.js?v=5';
 import { renderPickupView } from './views/pickupView.js?v=5';
 
@@ -50,6 +50,7 @@ function initStaffWorkstation() {
     }
 
     const isElevatedRole = ['admin', 'manager', 'developer', 'security_admin'].includes(currentRole.toLowerCase());
+    const regWs = getRegisteredWorkstation();
 
     root.innerHTML = `
       <!-- Staff Workstation Header -->
@@ -67,12 +68,21 @@ function initStaffWorkstation() {
               <div style="font-family: var(--font-display); font-size: 1.5rem; letter-spacing: 0.05em; line-height: 1; color: var(--ink-primary);">
                 THAKUR BITES · STAFF WORKSTATION
               </div>
-              <div style="font-family: var(--font-mono); font-size: 0.75rem; color: #16A34A; font-weight: 700; display: flex; align-items: center; gap: 6px; margin-top: 2px;">
+              <div style="font-family: var(--font-mono); font-size: 0.75rem; color: #16A34A; font-weight: 700; display: flex; align-items: center; gap: 6px; margin-top: 2px; flex-wrap: wrap;">
                 <span style="display: inline-block; width: 7px; height: 7px; background: #22C55E; border-radius: 50%;"></span>
                 ONLINE · LIVE FIRESTORE
                 <span style="background: #DCEACB; color: #2C4A1E; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; text-transform: uppercase;">
                   STATION ROLE: ${currentRole}
                 </span>
+                ${regWs ? `
+                  <span style="background: #E0E7FF; color: #3730A3; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 700;">
+                    🖥️ ${regWs.name || regWs.id}
+                  </span>
+                ` : `
+                  <button id="staff-enroll-hardware-btn" style="background: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer;">
+                    ⚠️ UNREGISTERED TERMINAL (ENROLL)
+                  </button>
+                `}
               </div>
             </div>
           </div>
@@ -106,6 +116,17 @@ function initStaffWorkstation() {
 
       <!-- Main Station Target -->
       <main id="staff-view-target" style="min-height: calc(100vh - 80px); background: var(--bg-primary);"></main>
+
+      <!-- Modal Container -->
+      <div id="staff-modal-container"></div>
+    `;
+
+    root.querySelector('#staff-enroll-hardware-btn')?.addEventListener('click', () => {
+      const modalCont = root.querySelector('#staff-modal-container');
+      if (modalCont) {
+        renderPinPadModal(modalCont, () => render());
+      }
+    });
     `;
 
     // Attach Station View Switcher Listeners

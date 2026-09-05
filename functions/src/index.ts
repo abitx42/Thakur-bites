@@ -60,4 +60,16 @@ export {
   getSecurityRateLimits,
   updateSecurityRateLimits,
 } from './rate_limiter';
+export {
+  enrollMfaTotp,
+  verifyAndEnableMfaTotp,
+  createPrivilegedSession,
+} from './mfa_totp';
+export {
+  createWorkstationInvite,
+  enrollWorkstation,
+  listRegisteredWorkstations,
+  revokeWorkstation,
+} from './workstation_binding';
+
 

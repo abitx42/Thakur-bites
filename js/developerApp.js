@@ -1,6 +1,7 @@
 // Thakur Bites — Dedicated Developer Command Cockpit & Engineering Security Center
-import { staffAuth, renderPinPadModal } from './auth.js?v=8';
+import { staffAuth, renderPinPadModal, getPrivilegedSession } from './auth.js?v=8';
 import { renderSecurityCenterView } from './views/securityCenterView.js?v=5';
+import { renderPrivilegedAuthModal } from './views/mfaModal.js?v=1';
 
 function initDeveloperCockpit() {
   const root = document.getElementById('app-root');
@@ -49,6 +50,17 @@ function initDeveloperCockpit() {
       return;
     }
 
+    const privSession = getPrivilegedSession();
+    let privTimeLeftStr = '';
+    if (privSession) {
+      const msLeft = new Date(privSession.expiresAt).getTime() - Date.now();
+      if (msLeft > 0) {
+        const hrs = Math.floor(msLeft / 3600000);
+        const mins = Math.floor((msLeft % 3600000) / 60000);
+        privTimeLeftStr = `${hrs}h ${mins}m`;
+      }
+    }
+
     root.innerHTML = `
       <!-- Developer Portal Header -->
       <header class="app-header" style="background: #09090B; border-bottom: 2px solid #27272A; padding: 0.8rem 1.2rem; position: sticky; top: 0; z-index: 100; color: #FFF;">
@@ -65,12 +77,21 @@ function initDeveloperCockpit() {
               <div style="font-family: var(--font-display); font-size: 1.5rem; letter-spacing: 0.05em; line-height: 1; color: #FFF;">
                 THAKUR BITES · DEVELOPER COCKPIT
               </div>
-              <div style="font-family: var(--font-mono); font-size: 0.75rem; color: #4ADE80; font-weight: 700; display: flex; align-items: center; gap: 6px; margin-top: 2px;">
+              <div style="font-family: var(--font-mono); font-size: 0.75rem; color: #4ADE80; font-weight: 700; display: flex; align-items: center; gap: 6px; margin-top: 2px; flex-wrap: wrap;">
                 <span style="display: inline-block; width: 7px; height: 7px; background: #22C55E; border-radius: 50%;"></span>
                 SENTINEL TELEMETRY · PRODUCTION RUNTIME
                 <span style="background: #27272A; color: #CBD5E1; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; text-transform: uppercase;">
                   CLEARANCE: ${currentRole}
                 </span>
+                ${privSession && privTimeLeftStr ? `
+                  <span style="background: #064E3B; color: #34D399; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 800; border: 1px solid #059669;">
+                    ⏳ 6-HR PRIVILEGED (${privTimeLeftStr})
+                  </span>
+                ` : `
+                  <button id="activate-dev-priv-session-btn" style="background: #DC2626; color: #FFF; border: none; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer;">
+                    🔐 MFA ACTIVATE (6-HR)
+                  </button>
+                `}
               </div>
             </div>
           </div>
@@ -95,7 +116,19 @@ function initDeveloperCockpit() {
 
       <!-- Main Developer Cockpit Target -->
       <main id="dev-view-target" style="min-height: calc(100vh - 80px); background: #0F172A; color: #FFF;"></main>
+
+      <!-- Modal Container -->
+      <div id="dev-modal-container"></div>
     `;
+
+    root.querySelector('#activate-dev-priv-session-btn')?.addEventListener('click', () => {
+      const modalCont = root.querySelector('#dev-modal-container');
+      if (modalCont) {
+        renderPrivilegedAuthModal(modalCont, {
+          onSuccess: () => render(),
+        });
+      }
+    });
 
     root.querySelector('#signout-dev-btn')?.addEventListener('click', async () => {
       await staffAuth.logout();

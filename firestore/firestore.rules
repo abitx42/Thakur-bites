@@ -176,6 +176,26 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ─── Privileged Sessions & MFA (Zero-Trust Platform 2.0) ────
+    match /privilegedSessions/{sessionId} {
+      allow read, write: if false; // Cloud Functions only
+    }
+
+    match /mfaEnrollments/{userId} {
+      allow read: if isOwner(userId) || isDeveloper();
+      allow write: if false; // Cloud Functions only
+    }
+
+    // ─── Registered Workstations & Hardware Binding ─────────────
+    match /registeredWorkstations/{workstationId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Cloud Functions only
+    }
+
+    match /workstationInvites/{inviteId} {
+      allow read, write: if false; // Cloud Functions only
+    }
+
     // ─── Global System Config & Operational Kill Switch ─────────
     // Private System Configuration (Preserves internal staff UID and private incident reasons)
     match /systemConfig/{configId} {

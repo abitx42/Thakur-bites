@@ -137,6 +137,8 @@ export function isAdministrativeRole(role: UserRole | string | undefined | null)
   return role === 'admin' || role === 'developer' || role === 'manager' || role === 'security_admin' || role === 'system';
 }
 
+export const isManagerOrAdmin = isAdministrativeRole;
+
 /**
  * Canonical Developer Role helper (Developer or System)
  */
