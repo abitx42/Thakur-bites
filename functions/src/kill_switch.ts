@@ -98,14 +98,14 @@ export const setSystemOperationalMode = onCall<{ mode: SystemOperationalMode; re
   const currentSnap = await db.collection('systemConfig').doc('global').get();
   const currentMode = (currentSnap.data()?.mode as SystemOperationalMode) || 'NORMAL';
 
-  if (mode === 'EMERGENCY_HALT' && !hasCapability(actorRole, 'emergency_freeze')) {
+  if (mode === 'EMERGENCY_HALT' && !hasCapability(actorRole, 'manage_kill_switch')) {
     throw new HttpsError(
       'permission-denied',
       'Permission denied. Only Security Administrators and Admins are authorized to initiate an EMERGENCY_HALT.'
     );
   }
 
-  if (mode === 'NORMAL' && (currentMode === 'FINANCIAL_FROZEN' || currentMode === 'EMERGENCY_HALT') && !hasCapability(actorRole, 'emergency_freeze')) {
+  if (mode === 'NORMAL' && (currentMode === 'FINANCIAL_FROZEN' || currentMode === 'EMERGENCY_HALT') && !hasCapability(actorRole, 'manage_kill_switch')) {
     throw new HttpsError(
       'permission-denied',
       'Permission denied. Restoring NORMAL operations from FINANCIAL_FROZEN or EMERGENCY_HALT requires Security Administrator or Admin authorization.'

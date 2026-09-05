@@ -531,6 +531,7 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
   let totalRevenuePaise = 0;
   let onlinePaymentsCapturedPaise = 0;
   let counterCashEstimatedPaise = 0;
+  let cancelledOrdersCount = 0;
   const auditNotes: string[] = [];
   let discrepanciesCount = 0;
 
@@ -545,15 +546,28 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
   ordersSnap.forEach(doc => {
     const order = doc.data();
     const orderPaise = order.totalAmountPaise !== undefined ? Number(order.totalAmountPaise) : Math.round(Number(order.totalAmount || 0) * 100);
-    totalRevenuePaise += orderPaise;
 
-    if (order.paymentStatus === 'paid' || order.paymentStatus === 'captured') {
-      if (!capturedPaymentOrderIds.has(doc.id) && order.status !== 'cancelled') {
+    // Cancelled orders do NOT contribute to sales revenue
+    if (order.status === 'cancelled') {
+      cancelledOrdersCount++;
+      return;
+    }
+
+    const isPaid = order.paymentStatus === 'paid' || order.paymentStatus === 'captured';
+
+    if (isPaid) {
+      totalRevenuePaise += orderPaise;
+      if (order.paymentMethod === 'counter_cash') {
+        counterCashEstimatedPaise += orderPaise;
+      }
+      if (!capturedPaymentOrderIds.has(doc.id)) {
         discrepanciesCount++;
         auditNotes.push(`Order ${doc.id} marked paid but missing verified payment ledger record.`);
       }
     } else {
-      counterCashEstimatedPaise += orderPaise;
+      if (order.paymentMethod === 'counter_cash') {
+        counterCashEstimatedPaise += orderPaise;
+      }
       if (order.status === 'collected') {
         discrepanciesCount++;
         auditNotes.push(`Order ${doc.id} marked collected but paymentStatus is unpaid/pending.`);
@@ -574,6 +588,19 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
     totalRefundsPaise += Number(rf.amountPaise || Math.round(Number(rf.amount || 0) * 100));
   });
 
+  // Query orphaned payments captured on cancelled orders on this date
+  const orphanSnap = await db.collection('financialTransactions')
+    .where('type', '==', 'ORPHANED_PAYMENT_CAPTURE')
+    .where('timestamp', '>=', startTimestamp)
+    .where('timestamp', '<=', endTimestamp)
+    .get();
+
+  let orphanSuspensePaise = 0;
+  orphanSnap.forEach(doc => {
+    const op = doc.data();
+    orphanSuspensePaise += Number(op.amountPaise || Math.round(Number(op.amount || 0) * 100));
+  });
+
   const netRevenuePaise = totalRevenuePaise - totalRefundsPaise;
 
   const reconciliation: DailyReconciliationRecord = {
@@ -583,6 +610,8 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
     totalRevenuePaise,
     totalRefundsPaise,
     netRevenuePaise,
+    orphanSuspensePaise,
+    cancelledOrdersCount,
     onlinePaymentsCaptured: onlinePaymentsCapturedPaise / 100,
     counterCashEstimated: counterCashEstimatedPaise / 100,
     discrepanciesCount,

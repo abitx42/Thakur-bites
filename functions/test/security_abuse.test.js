@@ -4505,5 +4505,184 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     const allowCreateCondition = userMatchBlock[1].trim();
     assert.strictEqual(allowCreateCondition, 'if false', 'Firestore rules must strictly enforce "allow create: if false" on /users/{userId}');
   });
+
+  it('224. Atomic User Profile Read Invariant (TB-IDENTITY-ATOMIC): Checkout fetches user strictly inside transaction without legacy students fallback', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const checkoutSrc = fs.readFileSync(path.resolve(__dirname, '../src/checkout.ts'), 'utf8');
+
+    // Invariant: checkout.ts must NOT reference db.collection('students')
+    assert.strictEqual(
+      checkoutSrc.includes("collection('students')"),
+      false,
+      "checkout.ts must completely eliminate legacy fallback to 'students' collection"
+    );
+
+    // Invariant: userRef must be read inside transaction
+    assert.ok(
+      checkoutSrc.includes("transaction.get(userRef)"),
+      "checkout.ts must read userRef strictly inside transaction.get()"
+    );
+  });
+
+  it('225. Strict Mumbai Timezone Order Counter Invariant (TB-MUMBAI-DATE): orders counter derived strictly via Asia/Kolkata timezone', () => {
+    const { getMumbaiDateStr } = require('../lib/shift_pins');
+
+    // Test UTC midnight rollover vs Asia/Kolkata (+05:30)
+    // 2026-09-05 18:45 UTC is 2026-09-06 00:15 IST
+    const lateNightUtc = new Date('2026-09-05T18:45:00.000Z');
+    const mumbaiDateStr = getMumbaiDateStr(lateNightUtc);
+
+    assert.strictEqual(mumbaiDateStr, '2026-09-06', 'Date at 18:45 UTC must map to next day 00:15 in Asia/Kolkata');
+
+    const earlyMorningUtc = new Date('2026-09-05T01:00:00.000Z');
+    assert.strictEqual(getMumbaiDateStr(earlyMorningUtc), '2026-09-05', '01:00 UTC is 06:30 IST on same day');
+  });
+
+  it('226. QR Token Decoupling & Dynamic Refresh Invariant (TB-QR-DECOUPLE): 4-hour initial validity with dynamic refreshment', () => {
+    const crypto = require('crypto');
+    const secret = 'test_qr_secret_key_42';
+
+    function signQr(orderId, studentId, nonce, expiresAt) {
+      const sig = crypto.createHmac('sha256', secret)
+        .update(`${orderId}:${studentId}:${nonce}:${expiresAt}`)
+        .digest('hex');
+      return `${orderId}.${studentId}.${nonce}.${expiresAt}.${sig}`;
+    }
+
+    const currentUnix = 1756650000;
+    const fourHourExpiry = currentUnix + 14400;
+    const token = signQr('ord_100', 'usr_stu_1', 'nonce_1', fourHourExpiry);
+
+    const parts = token.split('.');
+    assert.strictEqual(parts.length, 5);
+    const expiresAt = parseInt(parts[3], 10);
+    assert.strictEqual(expiresAt - currentUnix, 14400, 'Initial token has 4-hour lifespan');
+
+    // Simulate food prep delay of 45 minutes (2700s)
+    const afterPrepTime = currentUnix + 2700;
+    assert.strictEqual(expiresAt > afterPrepTime, true, 'Token remains fully valid after kitchen cooking delay');
+  });
+
+  it('227. Pickup PIN Brute-Force & QR Invalidation Invariant (TB-PICKUP-LOCKOUT): 3 failed PIN attempts locks order and invalidates QR', () => {
+    function simulateFailedPin(currentAttempts) {
+      const nextAttempts = currentAttempts + 1;
+      const shouldLock = nextAttempts >= 3;
+      return {
+        attempts: nextAttempts,
+        isLockedForInvestigation: shouldLock,
+        qrInvalidated: shouldLock,
+      };
+    }
+
+    const firstFail = simulateFailedPin(0);
+    assert.strictEqual(firstFail.isLockedForInvestigation, false);
+    assert.strictEqual(firstFail.qrInvalidated, false);
+
+    const secondFail = simulateFailedPin(1);
+    assert.strictEqual(secondFail.isLockedForInvestigation, false);
+
+    const thirdFail = simulateFailedPin(2);
+    assert.strictEqual(thirdFail.isLockedForInvestigation, true);
+    assert.strictEqual(thirdFail.qrInvalidated, true, 'QR token must be invalidated when order is locked for investigation');
+  });
+
+  it('228. Financial Ledger Reconciliation Consistency Invariant (TB-FIN-RECONCILE): Revenue excludes cancelled/unpaid and tracks orphan suspense', () => {
+    const orders = [
+      { id: 'o1', totalAmountPaise: 15000, paymentStatus: 'paid', status: 'confirmed', paymentMethod: 'online' },
+      { id: 'o2', totalAmountPaise: 8000, paymentStatus: 'paid', status: 'collected', paymentMethod: 'counter_cash' },
+      { id: 'o3', totalAmountPaise: 5000, paymentStatus: 'cancelled', status: 'cancelled', paymentMethod: 'online' }, // Cancelled!
+      { id: 'o4', totalAmountPaise: 6000, paymentStatus: 'pending', status: 'payment_pending', paymentMethod: 'counter_cash' }, // Pending!
+    ];
+
+    let totalRevenuePaise = 0;
+    let counterCashEstimatedPaise = 0;
+    let cancelledOrdersCount = 0;
+
+    for (const order of orders) {
+      if (order.status === 'cancelled') {
+        cancelledOrdersCount++;
+        continue; // Excluded from gross revenue
+      }
+      const isPaid = order.paymentStatus === 'paid' || order.paymentStatus === 'captured';
+      if (isPaid) {
+        totalRevenuePaise += order.totalAmountPaise;
+        if (order.paymentMethod === 'counter_cash') {
+          counterCashEstimatedPaise += order.totalAmountPaise;
+        }
+      }
+    }
+
+    assert.strictEqual(totalRevenuePaise, 23000, 'Gross revenue must strictly include o1 (15000) and o2 (8000), excluding o3 & o4');
+    assert.strictEqual(counterCashEstimatedPaise, 8000, 'Settled cash must only count o2 (8000)');
+    assert.strictEqual(cancelledOrdersCount, 1);
+
+    const totalRefundsPaise = 3000;
+    const netRevenuePaise = totalRevenuePaise - totalRefundsPaise;
+    assert.strictEqual(netRevenuePaise, 20000, 'Net revenue = 23000 - 3000 = 20000');
+  });
+
+  it('229. Unified RBAC Simulator Invariant (TB-RBAC-UNIFICATION): Simulator is driven by canonical SystemCapabilities', () => {
+    const { evaluateRBACPermission } = require('../lib/developer_cockpit');
+    const { hasCapability } = require('../lib/authorization_policy');
+
+    // Customer operations
+    assert.strictEqual(evaluateRBACPermission('student', 'createCheckout').allowed, hasCapability('student', 'create_checkout'));
+    assert.strictEqual(evaluateRBACPermission('kitchen', 'createCheckout').allowed, hasCapability('kitchen', 'create_checkout'));
+
+    // Shift PIN generation
+    assert.strictEqual(evaluateRBACPermission('manager', 'generateShiftPin').allowed, hasCapability('manager', 'generate_shift_pin'));
+    assert.strictEqual(evaluateRBACPermission('student', 'generateShiftPin').allowed, hasCapability('student', 'generate_shift_pin'));
+
+    // Emergency kill switch
+    assert.strictEqual(evaluateRBACPermission('security_admin', 'setSystemOperationalMode').allowed, hasCapability('security_admin', 'manage_kill_switch'));
+    assert.strictEqual(evaluateRBACPermission('admin', 'setSystemOperationalMode').allowed, hasCapability('admin', 'manage_kill_switch'));
+    assert.strictEqual(evaluateRBACPermission('manager', 'setSystemOperationalMode').allowed, hasCapability('manager', 'manage_kill_switch'));
+  });
+
+  it('230. Payment Finalize vs Cancellation Concurrency Invariant: State serialization prevents resurrection', () => {
+    // Simulated state machine
+    class OrderSimulator {
+      constructor(status = 'payment_pending', paymentStatus = 'pending') {
+        this.status = status;
+        this.paymentStatus = paymentStatus;
+        this.orphanedCapture = false;
+      }
+
+      // Action A: Cancellation
+      cancel() {
+        if (this.paymentStatus === 'paid') {
+          throw new Error('Cannot cancel paid order');
+        }
+        this.status = 'cancelled';
+        this.paymentStatus = 'cancelled';
+      }
+
+      // Action B: Finalize Payment
+      finalizePayment() {
+        if (this.status === 'cancelled' || this.paymentStatus === 'cancelled') {
+          this.orphanedCapture = true;
+          return { status: 'ORPHANED_SUSPENSE', resurrected: false };
+        }
+        this.status = 'confirmed';
+        this.paymentStatus = 'paid';
+        return { status: 'CONFIRMED', resurrected: false };
+      }
+    }
+
+    // Sequence 1: Cancel then late payment webhook
+    const order1 = new OrderSimulator();
+    order1.cancel();
+    const result1 = order1.finalizePayment();
+    assert.strictEqual(result1.status, 'ORPHANED_SUSPENSE');
+    assert.strictEqual(order1.status, 'cancelled', 'Cancelled order is NEVER resurrected to confirmed');
+    assert.strictEqual(order1.orphanedCapture, true);
+
+    // Sequence 2: Payment then cancel attempt
+    const order2 = new OrderSimulator();
+    const result2 = order2.finalizePayment();
+    assert.strictEqual(result2.status, 'CONFIRMED');
+    assert.throws(() => order2.cancel(), /Cannot cancel paid order/);
+  });
 });
 

@@ -32,14 +32,17 @@ export type SystemCapability =
   | 'view_business_analytics'
   // Developer & Engineering Operations
   | 'manage_version_policy'
+  | 'manage_kill_switch'
   | 'view_telemetry'
   | 'run_diagnostics'
-  | 'emergency_freeze';
+  | 'emergency_freeze'
+  // Customer & Ordering Authority
+  | 'create_checkout';
 
 /**
- * Base Admin Capabilities (Business Authority)
+ * Manager Capabilities (Operational Counter & Business Governance)
  */
-const ADMIN_CAPABILITIES: SystemCapability[] = [
+const MANAGER_CAPABILITIES: SystemCapability[] = [
   'view_kitchen_orders',
   'update_kitchen_status',
   'view_pickup_orders',
@@ -58,11 +61,19 @@ const ADMIN_CAPABILITIES: SystemCapability[] = [
   'manage_staff_roles',
   'manage_platform_flags',
   'view_business_analytics',
-  'manage_version_policy',
 ];
 
 /**
- * Developer Capabilities = All Admin Capabilities + Engineering Authority
+ * Admin Capabilities (Operational + Platform Governance + Kill Switch Controls)
+ */
+const ADMIN_CAPABILITIES: SystemCapability[] = [
+  ...MANAGER_CAPABILITIES,
+  'manage_version_policy',
+  'manage_kill_switch',
+];
+
+/**
+ * Developer Capabilities = Admin + Engineering Diagnostics & Emergency Freeze
  */
 const DEVELOPER_CAPABILITIES: SystemCapability[] = [
   ...ADMIN_CAPABILITIES,
@@ -74,16 +85,19 @@ const DEVELOPER_CAPABILITIES: SystemCapability[] = [
 /**
  * Canonical Role-to-Capability Mapping
  */
-export const ROLE_CAPABILITY_MATRIX: Record<UserRole, Set<SystemCapability>> = {
-  customer: new Set([]),
-  student: new Set([]),
+export const ROLE_CAPABILITY_MATRIX: Record<string, Set<SystemCapability>> = {
+  customer: new Set(['create_checkout']),
+  student: new Set(['create_checkout']),
+  teacher: new Set(['create_checkout']),
+  college_staff: new Set(['create_checkout']),
+  visitor: new Set(['create_checkout']),
+  guest: new Set(['create_checkout']),
   kitchen: new Set(['view_kitchen_orders', 'update_kitchen_status']),
   pickup: new Set(['view_pickup_orders', 'verify_pickup', 'unlock_pickup']),
   cashier: new Set(['view_cashier_orders', 'record_cash_payment']),
+  manager: new Set(MANAGER_CAPABILITIES),
   admin: new Set(ADMIN_CAPABILITIES),
   developer: new Set(DEVELOPER_CAPABILITIES),
-  // Backward compatibility during active migration:
-  manager: new Set(ADMIN_CAPABILITIES),
   security_admin: new Set(DEVELOPER_CAPABILITIES),
   system: new Set(DEVELOPER_CAPABILITIES),
 };
@@ -93,8 +107,8 @@ export const ROLE_CAPABILITY_MATRIX: Record<UserRole, Set<SystemCapability>> = {
  */
 export function hasCapability(role: UserRole | string | undefined | null, capability: SystemCapability): boolean {
   if (!role) return false;
-  const userRole = role as UserRole;
-  const capabilities = ROLE_CAPABILITY_MATRIX[userRole];
+  const cleanRole = (role || '').trim().toLowerCase();
+  const capabilities = ROLE_CAPABILITY_MATRIX[cleanRole];
   if (!capabilities) return false;
   return capabilities.has(capability);
 }

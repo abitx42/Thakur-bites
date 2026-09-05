@@ -1,7 +1,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
-import { CheckoutRequest, OrderDocument, OrderItemSnapshot, OrderSecretDoc } from './types';
+import { CheckoutRequest, OrderDocument, OrderItemSnapshot, OrderSecretDoc, PriorityLevel } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
 import { reserveInventoryInTransaction } from './inventory_reservation';
@@ -10,6 +10,7 @@ import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { updatePublicLiveQueueProjection } from './tv_projection';
 import { enforceAppVersionPolicy } from './version_policy';
+import { getMumbaiDateStr } from './shift_pins';
 
 const db = admin.firestore();
 
@@ -82,33 +83,9 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   const idempotencyHash = crypto.createHash('sha256').update(`${studentId}_${idempotencyKey.trim()}`).digest('hex');
   const idempotencyLockRef = db.collection('checkoutRequests').doc(idempotencyHash);
 
-  // 2. Fetch user profile details (checks users collection first, fallback to students)
-  let studentName = 'Student';
-  let studentRoll = 'TCET';
-  let userPriorityLevel: any = 1;
-
-  const userDoc = await db.collection('users').doc(studentId).get();
-  if (userDoc.exists) {
-    const userData = userDoc.data() || {};
-    if (userData.accountDisabled === true) {
-      throw new HttpsError('permission-denied', 'Account has been deactivated.');
-    }
-    studentName = userData.displayName || 'Customer';
-    studentRoll = userData.rollNo || (userData.accountType === 'TEACHER' ? 'FACULTY' : 'TCET');
-    userPriorityLevel = typeof userData.priorityLevel === 'number' ? userData.priorityLevel : 1;
-  } else {
-    const studentDoc = await db.collection('students').doc(studentId).get();
-    const studentData = studentDoc.data() || {};
-    if (studentData.accountDisabled === true) {
-      throw new HttpsError('permission-denied', 'Account has been deactivated.');
-    }
-    studentName = studentData.name || 'Student';
-    studentRoll = studentData.rollNo || 'TCET';
-  }
-
   const now = admin.firestore.Timestamp.now();
-  const nowDate = new Date();
-  const dateStr = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}-${String(nowDate.getDate()).padStart(2, '0')}`;
+  const dateStr = getMumbaiDateStr(now.toDate());
+  const userRef = db.collection('users').doc(studentId);
   const counterRef = db.collection('counters').doc(`orders_${dateStr}`);
   const newOrderRef = db.collection('orders').doc();
   const facultyLockRef = db.collection('facultyPriorityLocks').doc(studentId);
@@ -121,7 +98,14 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       // ═════════════════════════════════════════════════════════════
       // 1. ALL READS FIRST (Strict Transaction Invariant)
       // ═════════════════════════════════════════════════════════════
-      const idempotencySnap = await transaction.get(idempotencyLockRef);
+      const [idempotencySnap, userSnap, counterSnap, facultyLockSnap, ...itemSnapshots] = await Promise.all([
+        transaction.get(idempotencyLockRef),
+        transaction.get(userRef),
+        transaction.get(counterRef),
+        transaction.get(facultyLockRef),
+        ...itemRefs.map(ref => transaction.get(ref)),
+      ]);
+
       if (idempotencySnap.exists) {
         const existingOrderId = idempotencySnap.data()?.orderId;
         if (existingOrderId) {
@@ -136,13 +120,28 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         }
       }
 
+      // 2. Validate Canonical User Profile (Fail-Closed, Zero Legacy Fallback)
+      if (!userSnap.exists) {
+        throw new HttpsError('not-found', 'User profile not found. Please complete profile setup.');
+      }
+
+      const userData = userSnap.data() || {};
+      if (userData.accountDisabled === true) {
+        throw new HttpsError('permission-denied', 'Account has been deactivated.');
+      }
+
+      const studentName = userData.displayName || 'Customer';
+      const studentRoll = userData.rollNo || (userData.accountType === 'TEACHER' ? 'FACULTY' : 'TCET');
+      const userPriorityLevel: PriorityLevel = (typeof userData.priorityLevel === 'number' && [0, 1, 2, 3].includes(userData.priorityLevel))
+        ? (userData.priorityLevel as PriorityLevel)
+        : 0;
+
       // Inside-Transaction Faculty Priority Invariant (TB-004 & TB-005)
-      let assignedPriority = userPriorityLevel;
+      let assignedPriority: PriorityLevel = userPriorityLevel;
       let priorityReason = 'STANDARD_QUEUE';
       let shouldGrantFacultyLock = false;
 
       if (userPriorityLevel >= 2) {
-        const facultyLockSnap = await transaction.get(facultyLockRef);
         if (facultyLockSnap.exists && facultyLockSnap.data()?.activeOrderId) {
           assignedPriority = 1;
           priorityReason = 'FAIRNESS_MAX_ACTIVE_PRIORITY_REACHED';
@@ -152,9 +151,6 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
           shouldGrantFacultyLock = true;
         }
       }
-
-      const itemSnapshots = await Promise.all(itemRefs.map(ref => transaction.get(ref)));
-      const counterSnap = await transaction.get(counterRef);
 
       // ═════════════════════════════════════════════════════════════
       // 2. VALIDATE PRICING & INVENTORY LIMITS (FAIL-CLOSED INVARIANTS)
@@ -244,14 +240,14 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       const salt = crypto.randomBytes(16).toString('hex');
       const pinHash = crypto.pbkdf2Sync(rawPin, salt, 10000, 32, 'sha256').toString('hex');
       const qrNonce = crypto.randomBytes(16).toString('hex');
-      const qrExpiresAt = Math.floor(Date.now() / 1000) + 1200; // 20-minute validity
+      const qrExpiresAt = Math.floor(Date.now() / 1000) + 14400; // 4-hour validity (covers kitchen prep + university shift)
       const qrSigningSecret = getRequiredSecret('QR_SIGNING_SECRET');
       const qrSignature = crypto.createHmac('sha256', qrSigningSecret)
         .update(`${newOrderRef.id}:${studentId}:${qrNonce}:${qrExpiresAt}`)
         .digest('hex');
       const signedQrPayload = `${newOrderRef.id}.${studentId}.${qrNonce}.${qrExpiresAt}.${qrSignature}`;
 
-      const readyAtDate = new Date(nowDate.getTime() + maxPrepMinutes * 60000);
+      const readyAtDate = new Date(now.toMillis() + maxPrepMinutes * 60000);
       const isCounterCash = paymentMethod === 'counter_cash';
 
       // Zero-Knowledge Clean Order Document: Zero secrets in readable orders document

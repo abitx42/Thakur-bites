@@ -180,6 +180,7 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
           failedPinAttempts: attempts,
           isLockedForInvestigation: shouldLock,
           updatedAt: now,
+          ...(shouldLock ? { qrConsumedAt: now, qrConsumedBy: 'SYSTEM_LOCKOUT' } : {}),
         });
       }
 
@@ -326,3 +327,94 @@ export const unlockOrderPickupVerification = onCall<{ orderId: string; reason: s
     return { success: true, orderId, unlockedAt: now };
   });
 });
+
+/**
+ * Platform 2.0 Authoritative Student Endpoint to retrieve / refresh Pickup QR Token
+ * 
+ * Allows students to view or refresh their valid cryptographic QR token for active orders,
+ * decoupling QR validity from food preparation delays.
+ */
+export const getStudentPickupQr = onCall<{ orderId: string; appVersion?: string }>(async (request) => {
+  enforceAppCheck(request);
+  await enforceAppVersionPolicy(request.data?.appVersion);
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { orderId } = request.data || {};
+  if (!orderId || typeof orderId !== 'string' || orderId.length > 128) {
+    throw new HttpsError('invalid-argument', 'Valid orderId is required.');
+  }
+
+  await enforceRateLimit(request.auth.uid, 'pickup_view');
+
+  const orderRef = db.collection('orders').doc(orderId);
+  const secretRef = db.collection('orderSecrets').doc(orderId);
+  const now = admin.firestore.Timestamp.now();
+  const currentUnix = Math.floor(Date.now() / 1000);
+
+  return await db.runTransaction(async (transaction) => {
+    const [orderSnap, secretSnap] = await Promise.all([
+      transaction.get(orderRef),
+      transaction.get(secretRef),
+    ]);
+
+    if (!orderSnap.exists) {
+      throw new HttpsError('not-found', 'Order not found.');
+    }
+
+    const orderData = orderSnap.data()!;
+    if (orderData.studentId !== request.auth!.uid) {
+      throw new HttpsError('permission-denied', 'You can only view pickup credentials for your own orders.');
+    }
+
+    if (orderData.status === 'collected') {
+      throw new HttpsError('failed-precondition', 'Order has already been collected.');
+    }
+
+    if (orderData.status === 'cancelled') {
+      throw new HttpsError('failed-precondition', 'Order has been cancelled.');
+    }
+
+    const secretData = secretSnap.exists ? secretSnap.data()! : null;
+    const isLocked = secretData?.isLockedForInvestigation ?? orderData.isLockedForInvestigation ?? false;
+    if (isLocked) {
+      throw new HttpsError('permission-denied', 'Order is locked for security. Please present physical ID to manager.');
+    }
+
+    // Determine if existing QR is valid or needs refresh
+    let qrNonce = secretData?.qrNonce || crypto.randomBytes(16).toString('hex');
+    let qrExpiresAt = secretData?.qrExpiresAt || (currentUnix + 14400);
+
+    // If QR expired or was not yet set, generate a fresh nonce & 4-hour expiry
+    if (currentUnix >= qrExpiresAt || !secretData?.qrNonce) {
+      qrNonce = crypto.randomBytes(16).toString('hex');
+      qrExpiresAt = currentUnix + 14400; // 4 hours from now
+
+      if (secretSnap.exists) {
+        transaction.update(secretRef, {
+          qrNonce,
+          qrExpiresAt,
+          updatedAt: now,
+        });
+      }
+    }
+
+    const qrSigningSecret = getRequiredSecret('QR_SIGNING_SECRET');
+    const qrSignature = crypto.createHmac('sha256', qrSigningSecret)
+      .update(`${orderId}:${orderData.studentId}:${qrNonce}:${qrExpiresAt}`)
+      .digest('hex');
+
+    const signedQrPayload = `${orderId}.${orderData.studentId}.${qrNonce}.${qrExpiresAt}.${qrSignature}`;
+
+    return {
+      success: true,
+      orderId,
+      signedQrPayload,
+      qrExpiresAt,
+      tokenNumber: orderData.tokenNumber,
+      status: orderData.status,
+    };
+  });
+});
+

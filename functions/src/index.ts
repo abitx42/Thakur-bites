@@ -7,7 +7,7 @@ if (!admin.apps.length) {
 export { createCheckout } from './checkout';
 export { updateOrderStatus, cancelOrder } from './order_state';
 export { assignStaffRole } from './auth_roles';
-export { verifyPickup, unlockOrderPickupVerification } from './pickup_verify';
+export { verifyPickup, unlockOrderPickupVerification, getStudentPickupQr } from './pickup_verify';
 export {
   createPaymentSession,
   verifyPayment,

@@ -4,7 +4,7 @@ import * as crypto from 'crypto';
 import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
-import { assertCapability } from './authorization_policy';
+import { assertCapability, hasCapability, ROLE_CAPABILITY_MATRIX, SystemCapability } from './authorization_policy';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -35,44 +35,44 @@ export interface SimulatePermissionResponse {
   requiredRoles: string[];
 }
 
+const OPERATION_CAPABILITY_MAP: Record<OperationType, { capability: SystemCapability; description: string }> = {
+  createCheckout: {
+    capability: 'create_checkout',
+    description: 'Customer order placement and stock reservation.',
+  },
+  reviewVerificationApplication: {
+    capability: 'review_verification',
+    description: 'Review and approve/reject Teacher & Staff verification applications.',
+  },
+  generateShiftPin: {
+    capability: 'generate_shift_pin',
+    description: 'Generate time-bound 6-digit shift PINs for counter workstations.',
+  },
+  adjustInventoryStock: {
+    capability: 'adjust_inventory',
+    description: 'Manually adjust stockOnHand or reservedStock warehouse counts.',
+  },
+  setSystemOperationalMode: {
+    capability: 'manage_kill_switch',
+    description: 'Trigger emergency kill switch or financial freeze across the campus.',
+  },
+  reconcileDailyLedger: {
+    capability: 'view_business_analytics',
+    description: 'Reconcile double-entry financial ledgers and settlement balances.',
+  },
+  viewSecurityIncidents: {
+    capability: 'view_telemetry',
+    description: 'Inspect live security incidents, attack telemetry, and audit logs.',
+  },
+};
+
 /**
- * Pure function to evaluate RBAC permissions across operations
+ * Pure function to evaluate RBAC permissions across operations, unified with SystemCapability registry
  */
 export function evaluateRBACPermission(role: string, operation: OperationType): { allowed: boolean; reason: string; requiredRoles: string[] } {
   const cleanRole = (role || '').trim().toLowerCase();
 
-  const permissionMatrix: Record<OperationType, { allowedRoles: string[]; description: string }> = {
-    createCheckout: {
-      allowedRoles: ['student', 'teacher', 'college_staff', 'visitor', 'guest'],
-      description: 'Customer order placement and stock reservation.',
-    },
-    reviewVerificationApplication: {
-      allowedRoles: ['manager', 'admin', 'developer', 'security_admin'],
-      description: 'Review and approve/reject Teacher & Staff verification applications.',
-    },
-    generateShiftPin: {
-      allowedRoles: ['manager', 'admin', 'developer', 'security_admin'],
-      description: 'Generate time-bound 6-digit shift PINs for counter workstations.',
-    },
-    adjustInventoryStock: {
-      allowedRoles: ['manager', 'admin', 'developer', 'security_admin'],
-      description: 'Manually adjust stockOnHand or reservedStock warehouse counts.',
-    },
-    setSystemOperationalMode: {
-      allowedRoles: ['admin', 'developer', 'security_admin'],
-      description: 'Trigger emergency kill switch or financial freeze across the campus.',
-    },
-    reconcileDailyLedger: {
-      allowedRoles: ['manager', 'admin', 'developer', 'security_admin'],
-      description: 'Reconcile double-entry financial ledgers and settlement balances.',
-    },
-    viewSecurityIncidents: {
-      allowedRoles: ['admin', 'developer', 'security_admin'],
-      description: 'Inspect live security incidents, attack telemetry, and audit logs.',
-    },
-  };
-
-  const rule = permissionMatrix[operation];
+  const rule = OPERATION_CAPABILITY_MAP[operation];
   if (!rule) {
     return {
       allowed: false,
@@ -81,13 +81,17 @@ export function evaluateRBACPermission(role: string, operation: OperationType): 
     };
   }
 
-  const isAllowed = rule.allowedRoles.includes(cleanRole);
+  const isAllowed = hasCapability(cleanRole, rule.capability);
+  const requiredRoles = Object.entries(ROLE_CAPABILITY_MATRIX)
+    .filter(([_, caps]) => caps.has(rule.capability))
+    .map(([r]) => r);
+
   return {
     allowed: isAllowed,
     reason: isAllowed
       ? `Role '${cleanRole}' is authorized to perform '${operation}'.`
-      : `Permission Denied: Role '${cleanRole}' lacks required capability [${rule.allowedRoles.join(', ')}].`,
-    requiredRoles: rule.allowedRoles,
+      : `Permission Denied: Role '${cleanRole}' lacks required capability [${requiredRoles.join(', ')}].`,
+    requiredRoles,
   };
 }
 

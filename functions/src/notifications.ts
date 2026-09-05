@@ -111,15 +111,10 @@ export const onOrderStatusNotification = onDocumentUpdated('orders/{orderId}', a
     isRead: false,
   });
 
-  // 2. Fetch user FCM Device Tokens from canonical users collection (with backward compatibility)
+  // 2. Fetch user FCM Device Tokens from canonical users collection
   try {
     const userDoc = await db.collection('users').doc(studentId).get();
-    let fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
-
-    if (fcmTokens.length === 0) {
-      const studentDoc = await db.collection('students').doc(studentId).get();
-      fcmTokens = studentDoc.data()?.fcmTokens || [];
-    }
+    const fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
 
     if (fcmTokens.length > 0) {
       await admin.messaging().sendEachForMulticast({
