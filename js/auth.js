@@ -1,32 +1,14 @@
 // Staff Firebase Authentication & Role-Based Access Control (RBAC) with Shift PINs & Device Binding
-import { auth, staffLogin, staffQuickAuth, staffLogout, subscribeStaffAuth } from './firebase.js?v=4';
+import { auth, staffLogin, staffLogout, subscribeStaffAuth } from './firebase.js?v=4';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
-export function getStoredStaffSession() {
-  try {
-    const isAuth = localStorage.getItem('tb_staff_authenticated') === 'true';
-    const role = localStorage.getItem('tb_staff_role');
-    const email = localStorage.getItem('tb_staff_email');
-    if (isAuth && role) {
-      return {
-        user: { uid: `staff_${role}`, email: email || `${role}@tcetmumbai.in`, displayName: `${role.toUpperCase()} User` },
-        role,
-        isAuthenticated: true,
-        deviceId: getOrCreateDeviceId(),
-      };
-    }
-  } catch (_) {}
-  return null;
-}
-
-const initialSession = getStoredStaffSession();
-let currentStaffState = initialSession || {
-  user: null,
-  role: null,
-  isAuthenticated: false,
-  deviceId: getOrCreateDeviceId(),
-};
+// Clear any stale demo localStorage keys
+try {
+  localStorage.removeItem('tb_staff_authenticated');
+  localStorage.removeItem('tb_staff_role');
+  localStorage.removeItem('tb_staff_email');
+} catch (_) {}
 
 export function getOrCreateDeviceId() {
   let deviceId = localStorage.getItem('tb_workstation_device_id');
@@ -37,78 +19,60 @@ export function getOrCreateDeviceId() {
   return deviceId;
 }
 
-// Listen to Firebase Auth state
+let currentStaffState = {
+  user: null,
+  role: null,
+  isAuthenticated: false,
+  deviceId: getOrCreateDeviceId(),
+};
+
+// Listen to authoritative Firebase Auth state
 subscribeStaffAuth((state) => {
   if (state.isAuthenticated && auth.currentUser) {
     currentStaffState = { ...state, deviceId: getOrCreateDeviceId() };
-    try {
-      localStorage.setItem('tb_staff_authenticated', 'true');
-      localStorage.setItem('tb_staff_role', state.role);
-    } catch (_) {}
+  } else {
+    currentStaffState = {
+      user: null,
+      role: null,
+      isAuthenticated: false,
+      deviceId: getOrCreateDeviceId(),
+    };
   }
 });
 
 export const staffAuth = {
   isAuthenticated() {
-    return Boolean(currentStaffState.isAuthenticated && currentStaffState.role);
+    return Boolean(currentStaffState.isAuthenticated && currentStaffState.role && auth.currentUser);
   },
 
   getRole() {
-    return currentStaffState.role || 'admin';
+    return currentStaffState.role || null;
   },
 
   async login(email, password) {
     const cleanEmail = String(email || '').toLowerCase().trim();
     const cleanPass = String(password || '');
 
-    // Allow instant login for any valid password >= 6 characters in demo / local environment
-    if (cleanEmail && cleanPass.length >= 6) {
-      const role = (cleanEmail.includes('admin') || cleanEmail.includes('manager') || cleanEmail.includes('director')) ? 'admin' : 'kitchen';
-      currentStaffState = {
-        user: { uid: `staff_demo_${role}`, email: cleanEmail, displayName: `${role.toUpperCase()} User` },
-        role,
-        isAuthenticated: true,
-        deviceId: getOrCreateDeviceId()
-      };
-      try {
-        localStorage.setItem('tb_staff_authenticated', 'true');
-        localStorage.setItem('tb_staff_role', role);
-        localStorage.setItem('tb_staff_email', cleanEmail);
-      } catch (_) {}
-      return { success: true, role };
+    if (!cleanEmail || !cleanPass) {
+      return { success: false, error: 'Please provide both staff email and password.' };
     }
 
     try {
-      const { user, role } = await staffLogin(email, password);
+      const { user, role } = await staffLogin(cleanEmail, cleanPass);
       currentStaffState = { user, role, isAuthenticated: true, deviceId: getOrCreateDeviceId() };
-      try {
-        localStorage.setItem('tb_staff_authenticated', 'true');
-        localStorage.setItem('tb_staff_role', role);
-      } catch (_) {}
       return { success: true, role };
     } catch (e) {
       console.error("Staff auth error:", e);
-      return { success: false, error: e.message };
+      return { success: false, error: e.message || 'Authentication failed. Please verify credentials.' };
     }
   },
 
   async loginWithShiftPin(pin, role) {
     const deviceId = getOrCreateDeviceId();
-    const assignedRole = role || 'admin';
+    const requestedRole = role || 'kitchen';
 
-    // Instant unlock for default demo PIN 123456
-    if (pin === '123456') {
-      currentStaffState = {
-        user: { uid: `staff_demo_${assignedRole}`, email: `${assignedRole}@tcetmumbai.in`, displayName: `${assignedRole.toUpperCase()} Station` },
-        role: assignedRole,
-        isAuthenticated: true,
-        deviceId
-      };
-      try {
-        localStorage.setItem('tb_staff_authenticated', 'true');
-        localStorage.setItem('tb_staff_role', assignedRole);
-      } catch (_) {}
-      return { success: true, role: assignedRole };
+    if (!pin || typeof pin !== 'string' || pin.trim().length !== 6) {
+      return { success: false, error: 'A valid 6-digit shift PIN is required.' };
     }
 
     try {
@@ -116,20 +80,16 @@ export const staffAuth = {
       const verifyFn = httpsCallable(functions, 'verifyShiftPin');
 
       const res = await verifyFn({
-        pin,
-        role: assignedRole,
+        pin: pin.trim(),
+        role: requestedRole,
         deviceId,
         deviceName: navigator.userAgent.includes('Mobile') ? 'Counter Tablet' : 'Staff Workstation',
       });
 
       if (res.data?.token) {
         const userCred = await signInWithCustomToken(auth, res.data.token);
-        const serverRole = res.data.role || assignedRole;
+        const serverRole = res.data.role || requestedRole;
         currentStaffState = { user: userCred.user, role: serverRole, isAuthenticated: true, deviceId };
-        try {
-          localStorage.setItem('tb_staff_authenticated', 'true');
-          localStorage.setItem('tb_staff_role', serverRole);
-        } catch (_) {}
         return { success: true, role: serverRole };
       }
       return { success: false, error: 'Failed to verify shift credentials.' };
@@ -317,18 +277,6 @@ export function renderPinPadModal(container, onUnlocked) {
         }
       });
     }
-
-    // Quick station select
-    container.querySelectorAll('.role-quick-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const role = btn.getAttribute('data-role');
-        btn.textContent = 'Verifying...';
-        const res = await staffAuth.quickAuth(role);
-        if (res.success) {
-          onUnlocked();
-        }
-      });
-    });
 
     // Email login submit
     const form = container.querySelector('#staff-login-form');

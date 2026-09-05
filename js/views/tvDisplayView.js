@@ -1,17 +1,21 @@
-// Big Screen TV Token Board View for Canteen Wall Display connected to live Firestore
-import { subscribeOrders } from '../firebase.js?v=4';
+// Big Screen TV Token Board View for Canteen Wall Display connected to publicLiveQueue/current
+import { db } from '../firebase.js?v=4';
+import { doc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { escapeHtml } from './escapeHtml.js';
 
-let unsubscribeOrders = null;
-let currentOrders = [];
+let unsubscribeQueue = null;
+let readyTickets = [];
+let preparingTickets = [];
 let clockInterval = null;
 
 export function renderTvDisplayView(container) {
-  if (unsubscribeOrders) {
-    unsubscribeOrders();
+  if (unsubscribeQueue) {
+    unsubscribeQueue();
+    unsubscribeQueue = null;
   }
   if (clockInterval) {
     clearInterval(clockInterval);
+    clockInterval = null;
   }
 
   function getFormattedTime() {
@@ -19,9 +23,6 @@ export function renderTvDisplayView(container) {
   }
 
   function render() {
-    const readyOrders = currentOrders.filter(o => o.status === 'ready');
-    const prepOrders = currentOrders.filter(o => o.status === 'preparing' || o.status === 'placed');
-
     container.innerHTML = `
       <div style="padding: 1.5rem; max-width: 1600px; margin: 0 auto;">
         <div class="tv-display-screen" style="background: #09090B; border: 2px solid #27272A; border-radius: 16px; padding: 2rem; color: #FFF; min-height: 80vh;">
@@ -58,18 +59,18 @@ export function renderTvDisplayView(container) {
             <div>
               <div style="background: #15803D; color: #FFF; padding: 12px 18px; border-radius: 8px; font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; letter-spacing: 0.05em; display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem;">
                 <span>🔔 READY FOR PICKUP</span>
-                <span style="background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px; font-size: 0.9rem;">${readyOrders.length}</span>
+                <span style="background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px; font-size: 0.9rem;">${readyTickets.length}</span>
               </div>
 
               <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1.2rem;">
-                ${readyOrders.length === 0 ? `
+                ${readyTickets.length === 0 ? `
                   <div style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #71717A; font-family: var(--font-mono); font-size: 1.1rem; border: 2px dashed #27272A; border-radius: 12px;">
                     Preparing next batch of tokens...
                   </div>
-                ` : readyOrders.map(o => `
+                ` : readyTickets.map(o => `
                   <div style="background: #14532D; border: 2.5px solid #22C55E; border-radius: 14px; padding: 1.4rem 1rem; text-align: center; box-shadow: 0 0 25px rgba(34,197,94,0.35);">
                     <div style="font-family: var(--font-mono); font-size: 2.6rem; font-weight: 900; color: #4ADE80; line-height: 1;">
-                      ${escapeHtml(o.tokenNumber)}
+                      ${escapeHtml(o.token || o.tokenNumber)}
                     </div>
                     <div style="font-family: var(--font-mono); font-size: 0.8rem; color: #BBF7D0; margin-top: 8px; font-weight: 700; letter-spacing: 0.05em;">
                       COLLECT NOW 🟢
@@ -83,21 +84,21 @@ export function renderTvDisplayView(container) {
             <div>
               <div style="background: #27272A; color: #FFF; padding: 12px 18px; border-radius: 8px; font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; letter-spacing: 0.05em; display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem;">
                 <span>⏳ PREPARING IN KITCHEN</span>
-                <span style="background: rgba(255,255,255,0.1); padding: 2px 8px; border-radius: 4px; font-size: 0.9rem;">${prepOrders.length}</span>
+                <span style="background: rgba(255,255,255,0.1); padding: 2px 8px; border-radius: 4px; font-size: 0.9rem;">${preparingTickets.length}</span>
               </div>
 
               <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1.2rem;">
-                ${prepOrders.length === 0 ? `
+                ${preparingTickets.length === 0 ? `
                   <div style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #71717A; font-family: var(--font-mono); font-size: 1.1rem; border: 2px dashed #27272A; border-radius: 12px;">
                     No pending orders
                   </div>
-                ` : prepOrders.map(o => `
+                ` : preparingTickets.map(o => `
                   <div style="background: #18181B; border: 1.5px solid #3F3F46; border-radius: 14px; padding: 1.4rem 1rem; text-align: center;">
                     <div style="font-family: var(--font-mono); font-size: 2.6rem; font-weight: 700; color: #E4E4E7; line-height: 1;">
-                      ${escapeHtml(o.tokenNumber)}
+                      ${escapeHtml(o.token || o.tokenNumber)}
                     </div>
                     <div style="font-family: var(--font-mono); font-size: 0.8rem; color: #A1A1AA; margin-top: 8px;">
-                      ${o.status === 'preparing' ? 'Cooking 🔥' : 'In Queue ⏳'}
+                      ${o.estimatedMinutes ? `Est. ~${o.estimatedMinutes}m` : 'Cooking 🔥'}
                     </div>
                   </div>
                 `).join('')}
@@ -110,7 +111,7 @@ export function renderTvDisplayView(container) {
     `;
   }
 
-  // Fix 8: Independent 1-second clock updater
+  // Independent 1-second clock updater
   clockInterval = setInterval(() => {
     const clockEl = container.querySelector('#tv-live-clock');
     if (clockEl) {
@@ -118,8 +119,20 @@ export function renderTvDisplayView(container) {
     }
   }, 1000);
 
-  unsubscribeOrders = subscribeOrders((orders) => {
-    currentOrders = orders;
+  // Authoritative real-time public live queue subscription (Zero PII, Zero credentials needed)
+  const queueDocRef = doc(db, 'publicLiveQueue', 'current');
+  unsubscribeQueue = onSnapshot(queueDocRef, (snap) => {
+    if (snap.exists()) {
+      const data = snap.data();
+      readyTickets = Array.isArray(data.ready) ? data.ready : [];
+      preparingTickets = Array.isArray(data.preparing) ? data.preparing : [];
+    } else {
+      readyTickets = [];
+      preparingTickets = [];
+    }
     render();
+  }, (err) => {
+    console.warn("TV live queue subscription notice:", err);
   });
 }
+

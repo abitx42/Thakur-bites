@@ -1,9 +1,9 @@
 // Phase 10 & Platform 2.0 — Counter Pickup & Dispatch View with Hardware Barcode/QR Scanner Engine
-import { subscribeOrders, updateOrderStatus, unlockOrder } from '../firebase.js?v=4';
+import { fetchPickupOrders, updateOrderStatus, unlockOrder } from '../firebase.js?v=4';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
 
-let unsubscribeOrders = null;
+let pollInterval = null;
 let currentOrders = [];
 let searchFilter = '';
 let showCollectedHistory = false;
@@ -47,8 +47,9 @@ function playScanSound(isSuccess = true) {
 }
 
 export function renderPickupView(container) {
-  if (unsubscribeOrders) {
-    unsubscribeOrders();
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
   }
   if (keydownListener) {
     window.removeEventListener('keydown', keydownListener);
@@ -318,6 +319,7 @@ export function renderPickupView(container) {
 
         await updateOrderStatus(orderId, 'collected');
         playScanSound(true);
+        await loadPickupData();
       });
     });
 
@@ -328,16 +330,34 @@ export function renderPickupView(container) {
         if (reason) {
           btn.textContent = 'Unlocking...';
           btn.disabled = true;
-          await unlockOrder(orderId, reason);
+          try {
+            await unlockOrder(orderId, reason);
+            await loadPickupData();
+          } catch (e) {
+            console.error("Unlock order error:", e);
+            btn.disabled = false;
+            btn.textContent = 'Retry Unlock';
+          }
         }
       });
     });
   }
 
-  unsubscribeOrders = subscribeOrders((orders) => {
-    currentOrders = orders;
-    render();
-  });
+  async function loadPickupData() {
+    try {
+      const orders = await fetchPickupOrders();
+      currentOrders = (orders || []).map(o => ({
+        ...o,
+        id: o.orderId || o.id,
+      }));
+      render();
+    } catch (err) {
+      console.warn("Pickup operational fetch notice:", err);
+    }
+  }
+
+  loadPickupData();
+  pollInterval = setInterval(loadPickupData, 5000);
 }
 
 function renderOrderCard(order, isReady) {

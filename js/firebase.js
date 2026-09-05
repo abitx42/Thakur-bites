@@ -164,11 +164,38 @@ export function subscribeMenuItems(callback) {
 }
 
 /**
- * Toggle availability of a cooked menu item in Firestore
+ * Fetch Kitchen Operational Orders via least-privilege Cloud Function
+ */
+export async function fetchKitchenOrders() {
+  const fn = httpsCallable(functions, 'getKitchenOrders');
+  const res = await fn();
+  return res.data || [];
+}
+
+/**
+ * Fetch Pickup Operational Orders via least-privilege Cloud Function
+ */
+export async function fetchPickupOrders() {
+  const fn = httpsCallable(functions, 'getPickupOrders');
+  const res = await fn();
+  return res.data || [];
+}
+
+/**
+ * Fetch Cashier Operational Orders via least-privilege Cloud Function
+ */
+export async function fetchCashierOrders() {
+  const fn = httpsCallable(functions, 'getCashierOrders');
+  const res = await fn();
+  return res.data || [];
+}
+
+/**
+ * Toggle availability of a menu item via authoritative Cloud Function
  */
 export async function toggleItemAvailability(itemId, isAvailable) {
-  const itemRef = doc(db, 'menuItems', itemId);
-  await updateDoc(itemRef, { available: isAvailable });
+  const toggleFn = httpsCallable(functions, 'toggleMenuItemAvailability');
+  await toggleFn({ itemId, available: Boolean(isAvailable) });
 }
 
 /**
@@ -181,52 +208,27 @@ export async function updateItemStockCount(itemId, count) {
 }
 
 /**
- * Update details of a menu item (name, price, category, batchDate, prepMinutes)
+ * Update details of a menu item via authoritative Cloud Function
  */
 export async function updateItemDetails(itemId, details) {
-  const itemRef = doc(db, 'menuItems', itemId);
-  const updateData = {};
-
-  if (details.name !== undefined) updateData.name = details.name.trim();
-  if (details.price !== undefined) updateData.price = Number(details.price);
-  if (details.category !== undefined) updateData.category = details.category;
-  if (details.prepMinutes !== undefined) updateData.prepMinutes = Number(details.prepMinutes);
-  if (details.batchDate !== undefined) updateData.batchDate = details.batchDate.trim();
-  if (details.type !== undefined) updateData.type = details.type;
-
-  await updateDoc(itemRef, updateData);
+  const updateFn = httpsCallable(functions, 'updateMenuItemDetails');
+  await updateFn({ itemId, details });
 }
 
 /**
- * Add or overwrite a menu item in Firestore
+ * Add or overwrite a menu item via authoritative Cloud Function
  */
 export async function saveMenuItem(itemData) {
-  const docId = itemData.id || itemData.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
-  const itemRef = doc(db, 'menuItems', docId);
-
-  const isInstant = itemData.type === 'instant';
-  const stock = isInstant ? Math.max(0, Number(itemData.stockCount || 0)) : 100;
-
-  await setDoc(itemRef, {
-    name: itemData.name,
-    price: Number(itemData.price),
-    category: itemData.category,
-    type: itemData.type,
-    prepMinutes: Number(itemData.prepMinutes || 0),
-    stockCount: stock,
-    batchDate: itemData.batchDate || '',
-    available: itemData.available !== undefined ? itemData.available : (isInstant ? stock > 0 : true),
-    imageUrl: itemData.imageUrl || '',
-    iconKey: itemData.category || ''
-  }, { merge: true });
+  const upsertFn = httpsCallable(functions, 'upsertMenuItem');
+  await upsertFn({ itemData });
 }
 
 /**
- * Delete a menu item from Firestore
+ * Delete a menu item via authoritative Cloud Function
  */
 export async function deleteMenuItem(itemId) {
-  const itemRef = doc(db, 'menuItems', itemId);
-  await deleteDoc(itemRef);
+  const deleteFn = httpsCallable(functions, 'deleteMenuItemAdmin');
+  await deleteFn({ itemId });
 }
 
 /**

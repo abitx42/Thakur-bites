@@ -54,6 +54,20 @@ const SAST_RULES = [
     severity: 'CRITICAL',
     fileExts: ['.js', '.ts', '.dart'],
   },
+  {
+    id: 'SEC-SAST-05',
+    name: 'Hardcoded Demo Authentication or PIN Bypass in Client Code',
+    regex: /(?:cleanPass\.length\s*>=|pin\s*===?\s*['"]123456['"]|staff_demo_|localStorage\.(?:getItem|setItem)\(['"]tb_staff_)/i,
+    severity: 'CRITICAL',
+    fileExts: ['.js', '.dart'],
+  },
+  {
+    id: 'SEC-SAST-06',
+    name: 'Direct Firestore Mutation on Core Collections in Client Code',
+    regex: /(?:updateDoc|setDoc|deleteDoc|addDoc)\s*\(\s*(?:doc|collection)\s*\(\s*(?:db|firestore)\s*,\s*['"](?:menu_items|transactions)['"]/,
+    severity: 'HIGH',
+    fileExts: ['.js'],
+  },
 ];
 
 let scannedCount = 0;
@@ -130,9 +144,9 @@ if (findings.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log('  ✓ Zero dangerous eval(), insecure token generators, or client role injections detected.');
+  console.log('  ✓ Zero dangerous eval(), insecure token generators, client role injections, or demo auth bypasses detected.');
   console.log('\n════════════════════════════════════════════════════════════════');
-  console.log('🏆 CUSTOM SAST GUARDRAILS: 3/3 PASSED (100% CLEAN)');
+  console.log(`🏆 CUSTOM SAST GUARDRAILS: ${SAST_RULES.length}/${SAST_RULES.length} PASSED (100% CLEAN)`);
   console.log('════════════════════════════════════════════════════════════════\n');
   process.exit(0);
 }

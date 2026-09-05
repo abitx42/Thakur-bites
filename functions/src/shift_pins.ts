@@ -194,7 +194,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
   const todayStr = getMumbaiDateStr();
   const now = new Date();
 
-  // Find active candidate PIN for this role today
+  // Find active candidate PINs for this role today
   const pinsSnap = await db
     .collection('shiftPins')
     .where('role', '==', role)
@@ -213,7 +213,50 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
     throw new HttpsError('unauthenticated', 'Invalid staff credentials.');
   }
 
-  const candidateDoc = pinsSnap.docs[0];
+  // Check active candidates for matching PBKDF2 hash (Resolves TB-SESSION-MED-014 multi-window ambiguity)
+  let candidateDoc: admin.firestore.QueryDocumentSnapshot | null = null;
+
+  for (const doc of pinsSnap.docs) {
+    const data = doc.data();
+    // Skip expired or locked windows
+    if (data.expiresAt && data.expiresAt.toDate() < now) continue;
+    if (data.lockedUntil && data.lockedUntil.toDate() > now) continue;
+    if (!data.salt || !data.pinHash) continue;
+
+    const testHash = derivePinHash(pin, data.salt);
+    try {
+      if (crypto.timingSafeEqual(Buffer.from(testHash, 'hex'), Buffer.from(data.pinHash, 'hex'))) {
+        candidateDoc = doc;
+        break;
+      }
+    } catch (_) {}
+  }
+
+  // If no active candidate matched the PIN, record failed attempt and fail closed
+  if (!candidateDoc) {
+    const targetRef = pinsSnap.docs[0].ref;
+    await db.runTransaction(async (t) => {
+      const snap = await t.get(targetRef);
+      if (snap.exists) {
+        const data = snap.data()!;
+        const newFails = (data.failedAttempts || 0) + 1;
+        const updates: any = { failedAttempts: newFails };
+        if (newFails >= 5) {
+          updates.lockedUntil = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 15 * 60000));
+        }
+        t.update(targetRef, updates);
+      }
+    }).catch(() => {});
+
+    await logSecurityEvent({
+      eventType: 'SHIFT_PIN_VERIFICATION_FAILED',
+      severity: 'MEDIUM',
+      actorUid: `DEV-${hashedDeviceId}`,
+      details: { role, deviceHash: hashedDeviceId, actorType: 'WORKSTATION_DEVICE' },
+    });
+    throw new HttpsError('unauthenticated', 'Invalid staff credentials.');
+  }
+
   const pinRef = candidateDoc.ref;
 
   let customToken: string;

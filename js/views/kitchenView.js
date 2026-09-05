@@ -1,15 +1,16 @@
 // Phase 8 — Kitchen Display System (KDS) with Smart Batching Intelligence & Station Capacity
-import { subscribeOrders, updateOrderStatus } from '../firebase.js?v=4';
+import { fetchKitchenOrders, updateOrderStatus } from '../firebase.js?v=4';
 import { escapeHtml } from './escapeHtml.js';
 
-let unsubscribeOrders = null;
+let pollInterval = null;
 let currentOrders = [];
 let selectedCategoryFilter = 'all';
 
 export function renderKitchenView(container) {
-  // Clean up any prior subscription
-  if (unsubscribeOrders) {
-    unsubscribeOrders();
+  // Clean up any prior polling
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
   }
 
   function renderKDS() {
@@ -26,6 +27,9 @@ export function renderKitchenView(container) {
 
     // Dynamic Effective Priority Score calculation: Base + (WaitMinutes * 5)
     function computeEffectiveScore(order) {
+      if (typeof order.effectivePriority === 'number') {
+        return order.effectivePriority;
+      }
       const base = (order.priorityLevel || 1) * 100;
       const createdAtMs = order.createdAt ? new Date(order.createdAt).getTime() : Date.now();
       const waitMinutes = Math.max(0, (Date.now() - createdAtMs) / 60000);
@@ -66,7 +70,7 @@ export function renderKitchenView(container) {
               </span>
             </div>
             <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
-              Live stream from student orders. Update ticket state with one click.
+              Least-privilege operational view. Station-filtered tickets with dynamic priority ranking.
             </p>
           </div>
 
@@ -98,18 +102,15 @@ export function renderKitchenView(container) {
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
               <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #92400E; display: flex; align-items: center; gap: 6px;">
                 <span>🔥 SMART COOKING BATCHES</span>
-                <span style="font-weight: normal; color: #B45309;">(Aggregated items to cook simultaneously across all tickets)</span>
+                <span style="font-size: 0.75rem; font-weight: 400; color: #B45309;">(Consolidated item quantities across waiting tickets)</span>
               </div>
             </div>
-            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-              ${batchEntries.map(([name, count]) => `
-                <div style="background: #FFF; border: 1.5px solid #F59E0B; border-radius: 8px; padding: 6px 12px; display: flex; align-items: center; gap: 8px; box-shadow: 0 1px 2px rgba(245,158,11,0.1);">
-                  <span style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 900; color: #D97706; background: #FEF3C7; padding: 2px 6px; border-radius: 4px;">
-                    ${count}x
-                  </span>
-                  <span style="font-family: var(--font-sans); font-size: 0.9rem; font-weight: 700; color: #18181B;">
-                    ${escapeHtml(name)}
-                  </span>
+
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              ${batchEntries.map(([name, qty]) => `
+                <div style="background: #FFF; border: 1.5px solid #FCD34D; padding: 6px 12px; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
+                  <span style="font-family: var(--font-mono); font-size: 1rem; font-weight: 800; color: #92400E;">${qty}x</span>
+                  <span style="font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; color: var(--ink-primary);">${escapeHtml(name)}</span>
                 </div>
               `).join('')}
             </div>
@@ -129,41 +130,42 @@ export function renderKitchenView(container) {
           `).join('')}
         </div>
 
-        <!-- Orders Grid -->
+        <!-- KDS Ticket Grid -->
         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.2rem;">
           ${cookOrders.length === 0 ? `
-            <div style="grid-column: 1 / -1; background: #FFF; border: 2px dashed var(--border-light); border-radius: 16px; padding: 4rem 1rem; text-align: center;">
-              <div style="font-size: 3rem; margin-bottom: 0.5rem;">👨‍🍳</div>
-              <div style="font-family: var(--font-sans); font-size: 1.2rem; font-weight: 700; color: var(--ink-primary);">Kitchen is All Caught Up!</div>
-              <div style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
-                New student orders will appear here in real-time.
-              </div>
+            <div style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; background: #FFF; border: 2px dashed var(--border-light); border-radius: 16px;">
+              <div style="font-size: 3rem; margin-bottom: 0.5rem;">🍳</div>
+              <h3 style="font-family: var(--font-display); font-size: 1.8rem; color: var(--ink-primary); margin: 0;">ALL CAUGHT UP!</h3>
+              <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
+                No pending kitchen tickets. Standing by for incoming orders.
+              </p>
             </div>
           ` : cookOrders.map(order => {
             const isCooking = order.status === 'preparing';
-            const isPriority = (order.priorityLevel || 0) >= 2;
-            const elapsedMins = Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 60000);
-            const isDelayed = elapsedMins > 10;
+            const elapsedMins = order.createdAt ? Math.floor(Math.max(0, (Date.now() - new Date(order.createdAt).getTime()) / 60000)) : 0;
+            const isDelayed = elapsedMins >= 15;
+            const effectiveScore = computeEffectiveScore(order);
+            const orderId = order.orderId || order.id;
 
             return `
-              <div class="kds-card" style="background: #FFF; border: 2px solid ${isDelayed ? 'var(--brand-red)' : (isPriority ? '#F59E0B' : (isCooking ? '#3B82F6' : 'var(--border-light)'))}; border-radius: 16px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between; box-shadow: ${isPriority ? '0 4px 14px rgba(245,158,11,0.18)' : '0 2px 8px rgba(0,0,0,0.04)'}; position: relative;">
+              <div class="kds-ticket-card" style="background: #FFF; border: 2px solid ${isDelayed ? '#EF4444' : (isCooking ? '#F59E0B' : 'var(--border-light)')}; border-radius: 14px; padding: 1.2rem; box-shadow: 0 4px 12px rgba(0,0,0,0.04); display: flex; flex-direction: column; justify-content: space-between;">
                 
-                <!-- Ticket Header -->
                 <div>
-                  ${isPriority ? `
-                    <div style="background: #FEF3C7; border: 1.5px solid #F59E0B; border-radius: 6px; padding: 2px 8px; margin-bottom: 8px; display: inline-flex; align-items: center; gap: 4px;">
-                      <span style="font-size: 0.9rem;">⭐️</span>
-                      <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; color: #92400E;">FACULTY PRIORITY</span>
-                    </div>
-                  ` : ''}
-
-                  <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px dashed var(--border-light); padding-bottom: 0.8rem; margin-bottom: 0.8rem;">
+                  <!-- Header: Token & Priority Score -->
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; border-bottom: 1.5px solid var(--border-light); padding-bottom: 0.8rem;">
                     <div>
-                      <div style="font-family: var(--font-mono); font-size: 2.2rem; font-weight: 900; color: var(--ink-primary); line-height: 1;">
-                        ${escapeHtml(order.tokenNumber || '#---')}
+                      <div style="font-family: var(--font-mono); font-size: 1.6rem; font-weight: 800; color: var(--ink-primary); line-height: 1;">
+                        ${escapeHtml(order.tokenNumber || 'TB-???')}
                       </div>
-                      <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary); margin-top: 4px;">
-                        PIN: <strong style="color: var(--ink-primary);">${escapeHtml(order.pinCode || '----')}</strong> · 👤 ${escapeHtml(order.studentName || 'Student')}${order.estimatedMinutes ? ` · ⏳ Est. ~${escapeHtml(order.estimatedMinutes)}m` : ''}
+                      <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px;">
+                        <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: #6366F1; background: #EEF2FF; padding: 2px 6px; border-radius: 4px;">
+                          Score: ${effectiveScore}
+                        </span>
+                        ${order.priorityLevel > 1 ? `
+                          <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: #D97706; background: #FEF3C7; padding: 2px 6px; border-radius: 4px;">
+                            Priority ⭐️
+                          </span>
+                        ` : ''}
                       </div>
                     </div>
 
@@ -171,7 +173,7 @@ export function renderKitchenView(container) {
                       <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: ${isCooking ? '#FEF3C7' : '#F3F4F6'}; color: ${isCooking ? '#92400E' : 'var(--ink-secondary)'};">
                         ${isCooking ? '🔥 COOKING' : '⏳ PLACED'}
                       </span>
-                      <div style="font-family: var(--font-mono); font-size: 0.75rem; color: ${isDelayed ? 'var(--brand-red)' : 'var(--ink-secondary)'}; margin-top: 4px; font-weight: ${isDelayed ? '700' : '400'};">
+                      <div style="font-family: var(--font-mono); font-size: 0.75rem; color: ${isDelayed ? '#EF4444' : 'var(--ink-secondary)'}; margin-top: 4px; font-weight: ${isDelayed ? '700' : '400'};">
                         ⏱️ ${elapsedMins}m ago
                       </div>
                     </div>
@@ -184,9 +186,7 @@ export function renderKitchenView(container) {
                         <span style="font-size: 1rem; font-weight: 700; color: var(--ink-primary);">
                           ${escapeHtml(item.quantity)}x ${escapeHtml(item.name)}
                         </span>
-                        <span style="font-size: 0.8rem; color: var(--ink-secondary);">
-                          ₹${escapeHtml(item.price * item.quantity)}
-                        </span>
+                        ${item.station ? `<span style="font-size: 0.75rem; color: var(--ink-secondary); text-transform: uppercase;">${escapeHtml(item.station)}</span>` : ''}
                       </div>
                     `).join('')}
                   </div>
@@ -197,7 +197,7 @@ export function renderKitchenView(container) {
                   ${!isCooking ? `
                     <button 
                       class="kds-action-btn" 
-                      data-order-id="${order.id}" 
+                      data-order-id="${orderId}" 
                       data-target-status="preparing"
                       style="padding: 10px; border-radius: 8px; border: 1.5px solid #F59E0B; background: #FEF3C7; color: #92400E; font-family: var(--font-sans); font-size: 0.9rem; font-weight: 700; cursor: pointer;"
                     >
@@ -207,7 +207,7 @@ export function renderKitchenView(container) {
 
                   <button 
                     class="kds-action-btn" 
-                    data-order-id="${order.id}" 
+                    data-order-id="${orderId}" 
                     data-target-status="ready"
                     style="padding: 10px; border-radius: 8px; border: none; background: #16A34A; color: #FFF; font-family: var(--font-sans); font-size: 0.9rem; font-weight: 800; cursor: pointer; box-shadow: 0 2px 6px rgba(22,163,74,0.3);"
                   >
@@ -238,14 +238,32 @@ export function renderKitchenView(container) {
         btn.textContent = 'Updating...';
         btn.disabled = true;
 
-        await updateOrderStatus(orderId, targetStatus);
+        try {
+          await updateOrderStatus(orderId, targetStatus);
+          await loadKitchenData();
+        } catch (e) {
+          console.error("Status update error:", e);
+          btn.disabled = false;
+          btn.textContent = 'Error - Retry';
+        }
       });
     });
   }
 
-  // Subscribe to live Firestore stream
-  unsubscribeOrders = subscribeOrders((orders) => {
-    currentOrders = orders;
-    renderKDS();
-  });
+  async function loadKitchenData() {
+    try {
+      const orders = await fetchKitchenOrders();
+      currentOrders = (orders || []).map(o => ({
+        ...o,
+        id: o.orderId || o.id,
+      }));
+      renderKDS();
+    } catch (err) {
+      console.warn("KDS operational fetch notice:", err);
+    }
+  }
+
+  // Initial fetch and 5-second polling loop
+  loadKitchenData();
+  pollInterval = setInterval(loadKitchenData, 5000);
 }

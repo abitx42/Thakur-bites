@@ -48,8 +48,9 @@ export {
   executeEmergencyOperationalAction,
 } from './developer_cockpit';
 export { updateAppVersionPolicy } from './version_policy';
-
-
-
-
-
+export {
+  toggleMenuItemAvailability,
+  updateMenuItemDetails,
+  upsertMenuItem,
+  deleteMenuItemAdmin,
+} from './menu_management';
