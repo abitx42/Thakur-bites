@@ -30,13 +30,15 @@ class FirestoreService {
         );
   }
 
-  /// Real-time stream of ALL menu items including out-of-stock items (for cart live stock sync).
+  Stream<List<MenuItem>>? _cachedAllMenuItemsStream;
+
+  /// Real-time shared broadcast stream of ALL menu items including out-of-stock items (for cart live stock sync).
   Stream<List<MenuItem>> allMenuItemsStream() {
-    return _menuItems.snapshots().map(
+    return _cachedAllMenuItemsStream ??= _menuItems.snapshots().map(
       (snapshot) => snapshot.docs
           .map((doc) => MenuItem.fromFirestore(doc.id, doc.data()))
           .toList(),
-    );
+    ).asBroadcastStream();
   }
 
   /// Fetch a single menu item by ID

@@ -477,6 +477,7 @@ class AuthService {
     await _users.doc(profile.uid).update({
       'displayName': profile.displayName,
       if (profile.phone != null) 'phone': profile.phone,
+      if (profile.rollNo != null) 'rollNo': profile.rollNo,
       if (profile.department != null) 'department': profile.department,
       if (profile.photoURL != null) 'photoURL': profile.photoURL,
       'updatedAt': Timestamp.now(),

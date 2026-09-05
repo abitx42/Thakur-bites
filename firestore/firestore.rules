@@ -200,8 +200,9 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isManagerOrAdmin();
       allow create: if false; // Backend Cloud Function ONLY
       allow update: if isOwner(userId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phone', 'department', 'year', 'photoURL', 'preferences', 'updatedAt'])
-        && request.resource.data.displayName is string && request.resource.data.displayName.size() >= 2 && request.resource.data.displayName.size() <= 100;
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phone', 'rollNo', 'department', 'year', 'photoURL', 'preferences', 'updatedAt'])
+        && request.resource.data.displayName is string && request.resource.data.displayName.size() >= 2 && request.resource.data.displayName.size() <= 100
+        && (!('rollNo' in request.resource.data) || (request.resource.data.rollNo is string && request.resource.data.rollNo.size() <= 30));
       allow delete: if false;
     }
 
