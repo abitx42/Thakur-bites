@@ -222,7 +222,12 @@ service cloud.firestore {
       allow update: if isOwner(userId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phone', 'rollNo', 'department', 'year', 'photoURL', 'preferences', 'updatedAt'])
         && request.resource.data.displayName is string && request.resource.data.displayName.size() >= 2 && request.resource.data.displayName.size() <= 100
-        && (!('rollNo' in request.resource.data) || (request.resource.data.rollNo is string && request.resource.data.rollNo.size() <= 30));
+        && (!('rollNo' in request.resource.data) || (request.resource.data.rollNo is string && request.resource.data.rollNo.size() <= 30))
+        && (!('phone' in request.resource.data) || (request.resource.data.phone is string && request.resource.data.phone.size() <= 15))
+        && (!('department' in request.resource.data) || (request.resource.data.department is string && request.resource.data.department.size() <= 50))
+        && (!('year' in request.resource.data) || (request.resource.data.year is string && request.resource.data.year.size() <= 10))
+        && (!('photoURL' in request.resource.data) || (request.resource.data.photoURL is string && request.resource.data.photoURL.size() <= 500 && (request.resource.data.photoURL.matches('^https://.*') || request.resource.data.photoURL == '')))
+        && (!('preferences' in request.resource.data) || (request.resource.data.preferences is map));
       allow delete: if false;
     }
 

@@ -1,0 +1,11 @@
+{
+  "name": "thakur-bites",
+  "version": "2.0.0",
+  "description": "Thakur Bites — Next-Gen High-Concurrency Campus Canteen System",
+  "private": true,
+  "scripts": {
+    "build": "cd functions && npm run build",
+    "test": "cd functions && npm test",
+    "security-check": "./scripts/run_all_security_checks.sh"
+  }
+}

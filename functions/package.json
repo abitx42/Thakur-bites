@@ -10,6 +10,7 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
+    "pretest": "npm run build",
     "test": "node --test test/*.test.js"
   },
   "engines": {

@@ -18,7 +18,7 @@ export function createSecuritySanitizedResponse(incidentId: string, customMessag
   return {
     success: false,
     error: 'REQUEST_REJECTED',
-    message: customMessage || 'Nice try. Try harder. 😉',
+    message: customMessage || 'Request denied. Security policy violation.',
     incidentId: incidentId.replace('INCIDENT-', ''),
   };
 }

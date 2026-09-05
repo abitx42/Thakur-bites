@@ -100,7 +100,7 @@ export async function evaluateSecurityThreat(
 
   if (action === 'BLOCK' || action === 'CONTAIN_AND_ALERT') {
     incidentId = generateIncidentId();
-    sanitizedResponse = createSecuritySanitizedResponse(incidentId, 'Nice try. Try harder. 😉');
+    sanitizedResponse = createSecuritySanitizedResponse(incidentId);
 
     // Async log security event with high signal deduplication
     try {

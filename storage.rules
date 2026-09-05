@@ -31,10 +31,12 @@ service firebase.storage {
       allow update, delete: if isManagerOrAdmin();
     }
 
-    // Public Menu Images
+    // Public Menu Images (Admin Upload with Strict Size & MIME Whitelist)
     match /menu_images/{fileName} {
       allow read: if true;
-      allow write: if isManagerOrAdmin();
+      allow write: if isManagerOrAdmin()
+        && request.resource.size <= 2 * 1024 * 1024
+        && (request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp']);
     }
 
     // Default Deny
