@@ -4684,5 +4684,115 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(result2.status, 'CONFIRMED');
     assert.throws(() => order2.cancel(), /Cannot cancel paid order/);
   });
+
+  it('231. Payment & Refund Error Leakage Prevention: Gateway exceptions sanitization', () => {
+    const { createSanitizedHttpsError } = require('../lib/security_responses');
+    const rawInternalError = new Error('Razorpay payment gateway connection failed: auth_token_expired');
+    const sanitizedError = createSanitizedHttpsError('PAYMENT_ERROR', rawInternalError, { orderId: 'ord_123', amount: 500 });
+
+    assert.strictEqual(sanitizedError.code, 'internal');
+    assert.strictEqual(sanitizedError.message.includes('auth_token_expired'), false, 'Internal gateway token must not leak to client');
+    assert.strictEqual(sanitizedError.message.includes('Razorpay'), false, 'Gateway vendor name must not leak to client');
+    assert.match(sanitizedError.message, /reference SEC-PAY-[A-F0-9]{8}/);
+  });
+
+  it('232. Binary Magic-Byte File Type Sniffing & Executable Polyglot Rejection', () => {
+    const { validateFileBuffer } = require('../lib/upload_validator');
+
+    // Valid JPEG header
+    const validJpeg = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46]);
+    assert.strictEqual(validateFileBuffer(validJpeg).isValid, true);
+    assert.strictEqual(validateFileBuffer(validJpeg).detectedType, 'JPEG');
+
+    // Valid PNG header
+    const validPng = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00]);
+    assert.strictEqual(validateFileBuffer(validPng).isValid, true);
+    assert.strictEqual(validateFileBuffer(validPng).detectedType, 'PNG');
+
+    // Valid PDF header
+    const validPdf = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF');
+    assert.strictEqual(validateFileBuffer(validPdf).isValid, true);
+    assert.strictEqual(validateFileBuffer(validPdf).detectedType, 'PDF');
+
+    // Malicious Windows PE/EXE masquerading as JPG
+    const fakeExeJpg = Buffer.concat([Buffer.from([0x4D, 0x5A, 0x90, 0x00]), Buffer.alloc(20)]);
+    const exeResult = validateFileBuffer(fakeExeJpg);
+    assert.strictEqual(exeResult.isValid, false);
+    assert.strictEqual(exeResult.isExecutable, true);
+
+    // Malicious Linux ELF binary
+    const elfBinary = Buffer.concat([Buffer.from([0x7F, 0x45, 0x4C, 0x46]), Buffer.alloc(20)]);
+    const elfResult = validateFileBuffer(elfBinary);
+    assert.strictEqual(elfResult.isValid, false);
+    assert.strictEqual(elfResult.isExecutable, true);
+
+    // Malicious Shell script
+    const shellScript = Buffer.from('#!/bin/bash\nrm -rf /');
+    const shellResult = validateFileBuffer(shellScript);
+    assert.strictEqual(shellResult.isValid, false);
+    assert.strictEqual(shellResult.isExecutable, true);
+  });
+
+  it('233. PDF Active Script & Embedded Payload Neutralization', () => {
+    const { validateFileBuffer } = require('../lib/upload_validator');
+
+    // PDF with embedded JavaScript
+    const maliciousJsPdf = Buffer.from('%PDF-1.4\n1 0 obj\n<</Type /Action /S /JavaScript /JS (app.alert("PWNED"))>>\nendobj\ntrailer\n<<>>\n%%EOF');
+    const jsResult = validateFileBuffer(maliciousJsPdf);
+    assert.strictEqual(jsResult.isValid, false);
+    assert.strictEqual(jsResult.hasActiveContent, true);
+
+    // PDF with /Launch exploit
+    const launchPdf = Buffer.from('%PDF-1.4\n1 0 obj\n<</Type /Action /S /Launch /F (calc.exe)>>\nendobj\ntrailer\n<<>>\n%%EOF');
+    const launchResult = validateFileBuffer(launchPdf);
+    assert.strictEqual(launchResult.isValid, false);
+    assert.strictEqual(launchResult.hasActiveContent, true);
+
+    // PDF with /EmbeddedFiles exploit
+    const embeddedPdf = Buffer.from('%PDF-1.4\n1 0 obj\n<</EmbeddedFiles 2 0 R>>\nendobj\ntrailer\n<<>>\n%%EOF');
+    const embeddedResult = validateFileBuffer(embeddedPdf);
+    assert.strictEqual(embeddedResult.isValid, false);
+    assert.strictEqual(embeddedResult.hasActiveContent, true);
+
+    // Clean institutional ID PDF
+    const cleanPdf = Buffer.from('%PDF-1.4\n1 0 obj\n<</Type /Catalog /Pages 2 0 R>>\nendobj\ntrailer\n<<>>\n%%EOF');
+    const cleanResult = validateFileBuffer(cleanPdf);
+    assert.strictEqual(cleanResult.isValid, true);
+    assert.strictEqual(cleanResult.hasActiveContent, false);
+  });
+
+  it('234. Progressive Multi-Tier Rate Limiting & Exponential Backoff Delay Progression', () => {
+    const { calculateBackoffDelaySeconds, RATE_LIMIT_POLICIES } = require('../lib/rate_limiter');
+
+    // Invariant: Delay stays 0s for initial minor mistakes (1–3 tries)
+    assert.strictEqual(calculateBackoffDelaySeconds(1), 0);
+    assert.strictEqual(calculateBackoffDelaySeconds(2), 0);
+    assert.strictEqual(calculateBackoffDelaySeconds(3), 0);
+
+    // Invariant: Exponential penalty kicks in on sustained attempts
+    assert.strictEqual(calculateBackoffDelaySeconds(4), 5, '4th consecutive failure must incur 5s backoff');
+    assert.strictEqual(calculateBackoffDelaySeconds(5), 15, '5th consecutive failure must incur 15s backoff');
+    assert.strictEqual(calculateBackoffDelaySeconds(6), 60, '6th consecutive failure must incur 60s backoff');
+    assert.strictEqual(calculateBackoffDelaySeconds(10), 60, 'Subsequent brute-force attempts cap at 60s per call');
+
+    // Invariant: All required zero-trust security policy domains are configured
+    const requiredPolicies = ['AUTH_LOGIN', 'AUTH_VERIFICATION', 'STAFF_PIN', 'CHECKOUT', 'PAYMENT', 'PUBLIC_READ', 'ADMIN', 'DEVELOPER'];
+    for (const policy of requiredPolicies) {
+      assert.ok(RATE_LIMIT_POLICIES[policy], `Policy ${policy} must be registered in RATE_LIMIT_POLICIES`);
+      assert.ok(RATE_LIMIT_POLICIES[policy].maxRequests > 0, `Policy ${policy} must have positive maxRequests`);
+      assert.ok(RATE_LIMIT_POLICIES[policy].windowSeconds > 0, `Policy ${policy} must have positive windowSeconds`);
+    }
+  });
+
+  it('235. Secrets Hygiene Invariant: Zero leaked credentials in codebase or git commit history', () => {
+    const { execSync } = require('child_process');
+    const path = require('path');
+    const rootDir = path.resolve(__dirname, '../..');
+
+    // Run the secret scanner and verify clean exit code 0
+    const result = execSync('node scripts/scan_secrets.js', { cwd: rootDir, encoding: 'utf8' });
+    assert.strictEqual(result.includes('SECRET SCANNING GATE PASSED (100% CLEAN)'), true);
+    assert.strictEqual(result.includes('Zero leaked credentials'), true);
+  });
 });
 

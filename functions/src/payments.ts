@@ -19,6 +19,7 @@ import { assertActiveWorkstationSession } from './shift_pins';
 import { enforceAppVersionPolicy } from './version_policy';
 import { assertCapability } from './authorization_policy';
 import { isProduction, isSimulationAllowed } from './env_config';
+import { createSanitizedHttpsError } from './security_responses';
 
 const db = admin.firestore();
 
@@ -297,7 +298,11 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
 
     return result;
   } catch (error: any) {
-    throw new HttpsError('internal', error.message);
+    throw createSanitizedHttpsError('PAYMENT', error, {
+      orderId,
+      actorUid: request.auth.uid,
+      details: { gatewayOrderId, gatewayPaymentId },
+    });
   }
 });
 

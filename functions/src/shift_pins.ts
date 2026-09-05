@@ -2,7 +2,12 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { enforceAppCheck } from './app_check';
-import { enforceRateLimit } from './rate_limiter';
+import {
+  enforceRateLimit,
+  enforceExponentialBackoff,
+  recordAuthFailure,
+  recordAuthSuccess,
+} from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
 import { assertCapability } from './authorization_policy';
 
@@ -181,6 +186,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
   }
 
   const hashedDeviceId = crypto.createHash('sha256').update(`DEVICE_${cleanDeviceId}`).digest('hex').slice(0, 16);
+  await enforceExponentialBackoff(hashedDeviceId, 'staff_pin');
   await enforceRateLimit(cleanDeviceId, 'shift_pin_verification');
   // Device IDs are client controlled before authentication. Pair them with a
   // pseudonymous network bucket so rotating a device ID cannot reset the limit.
@@ -203,6 +209,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
     .get();
 
   if (pinsSnap.empty) {
+    await recordAuthFailure(hashedDeviceId, 'staff_pin');
     await logSecurityEvent({
       eventType: 'SHIFT_PIN_VERIFICATION_NO_ACTIVE_SHIFT',
       severity: 'LOW',
@@ -234,6 +241,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
 
   // If no active candidate matched the PIN, record failed attempt and fail closed
   if (!candidateDoc) {
+    await recordAuthFailure(hashedDeviceId, 'staff_pin');
     const targetRef = pinsSnap.docs[0].ref;
     await db.runTransaction(async (t) => {
       const snap = await t.get(targetRef);
@@ -318,6 +326,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
       boundDeviceList = boundDevices;
     });
   } catch (err: any) {
+    await recordAuthFailure(hashedDeviceId, 'staff_pin');
     await logSecurityEvent({
       eventType: 'STAFF_SHIFT_PIN_FAILED',
       severity: 'MEDIUM',
@@ -364,6 +373,8 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
       actorType: 'WORKSTATION_DEVICE',
     },
   });
+
+  await recordAuthSuccess(hashedDeviceId, 'staff_pin');
 
   return {
     success: true,

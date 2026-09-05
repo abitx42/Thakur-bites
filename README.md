@@ -115,8 +115,8 @@ bash scripts/run_all_security_checks.sh
 ### Key Port Matrix
 | Interface | Local URL | Authentication |
 |:---|:---|:---|
-| **Flutter Customer Web App** | `http://localhost:8080` | Google Sign-In / Student Login |
-| **Staff Operations Hub** | `http://localhost:3000` | Workstation Shift PIN (`123456`) or Email |
+| **Customer Web App** | `http://localhost:8080` | Google Sign-In / Student Login |
+| **Staff Operations Hub** | `http://localhost:3000` | Dynamic Shift PIN (CSPRNG generated) or Email |
 | **Cafeteria 4K TV Board** | `http://localhost:3000/web_tv` | Zero-Auth (Public Read-Only) |
 
 ---

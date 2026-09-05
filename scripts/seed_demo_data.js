@@ -71,7 +71,7 @@ async function seedDemoData() {
 
   // 2. Seed Dynamic CSPRNG Shift PINs for Today (Zero static/predictable credentials)
   console.log('▶ Step 2: Generating Dynamic CSPRNG Workstation Shift PINs...');
-  const dynamicPin = process.env.DEMO_PIN || '123456';
+  const dynamicPin = process.env.DEMO_PIN || String(crypto.randomInt(100000, 1000000));
   const dynamicSalt = crypto.randomBytes(16).toString('hex');
   const pinHash = hashPin(dynamicPin, dynamicSalt);
 
@@ -268,7 +268,7 @@ async function seedDemoData() {
   console.log('\n════════════════════════════════════════════════════════════════');
   console.log('🏆 DEMO DATA SEEDING COMPLETE! ALL SYSTEMS POPULATED.');
   console.log('════════════════════════════════════════════════════════════════');
-  console.log('\n🔑 TEST SHIFT PIN FOR WORKSTATIONS (KITCHEN/PICKUP/CASHIER): 123456');
+  console.log(`\n🔑 DYNAMIC SHIFT PIN FOR WORKSTATIONS (KITCHEN/PICKUP/CASHIER): ${dynamicPin}`);
   console.log('🌐 TV Display: open web_tv/index.html');
   console.log('🖥️ Staff Hub:  open index.html\n');
 }

@@ -9,6 +9,7 @@ import { enforceAppCheck } from './app_check';
 import { RazorpayPaymentAdapter } from './payments';
 import { enforceAppVersionPolicy } from './version_policy';
 import { assertCapability } from './authorization_policy';
+import { createSanitizedHttpsError } from './security_responses';
 
 const db = admin.firestore();
 
@@ -293,14 +294,11 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
         }).catch(() => {});
       }
 
-      await logSecurityEvent({
-        eventType: 'GATEWAY_REFUND_FAILED',
-        severity: 'HIGH',
+      throw createSanitizedHttpsError('REFUND', err, {
         orderId,
         actorUid: actorId,
-        details: { error: err.message, gatewayPaymentId, amountPaise: requestedRefundPaise, reservationId },
+        details: { gatewayPaymentId, amountPaise: requestedRefundPaise, reservationId },
       });
-      throw new HttpsError('internal', `Payment gateway refund failed: ${err.message}`);
     }
   } else {
     await reservationRef.update({

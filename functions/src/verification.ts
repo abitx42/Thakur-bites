@@ -7,6 +7,7 @@ import { logSecurityEvent } from './security_logger';
 import { syncUserCustomClaims } from './claims_manager';
 import { AccountType, VerificationStatus, PriorityLevel, VerificationApplication } from './types';
 import { assertCapability } from './authorization_policy';
+import { validateAndQuarantineFile } from './upload_validator';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -87,15 +88,10 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
   }
   const safeProofPath = validateProofPath(idProofStoragePath, userId);
   if (safeProofPath) {
-    try {
-      const [metadata] = await admin.storage().bucket().file(safeProofPath).getMetadata();
-      const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
-      if (!allowedTypes.has(String(metadata.contentType)) || Number(metadata.size) <= 0 || Number(metadata.size) > 5 * 1024 * 1024) {
-        throw new HttpsError('invalid-argument', 'ID proof has an invalid type or size.');
-      }
-    } catch (error: unknown) {
-      if (error instanceof HttpsError) throw error;
-      throw new HttpsError('failed-precondition', 'Upload a valid ID proof before submitting your application.');
+    const bucket = admin.storage().bucket();
+    const quarantineResult = await validateAndQuarantineFile(bucket, safeProofPath, userId);
+    if (!quarantineResult.safe) {
+      throw new HttpsError('invalid-argument', quarantineResult.reason || 'ID proof failed security content validation.');
     }
   }
 

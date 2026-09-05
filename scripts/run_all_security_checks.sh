@@ -17,9 +17,12 @@ echo "▶ Step 2: Running SAST Static Application Security Code Analysis..."
 node scripts/sast_analyzer.js
 
 echo ""
-echo "▶ Step 3: Auditing Backend Node Dependencies for Vulnerabilities..."
+echo "▶ Step 3: Auditing Supply-Chain Dependencies (Node & Flutter)..."
 cd functions
 npm audit --audit-level=high
+cd ..
+cd thakur_bites
+dart pub outdated
 cd ..
 
 echo ""

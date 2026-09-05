@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 
@@ -103,11 +104,42 @@ function scanDirectory(dir) {
   }
 }
 
+function scanGitHistory() {
+  try {
+    const gitDiff = execSync('git log -p -n 30', { cwd: ROOT_DIR, encoding: 'utf8', maxBuffer: 15 * 1024 * 1024 });
+    const lines = gitDiff.split('\n');
+    let currentCommit = 'unknown';
+
+    for (const line of lines) {
+      if (line.startsWith('commit ')) {
+        currentCommit = line.split(' ')[1]?.slice(0, 10) || 'unknown';
+      }
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        for (const pattern of SECRET_PATTERNS) {
+          if (pattern.regex.test(line)) {
+            if (line.includes('test_webhook_secret_key') && pattern.name === 'Generic API Secret Assignment') {
+              continue;
+            }
+            violations.push({
+              file: `git-history (commit ${currentCommit})`,
+              pattern: pattern.name,
+              severity: pattern.severity,
+            });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('  ⚠️ Git history scan skipped:', err.message);
+  }
+}
+
 console.log('════════════════════════════════════════════════════════════════');
 console.log('🔍 THAKUR BITES PLATFORM 2.0 — SECRET & CREDENTIAL SCANNER');
 console.log('════════════════════════════════════════════════════════════════\n');
 
 scanDirectory(ROOT_DIR);
+scanGitHistory();
 
 console.log(`▶ Scanned ${scannedFilesCount} source files across the platform.`);
 
