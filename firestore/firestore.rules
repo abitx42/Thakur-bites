@@ -198,14 +198,7 @@ service cloud.firestore {
     // ─── Universal Users (Platform 2.0) ──────────────────────────
     match /users/{userId} {
       allow read: if isOwner(userId) || isManagerOrAdmin();
-      allow create: if isOwner(userId)
-        && request.resource.data.accountType in ['STUDENT', 'VISITOR']
-        && (request.resource.data.accountType != 'STUDENT' || request.auth.token.email.matches('.*@tcetmumbai[.]in$'))
-        && request.resource.data.priorityLevel == (request.resource.data.accountType == 'STUDENT' ? 1 : 0)
-        && request.resource.data.verificationStatus in ['VERIFIED', 'PENDING', 'NOT_REQUIRED']
-        && request.resource.data.accountDisabled == false
-        && request.resource.data.totalOrders == 0
-        && request.resource.data.totalSpentPaise == 0;
+      allow create: if false; // Server-Authoritative via Cloud Functions Admin SDK only (TB-NEW-001/002)
       allow update: if isOwner(userId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phone', 'rollNo', 'department', 'year', 'photoURL', 'preferences', 'updatedAt'])
         && request.resource.data.displayName is string && request.resource.data.displayName.size() >= 2 && request.resource.data.displayName.size() <= 100

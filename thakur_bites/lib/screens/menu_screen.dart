@@ -770,6 +770,53 @@ class _MenuScreenState extends State<MenuScreen> {
                   ),
                 ],
               ),
+
+              // Guest Account Preservation Banner (TB-NEW-004)
+              if (auth.isGuest) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFBFDBFE), width: 1.5),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.cloud_sync_outlined, size: 22, color: Color(0xFF1D4ED8)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Ordering as Guest',
+                              style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w700, color: const Color(0xFF1E40AF)),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Save your order history & tickets across visits with Google.',
+                              style: AppFonts.body(fontSize: 11.5, color: const Color(0xFF1E3A8A)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2563EB),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        onPressed: () => auth.linkGuestWithGoogle(),
+                        child: const Text('Save Account', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 20),
 
               // Faculty & Staff Notice

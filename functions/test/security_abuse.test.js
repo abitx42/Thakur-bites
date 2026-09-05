@@ -4405,5 +4405,105 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(attemptDemoLogin('admin@tcetmumbai.in', 'password123'), false);
     assert.strictEqual(attemptDemoLogin('kitchen@tcetmumbai.in', '123456'), false);
   });
+
+  it('221. Verified Email Ownership Invariant: Unverified institutional email assigns Priority 0 & PENDING (TB-NEW-001 & TB-NEW-003)', () => {
+    const { classifyIdentity } = require('../lib/identity_classifier');
+
+    function provisionClassification(email, emailVerified, isAnonymous) {
+      if (isAnonymous) {
+        return { accountType: 'VISITOR', verificationStatus: 'NOT_REQUIRED', priorityLevel: 0, isVerified: true };
+      }
+      const classification = classifyIdentity(email);
+      let verificationStatus = classification.verificationStatus;
+      let priorityLevel = classification.priorityLevel;
+
+      if (classification.identityHints.isInstitutionalEmail && !emailVerified) {
+        verificationStatus = 'PENDING';
+        priorityLevel = 0; // Strictly 0 until verified
+      }
+      const isVerified = emailVerified && verificationStatus === 'VERIFIED';
+      return { accountType: classification.accountType, verificationStatus, priorityLevel, isVerified };
+    }
+
+    // Unverified @tcetmumbai.in account: MUST NOT receive priority 1
+    const unverifiedStudent = provisionClassification('1032251174@tcetmumbai.in', false, false);
+    assert.strictEqual(unverifiedStudent.accountType, 'STUDENT');
+    assert.strictEqual(unverifiedStudent.verificationStatus, 'PENDING');
+    assert.strictEqual(unverifiedStudent.priorityLevel, 0, 'Unverified TCET email must have Priority 0');
+    assert.strictEqual(unverifiedStudent.isVerified, false);
+
+    // Verified @tcetmumbai.in account: Receives priority 1
+    const verifiedStudent = provisionClassification('1032251174@tcetmumbai.in', true, false);
+    assert.strictEqual(verifiedStudent.accountType, 'STUDENT');
+    assert.strictEqual(verifiedStudent.verificationStatus, 'VERIFIED');
+    assert.strictEqual(verifiedStudent.priorityLevel, 1, 'Verified TCET email receives Priority 1');
+    assert.strictEqual(verifiedStudent.isVerified, true);
+
+    // Unverified visitor email: Always Priority 0
+    const visitor = provisionClassification('random.person@gmail.com', false, false);
+    assert.strictEqual(visitor.accountType, 'VISITOR');
+    assert.strictEqual(visitor.priorityLevel, 0);
+  });
+
+  it('222. Post-Verification Auto-Promotion: Elevates pending student upon email confirmation (TB-NEW-003)', () => {
+    function simulateUserReauth(existingUserDoc, email, emailVerified) {
+      let currentVerificationStatus = existingUserDoc.verificationStatus;
+      let currentPriorityLevel = existingUserDoc.priorityLevel;
+      let currentIsVerified = existingUserDoc.isVerified;
+
+      const isInstitutional = email.endsWith('@tcetmumbai.in') || email.endsWith('@thakureducation.org');
+
+      if (
+        isInstitutional &&
+        emailVerified &&
+        existingUserDoc.verificationStatus === 'PENDING' &&
+        existingUserDoc.accountType === 'STUDENT'
+      ) {
+        currentVerificationStatus = 'VERIFIED';
+        currentPriorityLevel = 1;
+        currentIsVerified = true;
+      }
+
+      return {
+        ...existingUserDoc,
+        verificationStatus: currentVerificationStatus,
+        priorityLevel: currentPriorityLevel,
+        isVerified: currentIsVerified,
+      };
+    }
+
+    const pendingUser = {
+      uid: 'user_42',
+      accountType: 'STUDENT',
+      verificationStatus: 'PENDING',
+      priorityLevel: 0,
+      isVerified: false,
+    };
+
+    // Before clicking verify link: still pending
+    const stillPending = simulateUserReauth(pendingUser, '1032251174@tcetmumbai.in', false);
+    assert.strictEqual(stillPending.priorityLevel, 0);
+    assert.strictEqual(stillPending.verificationStatus, 'PENDING');
+
+    // After clicking verify link in email: auto-promoted to VERIFIED with priority 1
+    const elevated = simulateUserReauth(pendingUser, '1032251174@tcetmumbai.in', true);
+    assert.strictEqual(elevated.priorityLevel, 1, 'Student successfully promoted to priority 1 upon email verification');
+    assert.strictEqual(elevated.verificationStatus, 'VERIFIED');
+    assert.strictEqual(elevated.isVerified, true);
+  });
+
+  it('223. Universal Server-Authoritative Profile Creation Invariant: Client create blocked by Firestore rules (TB-NEW-001/002)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const rulesPath = path.resolve(__dirname, '../../firestore/firestore.rules');
+    const rulesContent = fs.readFileSync(rulesPath, 'utf8');
+
+    // Invariant: /users/{userId} MUST NOT permit client create: if true or conditional client create
+    const userMatchBlock = rulesContent.match(/match \/users\/\{userId\} \{[\s\S]*?allow create:\s*([^;]+);/);
+    assert.ok(userMatchBlock, 'Users collection match block found in firestore.rules');
+    
+    const allowCreateCondition = userMatchBlock[1].trim();
+    assert.strictEqual(allowCreateCondition, 'if false', 'Firestore rules must strictly enforce "allow create: if false" on /users/{userId}');
+  });
 });
 

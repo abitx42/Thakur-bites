@@ -103,6 +103,23 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Link an anonymous guest session with Google (TB-NEW-004)
+  Future<void> linkGuestWithGoogle() async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      _currentUserProfile = await _authService.linkGuestWithGoogle();
+    } catch (e) {
+      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   /// Sign up with College Email or Visitor Email and Password
   Future<void> signUpWithEmail({
     required String email,

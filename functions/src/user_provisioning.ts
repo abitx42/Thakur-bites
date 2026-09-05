@@ -1,6 +1,6 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { UserDocument, VerificationStatus } from './types';
+import { UserDocument, VerificationStatus, PriorityLevel } from './types';
 import { classifyIdentity } from './identity_classifier';
 import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
@@ -52,6 +52,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
   // Authoritatively classify identity based on verified email
   let classification: ReturnType<typeof classifyIdentity>;
   let verificationStatus: VerificationStatus;
+  let priorityLevel: PriorityLevel;
 
   if (isAnonymous) {
     // Anonymous / Guest sign-in: Always VISITOR, Zero priority, Not Required verification
@@ -66,12 +67,17 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
       },
     };
     verificationStatus = 'NOT_REQUIRED';
+    priorityLevel = 0;
   } else {
     classification = classifyIdentity(email);
     verificationStatus = classification.verificationStatus;
-    // If institutional email, require email verification
+    // TB-NEW-001 & TB-NEW-003: Institutional email requires verified email ownership.
+    // Unverified institutional emails must NOT receive student priority!
     if (classification.identityHints.isInstitutionalEmail && !emailVerified) {
       verificationStatus = 'PENDING';
+      priorityLevel = 0; // Demoted to standard queue until ownership is verified
+    } else {
+      priorityLevel = classification.priorityLevel;
     }
   }
 
@@ -111,8 +117,24 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
       // User already exists — update mutable client-editable fields only (TB-AUTH-010)
       const existingData = userSnap.data() as UserDocument;
 
+      // TB-NEW-003: If user was previously PENDING email verification, but has now verified institutional email, elevate them.
+      let currentVerificationStatus = existingData.verificationStatus;
+      let currentPriorityLevel = existingData.priorityLevel;
+      let currentIsVerified = existingData.isVerified;
+
+      if (
+        classification.identityHints.isInstitutionalEmail &&
+        emailVerified &&
+        existingData.verificationStatus === 'PENDING' &&
+        existingData.accountType === 'STUDENT'
+      ) {
+        currentVerificationStatus = 'VERIFIED';
+        currentPriorityLevel = 1;
+        currentIsVerified = true;
+      }
+
       // Invariant: verified students/teachers cannot have their rollNo/employeeId or department overwritten by client
-      const isProfileLocked = existingData.verificationStatus === 'VERIFIED' || existingData.accountType === 'TEACHER';
+      const isProfileLocked = currentVerificationStatus === 'VERIFIED' || existingData.accountType === 'TEACHER';
       const preservedRollNo = isProfileLocked && existingData.rollNo ? existingData.rollNo : (cleanRollNo || existingData.rollNo || '');
       const preservedDept = isProfileLocked && existingData.department ? existingData.department : (cleanDept || existingData.department || '');
 
@@ -123,15 +145,18 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
         department: preservedDept,
         year: cleanYear || existingData.year || '',
         rollNo: preservedRollNo,
+        verificationStatus: currentVerificationStatus,
+        priorityLevel: currentPriorityLevel,
+        isVerified: currentIsVerified,
         updatedAt: now,
       });
 
       return {
         isNew: false,
         accountType: existingData.accountType,
-        verificationStatus: existingData.verificationStatus,
-        priorityLevel: existingData.priorityLevel,
-        isVerified: existingData.isVerified,
+        verificationStatus: currentVerificationStatus,
+        priorityLevel: currentPriorityLevel,
+        isVerified: currentIsVerified,
       };
     }
 
@@ -151,7 +176,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
 
     const isVerified = isAnonymous || classification.accountType === 'VISITOR'
       ? true  // Visitors do not require institutional verification
-      : (emailVerified && classification.verificationStatus === 'VERIFIED');
+      : (emailVerified && verificationStatus === 'VERIFIED');
 
     const newUser: UserDocument = {
       uid: userId,
@@ -160,7 +185,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
       photoURL: photoURL || undefined,
       accountType: classification.accountType,
       verificationStatus: verificationStatus,
-      priorityLevel: classification.priorityLevel,
+      priorityLevel: priorityLevel,
       department: cleanDept || (studentSnap.exists ? studentSnap.data()?.department : '') || '',
       year: cleanYear || (studentSnap.exists ? studentSnap.data()?.year : '') || '',
       rollNo: cleanRollNo || (studentSnap.exists ? studentSnap.data()?.rollNo : '') || '',
@@ -180,7 +205,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
       isNew: true,
       accountType: classification.accountType,
       verificationStatus,
-      priorityLevel: classification.priorityLevel,
+      priorityLevel,
       isVerified,
     };
   });

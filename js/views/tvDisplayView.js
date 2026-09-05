@@ -7,6 +7,10 @@ let unsubscribeQueue = null;
 let readyTickets = [];
 let preparingTickets = [];
 let clockInterval = null;
+let staleInterval = null;
+let lastDataReceivedAt = Date.now();
+let isStale = false;
+let lastFormattedTime = '';
 
 export function renderTvDisplayView(container) {
   if (unsubscribeQueue) {
@@ -16,6 +20,10 @@ export function renderTvDisplayView(container) {
   if (clockInterval) {
     clearInterval(clockInterval);
     clockInterval = null;
+  }
+  if (staleInterval) {
+    clearInterval(staleInterval);
+    staleInterval = null;
   }
 
   function getFormattedTime() {
@@ -51,6 +59,13 @@ export function renderTvDisplayView(container) {
               </div>
             </div>
           </div>
+
+          ${isStale ? `
+            <div style="background: rgba(234, 179, 8, 0.15); border: 1.5px solid #EAB308; color: #FACC15; padding: 12px 18px; border-radius: 10px; font-family: var(--font-mono); font-size: 0.95rem; margin-top: 1.5rem; display: flex; align-items: center; gap: 10px;">
+              <span>⚠️</span>
+              <span><strong>CONNECTION STALE:</strong> Showing last known queue from ${lastFormattedTime || 'server'}. Reconnecting to canteen system...</span>
+            </div>
+          ` : ''}
 
           <!-- TV Split Columns -->
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 2rem;">
@@ -119,9 +134,22 @@ export function renderTvDisplayView(container) {
     }
   }, 1000);
 
+  // Stale data heartbeat monitor (TB-TV-STALE-TIMER)
+  staleInterval = setInterval(() => {
+    const elapsedSec = Math.floor((Date.now() - lastDataReceivedAt) / 1000);
+    if (elapsedSec > 60 && !isStale) {
+      isStale = true;
+      render();
+    }
+  }, 10000);
+
   // Authoritative real-time public live queue subscription (Zero PII, Zero credentials needed)
   const queueDocRef = doc(db, 'publicLiveQueue', 'current');
   unsubscribeQueue = onSnapshot(queueDocRef, (snap) => {
+    lastDataReceivedAt = Date.now();
+    isStale = false;
+    lastFormattedTime = getFormattedTime();
+
     if (snap.exists()) {
       const data = snap.data();
       readyTickets = Array.isArray(data.ready) ? data.ready : [];
@@ -133,6 +161,8 @@ export function renderTvDisplayView(container) {
     render();
   }, (err) => {
     console.warn("TV live queue subscription notice:", err);
+    isStale = true;
+    render();
   });
 }
 

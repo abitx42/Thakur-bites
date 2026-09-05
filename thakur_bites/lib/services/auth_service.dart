@@ -154,23 +154,66 @@ class AuthService {
         throw Exception('Failed to create guest session.');
       }
 
-      try {
-        await _functions.provisionUserProfile(
-          displayName: 'Guest Visitor',
-        );
-      } catch (fnErr) {
-        debugPrint('[Auth] Server provisioning notice: $fnErr');
-      }
-
-      try {
-        await user.getIdToken(true);
-      } catch (_) {}
-
-      return await _ensureUserProfile(user);
+      return await _ensureUserProfile(
+        user,
+        initialDisplayName: 'Guest Visitor',
+      );
     } on FirebaseAuthException catch (e) {
       throw Exception(_mapFirebaseAuthError(e));
     } catch (e) {
       throw Exception('Guest sign-in failed: ${e.toString().replaceAll('Exception:', '').trim()}');
+    }
+  }
+
+  /// Link an anonymous Guest account with Google credentials to preserve order history (TB-NEW-004)
+  Future<UserProfile> linkGuestWithGoogle() async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null || !currentUser.isAnonymous) {
+      return await signInWithGoogle();
+    }
+
+    try {
+      if (kIsWeb) {
+        final googleProvider = GoogleAuthProvider();
+        googleProvider.addScope('email');
+        googleProvider.addScope('profile');
+        googleProvider.setCustomParameters({'prompt': 'select_account'});
+
+        try {
+          final userCredential = await currentUser.linkWithPopup(googleProvider);
+          final user = userCredential.user ?? currentUser;
+          return await _ensureUserProfile(user);
+        } on FirebaseAuthException catch (e) {
+          if (e.code == 'credential-already-in-use') {
+            return await signInWithGoogle();
+          }
+          rethrow;
+        }
+      } else {
+        final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+        if (googleUser == null) {
+          throw Exception('Google sign-in was cancelled.');
+        }
+        final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+        final OAuthCredential credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+        try {
+          final userCredential = await currentUser.linkWithCredential(credential);
+          final user = userCredential.user ?? currentUser;
+          return await _ensureUserProfile(user);
+        } on FirebaseAuthException catch (e) {
+          if (e.code == 'credential-already-in-use') {
+            return await signInWithGoogle();
+          }
+          rethrow;
+        }
+      }
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_mapFirebaseAuthError(e));
+    } catch (e) {
+      throw Exception('Account linking failed: ${e.toString().replaceAll('Exception:', '').trim()}');
     }
   }
 
@@ -297,7 +340,9 @@ class AuthService {
     }
   }
 
-  /// Helper to ensure an authoritative UserProfile document exists in Firestore and is loaded
+  /// Helper to ensure an authoritative UserProfile document exists in Firestore and is loaded.
+  /// Strictly fail-closed: If backend provisioning fails and the profile doc does not exist,
+  /// the client NEVER fabricates a profile document (TB-NEW-001/002).
   Future<UserProfile> _ensureUserProfile(
     User user, {
     String? initialDisplayName,
@@ -323,7 +368,7 @@ class AuthService {
     } catch (_) {}
 
     // 2. Fetch authoritative profile from Firestore
-    var userDoc = await _users.doc(user.uid).get();
+    final userDoc = await _users.doc(user.uid).get();
     if (userDoc.exists && userDoc.data() != null) {
       final profile = UserProfile.fromFirestore(userDoc.id, userDoc.data()!);
       if (profile.accountDisabled) {
@@ -333,61 +378,12 @@ class AuthService {
       return profile;
     }
 
-    // 3. Document does not exist in Firestore yet (first login or Cloud Functions unavailable).
-    // Safely create the initial profile document in Firestore conforming to Firestore security rules.
-    final email = user.email?.trim().toLowerCase() ?? '';
-    final isTcet = email.endsWith('@tcetmumbai.in');
-    final accountType = isTcet ? AccountType.student : AccountType.visitor;
-    final isVerified = isTcet || user.isAnonymous;
-    final priorityLevel = isTcet ? 1 : 0;
-    final verificationStatus = isTcet
-        ? VerificationStatus.verified
-        : VerificationStatus.notRequired;
-
-    String resolvedRollNo = initialRollNo ?? (isTcet ? 'TCET' : (user.isAnonymous ? 'GUEST' : ''));
-    if (resolvedRollNo == 'TCET' && email.contains('@')) {
-      final localPart = email.split('@').first;
-      final match = RegExp(r'^\d+').firstMatch(localPart);
-      if (match != null) {
-        resolvedRollNo = match.group(0)!;
-      }
-    }
-
-    final initialProfile = UserProfile(
-      uid: user.uid,
-      email: email,
-      displayName: (initialDisplayName != null && initialDisplayName.trim().isNotEmpty)
-          ? initialDisplayName.trim()
-          : ((user.displayName != null && user.displayName!.trim().isNotEmpty)
-              ? user.displayName!.trim()
-              : (user.isAnonymous ? 'Guest Visitor' : 'TCET Student')),
-      photoURL: user.photoURL,
-      accountType: accountType,
-      verificationStatus: verificationStatus,
-      priorityLevel: priorityLevel,
-      isVerified: isVerified,
-      rollNo: resolvedRollNo,
-      department: initialDepartment,
-      phone: initialPhone ?? user.phoneNumber,
-      accountDisabled: false,
-      totalOrders: 0,
-      totalSpentPaise: 0,
-      averageOrderPaise: 0,
-      createdAt: DateTime.now(),
-      lastLoginAt: DateTime.now(),
+    // 3. Document does not exist in Firestore and server provisioning failed.
+    // FAIL CLOSED: Do not allow client-fabricated profile (TB-NEW-002).
+    await _auth.signOut();
+    throw Exception(
+      'Account setup is temporarily unavailable. Please verify your connection or contact canteen management.',
     );
-
-    try {
-      await _users.doc(user.uid).set(initialProfile.toFirestore());
-      userDoc = await _users.doc(user.uid).get();
-      if (userDoc.exists && userDoc.data() != null) {
-        return UserProfile.fromFirestore(userDoc.id, userDoc.data()!);
-      }
-    } catch (setErr) {
-      debugPrint('[AuthService] Direct profile creation in Firestore: $setErr');
-    }
-
-    return initialProfile;
   }
 
   /// Translates Firebase Auth error codes into human-readable messages

@@ -200,6 +200,20 @@ function renderQueueData(data) {
   }
 }
 
+let lastDataReceivedAt = Date.now();
+let lastFormattedUpdateTime = '';
+
+// Check for stale data every 10 seconds (TB-TV-STALE-TIMER)
+setInterval(() => {
+  const elapsedSec = Math.floor((Date.now() - lastDataReceivedAt) / 1000);
+  if (elapsedSec > 60) {
+    statusPill.className = 'status-pill reconnecting';
+    statusText.textContent = 'STALE DATA';
+    reconnectBanner.textContent = `⚡️ Connection stale (${elapsedSec}s ago). Showing last known queue from ${lastFormattedUpdateTime || 'cache'}.`;
+    reconnectBanner.classList.remove('hidden');
+  }
+}, 10000);
+
 /**
  * Resilient Single-Document Firestore Listener with Clean Lifecycle and Exponential Backoff
  */
@@ -218,9 +232,18 @@ function startTVStream() {
     currentUnsubscribe = onSnapshot(
       queueDocRef,
       (snapshot) => {
+        lastDataReceivedAt = Date.now();
+        const d = new Date();
+        const hrs = d.getHours() % 12 || 12;
+        const mins = String(d.getMinutes()).padStart(2, '0');
+        const secs = String(d.getSeconds()).padStart(2, '0');
+        const ampm = d.getHours() >= 12 ? 'PM' : 'AM';
+        lastFormattedUpdateTime = `${hrs}:${mins}:${secs} ${ampm}`;
+
         // State 1: Live Stream Active
         statusPill.className = 'status-pill live';
         statusText.textContent = 'LIVE DISPATCH';
+        reconnectBanner.textContent = '⚡️ Reconnecting to canteen server... Showing cached queue.';
         reconnectBanner.classList.add('hidden');
         
         // Reset exponential backoff on healthy snapshot
