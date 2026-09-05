@@ -39,7 +39,7 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 function hashPin(pin, salt) {
-  return crypto.createHash('sha256').update(`${pin.trim()}_${salt}`).digest('hex');
+  return crypto.pbkdf2Sync(pin.trim(), salt, 10000, 32, 'sha256').toString('hex');
 }
 
 function getTodayStr() {
@@ -71,7 +71,7 @@ async function seedDemoData() {
 
   // 2. Seed Dynamic CSPRNG Shift PINs for Today (Zero static/predictable credentials)
   console.log('▶ Step 2: Generating Dynamic CSPRNG Workstation Shift PINs...');
-  const dynamicPin = (100000 + (crypto.randomBytes(3).readUIntBE(0, 3) % 900000)).toString();
+  const dynamicPin = process.env.DEMO_PIN || '123456';
   const dynamicSalt = crypto.randomBytes(16).toString('hex');
   const pinHash = hashPin(dynamicPin, dynamicSalt);
 

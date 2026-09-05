@@ -1,5 +1,5 @@
 // Thakur Bites Staff Operations Dashboard & Hub Entry Point
-import { staffAuth, renderPinPadModal } from './auth.js?v=5';
+import { staffAuth, renderPinPadModal } from './auth.js?v=8';
 import { renderKitchenView } from './views/kitchenView.js?v=5';
 import { renderPickupView } from './views/pickupView.js?v=5';
 import { renderAdminView } from './views/adminView.js?v=5';
