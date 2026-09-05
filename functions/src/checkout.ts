@@ -139,6 +139,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       // Inside-Transaction Faculty Priority Invariant (TB-004 & TB-005)
       let assignedPriority = userPriorityLevel;
       let priorityReason = 'STANDARD_QUEUE';
+      let shouldGrantFacultyLock = false;
 
       if (userPriorityLevel >= 2) {
         const facultyLockSnap = await transaction.get(facultyLockRef);
@@ -148,11 +149,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         } else {
           assignedPriority = userPriorityLevel;
           priorityReason = 'FACULTY_PRIORITY_APPLIED';
-          transaction.set(facultyLockRef, {
-            userId: studentId,
-            activeOrderId: newOrderRef.id,
-            grantedAt: now,
-          });
+          shouldGrantFacultyLock = true;
         }
       }
 
@@ -328,6 +325,15 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         updatedAt: now,
       };
       transaction.set(secretRef, secretDoc);
+
+      // d3. Grant Faculty Priority Lock in Write Phase (Strict Read-Before-Write)
+      if (shouldGrantFacultyLock) {
+        transaction.set(facultyLockRef, {
+          userId: studentId,
+          activeOrderId: newOrderRef.id,
+          grantedAt: now,
+        });
+      }
 
       // e. Create immutable Order Event
       const eventRef = db.collection('orderEvents').doc();

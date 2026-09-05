@@ -26,6 +26,7 @@ export interface InventoryReservationDoc {
  * 1. Available Stock = stockOnHand - reservedStock. (stockCount purged)
  * 2. Strict non-negative integer bounds; corruption throws immediately without clamping.
  * 3. Two-phase lifecycle: Checkout RESERVES -> Payment COMMITS -> Failure RELEASES.
+ * 4. STRICT READ-BEFORE-WRITE: All transaction.get() calls execute before any transaction.set/update.
  */
 
 export async function reserveInventoryInTransaction(
@@ -40,17 +41,34 @@ export async function reserveInventoryInTransaction(
   const expiresAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + ttlMinutes * 60000));
   const reservationRef = db.collection('inventoryReservations').doc(orderId);
 
-  // 1. Process each instant item reservation
-  for (const item of items) {
+  // ═════════════════════════════════════════════════════════════
+  // PHASE 1: ALL READS FIRST (Strict Firestore Invariant)
+  // ═════════════════════════════════════════════════════════════
+  const itemRefs = items.map(item => {
     if (!item.itemId || typeof item.itemId !== 'string' || item.itemId.length > 128) {
       throw new Error('INVALID_ARGUMENT: Invalid itemId.');
     }
     if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0) {
       throw new Error(`INVALID_ARGUMENT: Invalid quantity ${item.quantity}.`);
     }
+    return db.collection('menuItems').doc(item.itemId);
+  });
 
-    const itemRef = db.collection('menuItems').doc(item.itemId);
-    const snap = await transaction.get(itemRef);
+  const snapshots = await Promise.all(itemRefs.map(ref => transaction.get(ref)));
+
+  interface PendingReserveUpdate {
+    itemRef: admin.firestore.DocumentReference;
+    stockOnHand: number;
+    newReservedStock: number;
+    newAvailableStock: number;
+    ledgerEntry: any;
+  }
+  const pendingUpdates: PendingReserveUpdate[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const snap = snapshots[i];
+
     if (!snap.exists) {
       throw new Error(`NOT_FOUND: Item ${item.itemId} not found for reservation.`);
     }
@@ -69,7 +87,6 @@ export async function reserveInventoryInTransaction(
       }
 
       const availableStock = stockOnHand - reservedStock;
-
       if (item.quantity > availableStock) {
         throw new Error(`INSUFFICIENT_AVAILABLE_STOCK: Insufficient stock for ${data.name}. Available: ${availableStock}, requested: ${item.quantity}.`);
       }
@@ -77,32 +94,44 @@ export async function reserveInventoryInTransaction(
       const newReservedStock = reservedStock + item.quantity;
       const newAvailableStock = stockOnHand - newReservedStock;
 
-      transaction.update(itemRef, {
+      pendingUpdates.push({
+        itemRef: itemRefs[i],
         stockOnHand,
-        reservedStock: newReservedStock,
-        isOrderable: newAvailableStock > 0,
-        available: newAvailableStock > 0,
-        updatedAt: now,
-      });
-
-      // Append to immutable inventoryLedger
-      const ledgerRef = db.collection('inventoryLedger').doc();
-      transaction.set(ledgerRef, {
-        itemId: item.itemId,
-        orderId,
-        changeType: 'STOCK_RESERVED',
-        deltaUnits: -item.quantity,
-        previousAvailable: availableStock,
-        newAvailable: newAvailableStock,
-        stockOnHand,
-        reservedStock: newReservedStock,
-        actorId: studentId,
-        timestamp: now,
+        newReservedStock,
+        newAvailableStock,
+        ledgerEntry: {
+          itemId: item.itemId,
+          orderId,
+          changeType: 'STOCK_RESERVED',
+          deltaUnits: -item.quantity,
+          previousAvailable: availableStock,
+          newAvailable: newAvailableStock,
+          stockOnHand,
+          reservedStock: newReservedStock,
+          actorId: studentId,
+          timestamp: now,
+        },
       });
     }
   }
 
-  // 2. Create reservation document
+  // ═════════════════════════════════════════════════════════════
+  // PHASE 2: ALL WRITES AFTER READS
+  // ═════════════════════════════════════════════════════════════
+  for (const upd of pendingUpdates) {
+    transaction.update(upd.itemRef, {
+      stockOnHand: upd.stockOnHand,
+      reservedStock: upd.newReservedStock,
+      isOrderable: upd.newAvailableStock > 0,
+      available: upd.newAvailableStock > 0,
+      updatedAt: now,
+    });
+
+    const ledgerRef = db.collection('inventoryLedger').doc();
+    transaction.set(ledgerRef, upd.ledgerEntry);
+  }
+
+  // Create reservation document
   const reservationDoc: InventoryReservationDoc = {
     reservationId: orderId,
     orderId,
@@ -123,6 +152,10 @@ export async function commitInventoryInTransaction(
 ): Promise<void> {
   const now = admin.firestore.Timestamp.now();
   const reservationRef = db.collection('inventoryReservations').doc(orderId);
+
+  // ═════════════════════════════════════════════════════════════
+  // PHASE 1: ALL READS FIRST (Strict Firestore Invariant)
+  // ═════════════════════════════════════════════════════════════
   const resSnap = await transaction.get(reservationRef);
 
   if (!resSnap.exists) {
@@ -134,9 +167,22 @@ export async function commitInventoryInTransaction(
     return; // Already committed or released
   }
 
-  for (const item of resData.items) {
-    const itemRef = db.collection('menuItems').doc(item.itemId);
-    const snap = await transaction.get(itemRef);
+  const itemRefs = resData.items.map(it => db.collection('menuItems').doc(it.itemId));
+  const snapshots = await Promise.all(itemRefs.map(ref => transaction.get(ref)));
+
+  interface PendingCommitUpdate {
+    itemRef: admin.firestore.DocumentReference;
+    newStockOnHand: number;
+    newReservedStock: number;
+    newAvailableStock: number;
+    ledgerEntry: any;
+  }
+  const pendingUpdates: PendingCommitUpdate[] = [];
+
+  for (let i = 0; i < resData.items.length; i++) {
+    const item = resData.items[i];
+    const snap = snapshots[i];
+
     if (!snap.exists) {
       throw new Error(`INVENTORY_ITEM_NOT_FOUND: Item ${item.itemId} missing from catalog during inventory commit.`);
     }
@@ -157,29 +203,41 @@ export async function commitInventoryInTransaction(
       const newStockOnHand = stockOnHand - item.quantity;
       const newAvailableStock = newStockOnHand - newReservedStock;
 
-      transaction.update(itemRef, {
-        stockOnHand: newStockOnHand,
-        reservedStock: newReservedStock,
-        isOrderable: newAvailableStock > 0,
-        available: newAvailableStock > 0,
-        updatedAt: now,
-      });
-
-      // Append to inventoryLedger
-      const ledgerRef = db.collection('inventoryLedger').doc();
-      transaction.set(ledgerRef, {
-        itemId: item.itemId,
-        orderId,
-        changeType: 'STOCK_COMMITTED',
-        deltaUnits: 0, // Decrement was reserved at checkout
-        previousAvailable: newAvailableStock,
-        newAvailable: newAvailableStock,
-        stockOnHand: newStockOnHand,
-        reservedStock: newReservedStock,
-        actorId,
-        timestamp: now,
+      pendingUpdates.push({
+        itemRef: itemRefs[i],
+        newStockOnHand,
+        newReservedStock,
+        newAvailableStock,
+        ledgerEntry: {
+          itemId: item.itemId,
+          orderId,
+          changeType: 'STOCK_COMMITTED',
+          deltaUnits: 0, // Decrement was reserved at checkout
+          previousAvailable: newAvailableStock,
+          newAvailable: newAvailableStock,
+          stockOnHand: newStockOnHand,
+          reservedStock: newReservedStock,
+          actorId,
+          timestamp: now,
+        },
       });
     }
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // PHASE 2: ALL WRITES AFTER READS
+  // ═════════════════════════════════════════════════════════════
+  for (const upd of pendingUpdates) {
+    transaction.update(upd.itemRef, {
+      stockOnHand: upd.newStockOnHand,
+      reservedStock: upd.newReservedStock,
+      isOrderable: upd.newAvailableStock > 0,
+      available: upd.newAvailableStock > 0,
+      updatedAt: now,
+    });
+
+    const ledgerRef = db.collection('inventoryLedger').doc();
+    transaction.set(ledgerRef, upd.ledgerEntry);
   }
 
   transaction.update(reservationRef, {
@@ -197,6 +255,10 @@ export async function releaseInventoryInTransaction(
 ): Promise<void> {
   const now = admin.firestore.Timestamp.now();
   const reservationRef = db.collection('inventoryReservations').doc(orderId);
+
+  // ═════════════════════════════════════════════════════════════
+  // PHASE 1: ALL READS FIRST (Strict Firestore Invariant)
+  // ═════════════════════════════════════════════════════════════
   const resSnap = await transaction.get(reservationRef);
 
   if (!resSnap.exists) {
@@ -208,10 +270,23 @@ export async function releaseInventoryInTransaction(
     return;
   }
 
-  for (const item of resData.items) {
-    const itemRef = db.collection('menuItems').doc(item.itemId);
-    const snap = await transaction.get(itemRef);
-    if (snap.exists) {
+  const itemRefs = resData.items.map(it => db.collection('menuItems').doc(it.itemId));
+  const snapshots = await Promise.all(itemRefs.map(ref => transaction.get(ref)));
+
+  interface PendingReleaseUpdate {
+    itemRef: admin.firestore.DocumentReference;
+    stockOnHand: number;
+    newReservedStock: number;
+    newAvailableStock: number;
+    ledgerEntry: any;
+  }
+  const pendingUpdates: PendingReleaseUpdate[] = [];
+
+  for (let i = 0; i < resData.items.length; i++) {
+    const item = resData.items[i];
+    const snap = snapshots[i];
+
+    if (snap && snap.exists) {
       const data = snap.data()!;
       if (data.type === 'instant') {
         const stockOnHand = data.stockOnHand;
@@ -227,31 +302,43 @@ export async function releaseInventoryInTransaction(
         const newReservedStock = reservedStock - item.quantity;
         const newAvailableStock = stockOnHand - newReservedStock;
 
-        transaction.update(itemRef, {
+        pendingUpdates.push({
+          itemRef: itemRefs[i],
           stockOnHand,
-          reservedStock: newReservedStock,
-          isOrderable: newAvailableStock > 0,
-          available: newAvailableStock > 0,
-          updatedAt: now,
-        });
-
-        // Append to inventoryLedger
-        const ledgerRef = db.collection('inventoryLedger').doc();
-        transaction.set(ledgerRef, {
-          itemId: item.itemId,
-          orderId,
-          changeType: 'STOCK_RELEASED',
-          deltaUnits: item.quantity,
-          previousAvailable: stockOnHand - reservedStock,
-          newAvailable: newAvailableStock,
-          stockOnHand,
-          reservedStock: newReservedStock,
-          actorId,
-          reason: String(reason).slice(0, 200),
-          timestamp: now,
+          newReservedStock,
+          newAvailableStock,
+          ledgerEntry: {
+            itemId: item.itemId,
+            orderId,
+            changeType: 'STOCK_RELEASED',
+            deltaUnits: item.quantity,
+            previousAvailable: stockOnHand - reservedStock,
+            newAvailable: newAvailableStock,
+            stockOnHand,
+            reservedStock: newReservedStock,
+            actorId,
+            reason: String(reason).slice(0, 200),
+            timestamp: now,
+          },
         });
       }
     }
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // PHASE 2: ALL WRITES AFTER READS
+  // ═════════════════════════════════════════════════════════════
+  for (const upd of pendingUpdates) {
+    transaction.update(upd.itemRef, {
+      stockOnHand: upd.stockOnHand,
+      reservedStock: upd.newReservedStock,
+      isOrderable: upd.newAvailableStock > 0,
+      available: upd.newAvailableStock > 0,
+      updatedAt: now,
+    });
+
+    const ledgerRef = db.collection('inventoryLedger').doc();
+    transaction.set(ledgerRef, upd.ledgerEntry);
   }
 
   transaction.update(reservationRef, {
