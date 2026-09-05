@@ -21,12 +21,39 @@ echo "======================================================================"
 echo "🚀 STARTING THAKUR BITES DEMO TUNNEL"
 echo "======================================================================"
 
-# ─── 1. Always build a fresh production release ────────────────────────────
-# We do NOT skip this even if build/web already exists — stale builds served
-# during demos are a silent security and UX bug.
-echo "📦 Building production Flutter web bundle (release mode)..."
-(cd "${FLUTTER_ROOT}" && flutter build web --release)
-echo "✅ Build complete → ${WEB_DIR}"
+# ─── 1. Build production release if needed ─────────────────────────────────
+if [ "${SKIP_BUILD:-0}" = "1" ] && [ -d "${WEB_DIR}" ]; then
+  echo "⏩ Skipping Flutter build (SKIP_BUILD=1) → using existing ${WEB_DIR}"
+else
+  echo "📦 Building production Flutter web bundle (release mode)..."
+  (cd "${FLUTTER_ROOT}" && flutter build web --release)
+  echo "✅ Build complete → ${WEB_DIR}"
+fi
+
+# ─── 1.1 Integrate Operations Portals into Web Bundle ─────────────────────
+echo "🔗 Syncing Operations Portals (Staff, Admin, Dev, TV, Gateway)..."
+cp -f "${PROJECT_ROOT}"/admin.html "${WEB_DIR}/admin.html"
+cp -f "${PROJECT_ROOT}"/staff.html "${WEB_DIR}/staff.html"
+cp -f "${PROJECT_ROOT}"/developer.html "${WEB_DIR}/developer.html"
+cp -f "${PROJECT_ROOT}"/tv.html "${WEB_DIR}/tv.html"
+cp -f "${PROJECT_ROOT}"/index.html "${WEB_DIR}/portal.html"
+rm -rf "${WEB_DIR}/js" "${WEB_DIR}/css"
+cp -rf "${PROJECT_ROOT}"/js "${WEB_DIR}/js"
+cp -rf "${PROJECT_ROOT}"/css "${WEB_DIR}/css"
+
+# Generate serve.json for multi-application routing
+cat << 'EOF' > "${WEB_DIR}/serve.json"
+{
+  "cleanUrls": false,
+  "rewrites": [
+    { "source": "/admin", "destination": "/admin.html" },
+    { "source": "/staff", "destination": "/staff.html" },
+    { "source": "/developer", "destination": "/developer.html" },
+    { "source": "/tv", "destination": "/tv.html" },
+    { "source": "/portal", "destination": "/portal.html" }
+  ]
+}
+EOF
 
 # ─── 2. Ensure cloudflared is available ────────────────────────────────────
 if ! command -v cloudflared &> /dev/null; then
@@ -35,16 +62,14 @@ if ! command -v cloudflared &> /dev/null; then
 fi
 
 # ─── 3. Ensure npx / serve is available ────────────────────────────────────
-# `npx serve -s` handles SPA routing (unknown paths → /index.html).
-# python3 -m http.server does NOT handle SPA deep links — it returns 404.
 if ! command -v npx &> /dev/null; then
   echo "❌ npx not found. Install Node.js from: https://nodejs.org"
   exit 1
 fi
 
-# ─── 4. Start SPA-capable local server ─────────────────────────────────────
-echo "🌐 Starting SPA server on http://localhost:${PORT}..."
-npx serve -s "${WEB_DIR}" -l "${PORT}" --no-clipboard &
+# ─── 4. Start multi-app local server ───────────────────────────────────────
+echo "🌐 Starting web server on http://localhost:${PORT}..."
+npx serve "${WEB_DIR}" -l "${PORT}" --no-clipboard &
 SERVER_PID=$!
 
 cleanup() {
