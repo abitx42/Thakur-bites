@@ -79,7 +79,7 @@ service cloud.firestore {
     }
 
     // ─── Students Profile ───────────────────────────────────────
-    // Profile creation is restricted strictly to backend Cloud Functions (provisionStudentProfile).
+    // Profile creation is restricted strictly to backend Cloud Functions (provisionUserProfile).
     // Students can update ONLY validated profile fields (name, phone, department, year, photoUrl, preferences).
     match /students/{studentId} {
       allow read: if isOwner(studentId) || isManagerOrAdmin();

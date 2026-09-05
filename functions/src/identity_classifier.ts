@@ -27,7 +27,7 @@ export function classifyIdentity(email: string): IdentityClassification {
     return {
       accountType: 'STUDENT',
       verificationStatus: hasNumericPrefix ? 'VERIFIED' : 'PENDING',
-      priorityLevel: 1,
+      priorityLevel: hasNumericPrefix ? 1 : 0, // Unverified/pending accounts receive baseline priority 0
       identityHints: {
         isInstitutionalEmail: true,
         domain,
@@ -41,7 +41,7 @@ export function classifyIdentity(email: string): IdentityClassification {
     return {
       accountType: 'COLLEGE_STAFF',
       verificationStatus: 'PENDING',
-      priorityLevel: 1, // Starts as normal, upgraded after verification
+      priorityLevel: 0, // Starts as baseline priority 0 (normal), elevated to Priority 2 upon verification
       identityHints: {
         isInstitutionalEmail: true,
         domain,

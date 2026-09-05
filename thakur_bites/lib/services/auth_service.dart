@@ -258,23 +258,7 @@ class AuthService {
         } catch (_) {}
       }
 
-      // Authoritative server-side profile provisioning
-      try {
-        await _functions.provisionUserProfile(
-          displayName: name.trim(),
-          phone: phone.trim(),
-          rollNo: rollNo?.trim().toUpperCase(),
-          department: department?.trim(),
-        );
-      } catch (fnErr) {
-        debugPrint('[Auth] Server provisioning notice: $fnErr');
-      }
-
-      // Force refresh token for custom claims (TB-AUTH-007)
-      try {
-        await user.getIdToken(true);
-      } catch (_) {}
-
+      // Authoritatively provision and load user profile (single fail-closed path)
       final profile = await _ensureUserProfile(
         user,
         initialDisplayName: name.trim(),
@@ -423,21 +407,21 @@ class AuthService {
     }
   }
 
-  /// Update user profile (Updates only client-mutable fields in accordance with Firestore security rules)
+  /// Update user profile (Updates ONLY client-mutable fields in accordance with Firestore security rules)
   Future<void> updateUserProfile(UserProfile profile) async {
     final updateData = <String, dynamic>{
-      'displayName': profile.displayName,
-      if (profile.phone != null) 'phone': profile.phone,
-      if (profile.rollNo != null) 'rollNo': profile.rollNo,
-      if (profile.department != null) 'department': profile.department,
-      if (profile.photoURL != null) 'photoURL': profile.photoURL,
+      'displayName': profile.displayName.trim(),
+      if (profile.phone != null) 'phone': profile.phone!.trim(),
+      if (profile.rollNo != null) 'rollNo': profile.rollNo!.trim().toUpperCase(),
+      if (profile.department != null) 'department': profile.department!.trim(),
+      if (profile.photoURL != null) 'photoURL': profile.photoURL!,
       'updatedAt': Timestamp.now(),
     };
     try {
       await _users.doc(profile.uid).update(updateData);
     } catch (e) {
-      debugPrint('[AuthService] updateUserProfile update failed, attempting set: $e');
-      await _users.doc(profile.uid).set(profile.toFirestore(), SetOptions(merge: true));
+      debugPrint('[AuthService] updateUserProfile failed: $e');
+      throw Exception('Failed to update profile. Please try again.');
     }
   }
 

@@ -2261,22 +2261,22 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(result.identityHints.possibleStudentId, false);
   });
 
-  it('103. Identity classifier correctly identifies thakureducation.org as COLLEGE_STAFF/PENDING', () => {
+  it('103. Identity classifier correctly identifies thakureducation.org as COLLEGE_STAFF/PENDING with baseline Priority 0', () => {
     const { classifyIdentity } = require('../lib/identity_classifier');
     const result = classifyIdentity('staff@thakureducation.org');
     assert.strictEqual(result.accountType, 'COLLEGE_STAFF');
     assert.strictEqual(result.verificationStatus, 'PENDING');
-    assert.strictEqual(result.priorityLevel, 1);
+    assert.strictEqual(result.priorityLevel, 0);
     assert.strictEqual(result.identityHints.isInstitutionalEmail, true);
     assert.strictEqual(result.identityHints.possibleStudentId, false);
   });
 
-  it('104. Identity classifier correctly identifies non-numeric @tcetmumbai.in as STUDENT/PENDING', () => {
+  it('104. Identity classifier correctly identifies non-numeric @tcetmumbai.in as STUDENT/PENDING with baseline Priority 0', () => {
     const { classifyIdentity } = require('../lib/identity_classifier');
     const result = classifyIdentity('teacher@tcetmumbai.in');
     assert.strictEqual(result.accountType, 'STUDENT');
     assert.strictEqual(result.verificationStatus, 'PENDING');
-    assert.strictEqual(result.priorityLevel, 1);
+    assert.strictEqual(result.priorityLevel, 0);
     assert.strictEqual(result.identityHints.isInstitutionalEmail, true);
     assert.strictEqual(result.identityHints.possibleStudentId, false);
   });

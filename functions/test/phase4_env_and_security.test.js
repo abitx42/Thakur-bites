@@ -216,7 +216,7 @@ describe('Phase 4: Environment Isolation & Security Configuration Tests', () => 
     const validStaff = classifyIdentity('hod.it@thakureducation.org');
     assert.strictEqual(validStaff.accountType, 'COLLEGE_STAFF');
     assert.strictEqual(validStaff.verificationStatus, 'PENDING');
-    assert.strictEqual(validStaff.priorityLevel, 1);
+    assert.strictEqual(validStaff.priorityLevel, 0);
   });
 
   it('217. Provisioning Invariant: Idempotent provisioning protects verified TEACHER from downgrade (TB-AUTH-010)', async () => {
