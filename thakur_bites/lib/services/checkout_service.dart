@@ -86,32 +86,54 @@ class CheckoutService {
 
   /// Converts the Cloud Function response map to a local Order model.
   Order _orderFromCallableResult(Map<String, dynamic> data) {
-    final items = (data['items'] as List<dynamic>? ?? []).map((item) {
+    final Map<String, dynamic> orderMap = data['order'] is Map
+        ? Map<String, dynamic>.from(data['order'] as Map)
+        : data;
+
+    final rawItems = (orderMap['items'] as List<dynamic>?) ?? (data['items'] as List<dynamic>?) ?? [];
+    final items = rawItems.map((item) {
       final m = Map<String, dynamic>.from(item as Map);
       return OrderItem(
-        menuItemId: m['itemId'] as String? ?? '',
+        menuItemId: m['itemId'] as String? ?? m['id'] as String? ?? '',
         name: m['name'] as String? ?? '',
         quantity: (m['quantity'] as num?)?.toInt() ?? 1,
-        price: (m['priceRs'] as num?)?.toDouble() ?? 0.0,
+        price: (m['unitPrice'] as num?)?.toDouble() ?? (m['priceRs'] as num?)?.toDouble() ?? 0.0,
       );
     }).toList();
 
-    final createdAtMs = data['createdAt'] as int? ?? DateTime.now().millisecondsSinceEpoch;
-    final estimatedMinutes = (data['estimatedMinutes'] as num?)?.toInt() ?? 15;
+    int createdAtMs;
+    if (orderMap['createdAt'] is Map && orderMap['createdAt']['_seconds'] != null) {
+      createdAtMs = ((orderMap['createdAt']['_seconds'] as num).toInt()) * 1000;
+    } else if (orderMap['createdAt'] is int) {
+      createdAtMs = orderMap['createdAt'] as int;
+    } else {
+      createdAtMs = DateTime.now().millisecondsSinceEpoch;
+    }
+
+    final estimatedMinutes = (orderMap['estimatedMinutes'] as num?)?.toInt() ?? 15;
     final createdAt = DateTime.fromMillisecondsSinceEpoch(createdAtMs);
 
+    final id = data['orderId'] as String? ?? orderMap['id'] as String? ?? '';
+    final tokenNumber = orderMap['tokenNumber'] as String? ?? data['tokenNumber'] as String? ?? 'TB-???';
+    final pinCode = data['rawPin'] as String? ?? orderMap['pickupPin'] as String? ?? orderMap['pinCode'] as String? ?? '';
+    final studentId = orderMap['studentId'] as String? ?? data['studentId'] as String? ?? '';
+    final studentName = orderMap['studentName'] as String? ?? data['studentName'] as String? ?? 'Student';
+    final studentRoll = orderMap['studentRoll'] as String? ?? data['studentRoll'] as String? ?? '';
+    final status = orderMap['status'] as String? ?? data['status'] as String? ?? 'confirmed';
+    final totalAmount = (orderMap['totalAmount'] as num?)?.toDouble() ?? (orderMap['totalAmountRs'] as num?)?.toDouble() ?? 0.0;
+
     return Order(
-      id: data['orderId'] as String? ?? '',
-      tokenNumber: data['tokenNumber'] as String? ?? 'TB-???',
-      pinCode: data['pinCode'] as String? ?? '',
-      studentId: data['studentId'] as String? ?? '',
-      studentName: data['studentName'] as String? ?? 'Student',
-      studentRoll: data['studentRoll'] as String? ?? '',
-      status: data['status'] as String? ?? 'confirmed',
+      id: id,
+      tokenNumber: tokenNumber,
+      pinCode: pinCode,
+      studentId: studentId,
+      studentName: studentName,
+      studentRoll: studentRoll,
+      status: status,
       createdAt: createdAt,
       readyAt: createdAt.add(Duration(minutes: estimatedMinutes)),
       estimatedMinutes: estimatedMinutes,
-      totalAmount: (data['totalAmountRs'] as num?)?.toDouble() ?? 0.0,
+      totalAmount: totalAmount,
       items: items,
     );
   }

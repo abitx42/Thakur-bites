@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
 /// Typed, named callable references for all Thakur Bites Cloud Functions.
@@ -11,6 +12,14 @@ class FunctionsService {
   FunctionsService({FirebaseFunctions? functions})
       : _functions = functions ?? FirebaseFunctions.instance;
 
+  HttpsCallable _getCallable(String name) {
+    if (kIsWeb) {
+      final origin = Uri.base.origin;
+      return _functions.httpsCallableFromUrl('$origin/adi-thakur-bite/us-central1/$name');
+    }
+    return _functions.httpsCallable(name);
+  }
+
   // ─── Checkout ───────────────────────────────────────────────────────────
 
   /// Creates an authoritative, idempotent checkout order with atomic inventory
@@ -20,7 +29,7 @@ class FunctionsService {
     required List<Map<String, dynamic>> items,
     required String paymentMethod, // 'online' | 'counter_cash'
   }) async {
-    final callable = _functions.httpsCallable('createCheckout');
+    final callable = _getCallable('createCheckout');
     final result = await callable.call({
       'idempotencyKey': idempotencyKey,
       'items': items,
@@ -37,7 +46,7 @@ class FunctionsService {
   Future<Map<String, dynamic>> createPaymentSession({
     required String orderId,
   }) async {
-    final callable = _functions.httpsCallable('createPaymentSession');
+    final callable = _getCallable('createPaymentSession');
     final result = await callable.call({
       'orderId': orderId,
       'appVersion': _appVersion,
@@ -53,7 +62,7 @@ class FunctionsService {
     required String razorpayOrderId,
     required String razorpaySignature,
   }) async {
-    final callable = _functions.httpsCallable('verifyPayment');
+    final callable = _getCallable('verifyPayment');
     final result = await callable.call({
       'orderId': orderId,
       'razorpayPaymentId': razorpayPaymentId,
@@ -70,7 +79,7 @@ class FunctionsService {
     required String orderId,
     required int amountPaise,
   }) async {
-    final callable = _functions.httpsCallable('recordCashPayment');
+    final callable = _getCallable('recordCashPayment');
     final result = await callable.call({
       'orderId': orderId,
       'amountPaise': amountPaise,
@@ -90,7 +99,7 @@ class FunctionsService {
     String? year,
     String? rollNo,
   }) async {
-    final callable = _functions.httpsCallable('provisionUserProfile');
+    final callable = _getCallable('provisionUserProfile');
     final payload = <String, dynamic>{
       'appVersion': _appVersion,
     };
@@ -116,7 +125,7 @@ class FunctionsService {
     String? officialEmail,
     String? idProofStoragePath,
   }) async {
-    final callable = _functions.httpsCallable('submitVerificationApplication');
+    final callable = _getCallable('submitVerificationApplication');
     final payload = <String, dynamic>{
       'applicationType': applicationType,
       'employeeId': employeeId,
@@ -130,6 +139,7 @@ class FunctionsService {
     final result = await callable.call(payload);
     return Map<String, dynamic>.from(result.data as Map);
   }
+
 
   // ─── Version ─────────────────────────────────────────────────────────────
 

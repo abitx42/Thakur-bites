@@ -363,6 +363,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
 
     return checkoutResult;
   } catch (error: any) {
+    console.error('=== CREATE CHECKOUT ERROR ===', error?.message || error, error?.stack || error);
     if (error.code === 'resource-exhausted') {
       await logSecurityEvent({
         eventType: 'INVENTORY_CONTENTION_SPIKE',

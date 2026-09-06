@@ -24,12 +24,10 @@ void main() async {
     debugPrint('[Startup] Firebase initialization: $e');
   }
 
-  if (kIsWeb) {
+  if (!kIsWeb && kDebugMode) {
     try {
-      final host = Uri.base.host.isNotEmpty ? Uri.base.host : 'localhost';
-      final port = Uri.base.port != 0 ? Uri.base.port : (Uri.base.scheme == 'https' ? 443 : 80);
-      FirebaseFunctions.instance.useFunctionsEmulator(host, port);
-      debugPrint('[Startup] Connected FirebaseFunctions emulator to $host:$port');
+      FirebaseFunctions.instance.useFunctionsEmulator('10.0.2.2', 5001);
+      debugPrint('[Startup] Connected Android FirebaseFunctions emulator to 10.0.2.2:5001');
     } catch (e) {
       debugPrint('[Startup] FirebaseFunctions emulator connection notice: $e');
     }
