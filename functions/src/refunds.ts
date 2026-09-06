@@ -1,3 +1,4 @@
+import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
@@ -79,7 +80,7 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
 
   const cleanReason = reason.trim();
   const cleanIdempKey = idempotencyKey && typeof idempotencyKey === 'string' ? idempotencyKey.trim().slice(0, 128) : undefined;
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   // ─── Step 1: Transactional Idempotency Key Claim (TB-NEW-005 Remediation) ───
   const idempRef = cleanIdempKey ? db.collection('refundIdempotency').doc(cleanIdempKey) : null;
@@ -99,7 +100,7 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
         t.update(idempRef, {
           status: 'PROCESSING',
           claimedAt: now,
-          attemptCount: admin.firestore.FieldValue.increment(1),
+          attemptCount: FieldValue.increment(1),
         });
         return { status: 'CLAIMED' };
       }
@@ -226,7 +227,7 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
 
     // Delta arithmetic: increment pendingRefundPaise to lock funds without corrupting settled ledger
     transaction.update(orderRef, {
-      pendingRefundPaise: admin.firestore.FieldValue.increment(requestedRefundPaise),
+      pendingRefundPaise: FieldValue.increment(requestedRefundPaise),
       refundLifecycleStatus: 'REFUND_REQUESTED',
       updatedAt: now,
     });
@@ -242,20 +243,20 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
       // Rollback reservation delta in transaction
       await db.runTransaction(async (transaction) => {
         transaction.update(orderRef, {
-          pendingRefundPaise: admin.firestore.FieldValue.increment(-requestedRefundPaise),
+          pendingRefundPaise: FieldValue.increment(-requestedRefundPaise),
           refundLifecycleStatus: 'GATEWAY_REFUND_FAILED',
-          updatedAt: admin.firestore.Timestamp.now(),
+          updatedAt: Timestamp.now(),
         });
         transaction.update(reservationRef, {
           status: 'GATEWAY_FAILED',
-          failedAt: admin.firestore.Timestamp.now(),
+          failedAt: Timestamp.now(),
           error: 'Missing gatewayPaymentId',
         });
       });
       if (idempRef) {
         await idempRef.update({
           status: 'FAILED',
-          failedAt: admin.firestore.Timestamp.now(),
+          failedAt: Timestamp.now(),
           error: 'Missing gatewayPaymentId',
         }).catch(() => {});
       }
@@ -269,19 +270,19 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
       await reservationRef.update({
         status: 'GATEWAY_SUCCEEDED',
         gatewayRefundId,
-        gatewayExecutedAt: admin.firestore.Timestamp.now(),
+        gatewayExecutedAt: Timestamp.now(),
       });
     } catch (err: any) {
       // Rollback reservation delta safely using FieldValue.increment(-requestedRefundPaise) (Finding 6)
       await db.runTransaction(async (transaction) => {
         transaction.update(orderRef, {
-          pendingRefundPaise: admin.firestore.FieldValue.increment(-requestedRefundPaise),
+          pendingRefundPaise: FieldValue.increment(-requestedRefundPaise),
           refundLifecycleStatus: 'GATEWAY_REFUND_FAILED',
-          updatedAt: admin.firestore.Timestamp.now(),
+          updatedAt: Timestamp.now(),
         });
         transaction.update(reservationRef, {
           status: 'GATEWAY_FAILED',
-          failedAt: admin.firestore.Timestamp.now(),
+          failedAt: Timestamp.now(),
           error: err.message,
         });
       });
@@ -289,7 +290,7 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
       if (idempRef) {
         await idempRef.update({
           status: 'FAILED',
-          failedAt: admin.firestore.Timestamp.now(),
+          failedAt: Timestamp.now(),
           error: err.message,
         }).catch(() => {});
       }
@@ -304,7 +305,7 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
     await reservationRef.update({
       status: 'GATEWAY_SKIPPED_CASH',
       gatewayRefundId,
-      gatewayExecutedAt: admin.firestore.Timestamp.now(),
+      gatewayExecutedAt: Timestamp.now(),
     });
   }
 
@@ -345,8 +346,8 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
 
     // 2. Finalize Order State (Delta accounting: decrement pending, increment settled)
     transaction.update(orderRef, {
-      pendingRefundPaise: admin.firestore.FieldValue.increment(-requestedRefundPaise),
-      amountRefundedPaise: admin.firestore.FieldValue.increment(requestedRefundPaise),
+      pendingRefundPaise: FieldValue.increment(-requestedRefundPaise),
+      amountRefundedPaise: FieldValue.increment(requestedRefundPaise),
       paymentStatus: nextPaymentStatus,
       refundLifecycleStatus: 'GATEWAY_REFUNDED',
       status: nextOrderStatus,

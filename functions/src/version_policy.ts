@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { UserRole } from './types';
@@ -19,7 +20,7 @@ export interface VersionPolicyData {
   message?: string;
   releaseNotes?: string[];
   storeUrl?: string;
-  updatedAt?: admin.firestore.Timestamp;
+  updatedAt?: Timestamp;
   updatedBy?: string;
 }
 
@@ -184,7 +185,7 @@ export const updateAppVersionPolicy = onCall<UpdateVersionPolicyRequest>(async (
     throw new HttpsError('invalid-argument', 'Valid latestVersion and minimumSupportedVersion strings are required.');
   }
 
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
   const docRef = platform === 'global'
     ? db.collection('appConfig').doc('versions')
     : db.collection('appConfig').doc('versions').collection('platforms').doc(platform);

@@ -1,4 +1,5 @@
 import * as admin from 'firebase-admin';
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
@@ -172,14 +173,14 @@ export async function enforceRateLimit(
     if (timestamps.length > 100) {
       timestamps = timestamps.slice(-100);
     }
-    const expireAt = admin.firestore.Timestamp.fromMillis(now + baseConfig.windowSeconds * 1000);
+    const expireAt = Timestamp.fromMillis(now + baseConfig.windowSeconds * 1000);
 
     transaction.set(rateLimitRef, {
       actorId,
       endpoint,
       timestamps,
       isIpBased: options?.isIpBased || false,
-      lastUpdatedAt: admin.firestore.Timestamp.now(),
+      lastUpdatedAt: Timestamp.now(),
       expireAt,
     });
 
@@ -272,15 +273,15 @@ export async function recordAuthFailure(
     }
 
     const nextBackoffSeconds = calculateBackoffDelaySeconds(consecutiveFailures);
-    const blockedUntil = admin.firestore.Timestamp.fromMillis(now + nextBackoffSeconds * 1000);
+    const blockedUntil = Timestamp.fromMillis(now + nextBackoffSeconds * 1000);
 
     transaction.set(backoffRef, {
       identifier,
       scope,
       consecutiveFailures,
-      lastFailureAt: admin.firestore.Timestamp.fromMillis(now),
+      lastFailureAt: Timestamp.fromMillis(now),
       blockedUntil,
-      expireAt: admin.firestore.Timestamp.fromMillis(now + 3600 * 1000), // 1 hour TTL
+      expireAt: Timestamp.fromMillis(now + 3600 * 1000), // 1 hour TTL
     });
 
     if (consecutiveFailures >= 6) {
@@ -378,7 +379,7 @@ export const updateSecurityRateLimits = onCall(async (request) => {
     };
   }
 
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
   const updatePayload = {
     limits: validatedOverrides,
     updatedAt: now,

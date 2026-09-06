@@ -1,7 +1,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
-import { CheckoutRequest, OrderDocument, OrderItemSnapshot, OrderSecretDoc, PriorityLevel } from './types';
+import { CheckoutRequest, OrderDocument, OrderItemSnapshot, OrderSecretDoc, PriorityLevel, Timestamp } from './types';
 import { enforceRateLimit } from './rate_limiter';
 import { getRequiredSecret } from './secrets';
 import { reserveInventoryInTransaction } from './inventory_reservation';
@@ -83,7 +83,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   const idempotencyHash = crypto.createHash('sha256').update(`${studentId}_${idempotencyKey.trim()}`).digest('hex');
   const idempotencyLockRef = db.collection('checkoutRequests').doc(idempotencyHash);
 
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
   const dateStr = getMumbaiDateStr(now.toDate());
   const userRef = db.collection('users').doc(studentId);
   const counterRef = db.collection('counters').doc(`orders_${dateStr}`);
@@ -273,7 +273,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         priorityLevel: assignedPriority,
         priorityReason: priorityReason,
         createdAt: now,
-        readyAt: admin.firestore.Timestamp.fromDate(readyAtDate),
+        readyAt: Timestamp.fromDate(readyAtDate),
       };
 
       // ═════════════════════════════════════════════════════════════

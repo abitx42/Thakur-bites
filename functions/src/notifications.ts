@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import * as admin from 'firebase-admin';
 import { OrderStatus } from './types';
@@ -107,7 +108,7 @@ export const onOrderStatusNotification = onDocumentUpdated('orders/{orderId}', a
     status: toStatus,
     title: notification.title,
     body: notification.body,
-    createdAt: admin.firestore.Timestamp.now(),
+    createdAt: Timestamp.now(),
     isRead: false,
   });
 

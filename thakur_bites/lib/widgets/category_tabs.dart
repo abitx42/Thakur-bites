@@ -20,10 +20,11 @@ class SubCategory {
 
 /// The top-level categories
 const List<PrimaryCategory> primaryCategories = [
-  PrimaryCategory('all', 'All Items', '✨'),
+  PrimaryCategory('popular', 'Popular', '🔥'),
   PrimaryCategory('FOOD', 'Food', '🍛'),
-  PrimaryCategory('SNACKS', 'Snacks', '🍟'),
-  PrimaryCategory('BEVERAGES', 'Drinks', '🥤'),
+  PrimaryCategory('BEVERAGES', 'Beverages', '🥤'),
+  PrimaryCategory('SNACKS', 'Snacks & Packaged', '🍟'),
+  PrimaryCategory('all', 'All Items', '✨'),
 ];
 
 /// Subcategories by parent category

@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import * as admin from 'firebase-admin';
@@ -38,7 +39,7 @@ export interface IntegrityScanResult {
  */
 export async function executeIntegrityScan(): Promise<IntegrityScanResult> {
   const scanId = `SCAN_${Date.now()}`;
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
   const criticalViolations: string[] = [];
   const warnings: string[] = [];
 

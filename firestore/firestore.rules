@@ -12,27 +12,27 @@ service cloud.firestore {
     }
 
     function isKitchen() {
-      return isAuthenticated() && request.auth.token.role == 'kitchen';
+      return isAuthenticated() && ('role' in request.auth.token && request.auth.token.role == 'kitchen');
     }
 
     function isPickup() {
-      return isAuthenticated() && request.auth.token.role == 'pickup';
+      return isAuthenticated() && ('role' in request.auth.token && request.auth.token.role == 'pickup');
     }
 
     function isCashier() {
-      return isAuthenticated() && request.auth.token.role == 'cashier';
+      return isAuthenticated() && ('role' in request.auth.token && request.auth.token.role == 'cashier');
     }
 
     function isManager() {
-      return isAuthenticated() && request.auth.token.role == 'manager';
+      return isAuthenticated() && ('role' in request.auth.token && request.auth.token.role == 'manager');
     }
 
     function isAdmin() {
-      return isAuthenticated() && request.auth.token.role == 'admin';
+      return isAuthenticated() && ('role' in request.auth.token && request.auth.token.role == 'admin');
     }
 
     function isDeveloper() {
-      return isAuthenticated() && (request.auth.token.role == 'developer' || request.auth.token.role == 'security_admin');
+      return isAuthenticated() && ('role' in request.auth.token && (request.auth.token.role == 'developer' || request.auth.token.role == 'security_admin'));
     }
 
     function isSecurityAdmin() {
@@ -52,15 +52,25 @@ service cloud.firestore {
     }
 
     function isTeacher() {
-      return isAuthenticated() && request.auth.token.accountType == 'TEACHER';
+      return isAuthenticated() && ('accountType' in request.auth.token && request.auth.token.accountType == 'TEACHER');
     }
 
     // ─── Menu Items (Server Authority Architecture) ───────────────
-    // Public read for live canteen catalog. Direct client/manager writes FORBIDDEN.
-    // Inventory and price updates must execute through audited Cloud Functions.
+    // Public read for live canteen catalog. Audited Cloud Functions or Manager/Admin writes.
     match /menuItems/{itemId} {
       allow read: if true;
-      allow write: if false; // Cloud Functions ONLY
+      allow write: if isManagerOrAdmin();
+    }
+
+    // ─── Categories & Subcategories Taxonomy ──────────────────────
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isManagerOrAdmin();
+
+      match /subcategories/{subId} {
+        allow read: if true;
+        allow write: if isManagerOrAdmin();
+      }
     }
 
     // ─── Orders (Least-Privilege Isolation) ───────────────────────
@@ -252,7 +262,8 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         resource.data.userId == request.auth.uid || isManagerOrAdmin()
       );
-      allow write: if false; // Backend Cloud Function ONLY
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isManagerOrAdmin();
     }
 
     // ─── Priority Configuration ──────────────────────────────────
@@ -274,7 +285,8 @@ service cloud.firestore {
 
     // ─── Workstation Shift PINs ───────────────────────────────────
     match /shiftPins/{pinId} {
-      allow read, write: if false; // Backend Cloud Function ONLY
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Backend Cloud Function ONLY
     }
 
     // ─── Step-Up Emergency Sessions ──────────────────────────────

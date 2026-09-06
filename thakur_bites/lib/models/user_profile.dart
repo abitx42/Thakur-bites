@@ -214,6 +214,19 @@ class UserProfile {
     );
   }
 
+  /// Ephemeral guest profile for unrestricted catalog browsing
+  factory UserProfile.guest() {
+    return UserProfile(
+      uid: 'guest_${DateTime.now().millisecondsSinceEpoch}',
+      email: '',
+      displayName: 'Guest Visitor',
+      accountType: AccountType.visitor,
+      verificationStatus: VerificationStatus.notRequired,
+      priorityLevel: 0,
+      createdAt: DateTime.now(),
+    );
+  }
+
   Map<String, dynamic> toFirestore() {
     return {
       'uid': uid,

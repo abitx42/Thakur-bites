@@ -70,15 +70,29 @@ if ! command -v npx &> /dev/null; then
   exit 1
 fi
 
-# ─── 4. Start multi-app local server ───────────────────────────────────────
-echo "🌐 Starting web server on http://localhost:${PORT}..."
-npx serve "${WEB_DIR}" -l "${PORT}" --no-clipboard &
+# ─── 3.5 Ensure Cloud Functions emulator is running on port 5001 ──────────
+FUNCTIONS_PID=""
+if ! nc -z 127.0.0.1 5001 2>/dev/null; then
+  echo "⚡ Starting Cloud Functions emulator on port 5001..."
+  (cd "${PROJECT_ROOT}" && npx firebase emulators:start --only functions --project adi-thakur-bite) &
+  FUNCTIONS_PID=$!
+  sleep 4
+else
+  echo "⚡ Cloud Functions emulator already running on port 5001."
+fi
+
+# ─── 4. Start multi-app local server with reverse proxy ────────────────────
+echo "🌐 Starting web server & API reverse proxy on http://localhost:${PORT}..."
+PORT="${PORT}" WEB_DIR="${WEB_DIR}" node "${PROJECT_ROOT}/scripts/demo_server.js" &
 SERVER_PID=$!
 
 cleanup() {
   echo ""
   echo "🛑 Shutting down demo server and tunnel..."
   kill "${SERVER_PID}" 2>/dev/null || true
+  if [ -n "${FUNCTIONS_PID}" ]; then
+    kill "${FUNCTIONS_PID}" 2>/dev/null || true
+  fi
   exit 0
 }
 trap cleanup SIGINT SIGTERM EXIT

@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { UserRole } from './types';
@@ -17,13 +18,13 @@ export interface SystemConfigDoc {
   mode: SystemOperationalMode;
   reason?: string;
   updatedBy: string;
-  updatedAt: admin.firestore.Timestamp;
+  updatedAt: Timestamp;
 }
 
 export interface PublicSystemStatusDoc {
   mode: SystemOperationalMode;
   orderingAvailable: boolean;
-  updatedAt: admin.firestore.Timestamp;
+  updatedAt: Timestamp;
 }
 
 /**
@@ -112,7 +113,7 @@ export const setSystemOperationalMode = onCall<{ mode: SystemOperationalMode; re
     );
   }
 
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
   
   // 1. Private Audit Configuration Document (Internal staff UID & reason preserved privately)
   const privateConfigRef = db.collection('systemConfig').doc('global');

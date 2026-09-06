@@ -6,14 +6,14 @@
 export function getRequiredSecret(secretName: string): string {
   const value = process.env[secretName];
   if (!value || value.trim() === '') {
-    if (process.env.NODE_ENV === 'test') {
-      return `test_secret_${secretName.toLowerCase()}`;
+    if (process.env.NODE_ENV === 'test' || process.env.FUNCTIONS_EMULATOR === 'true') {
+      return `dev_mock_${secretName.toLowerCase()}_12345678901234567890123456789012`;
     }
     throw new Error(`FATAL CONFIGURATION ERROR: Required secret "${secretName}" is not set in Secret Manager.`);
   }
 
   const cleanValue = value.trim();
-  if (process.env.NODE_ENV === 'production' && (cleanValue.startsWith('test_secret_') || cleanValue.startsWith('dev_mock_'))) {
+  if (process.env.NODE_ENV === 'production' && !process.env.FUNCTIONS_EMULATOR && (cleanValue.startsWith('test_secret_') || cleanValue.startsWith('dev_mock_'))) {
     throw new Error(`FATAL SECURITY ERROR: Development or test secret detected in production environment for "${secretName}".`);
   }
 

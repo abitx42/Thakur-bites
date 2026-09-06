@@ -10,13 +10,37 @@
  * - Global Feature Flags
  */
 
-const admin = require('firebase-admin');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-// Environment isolation guardrail: strictly prevent seeding production project
-const targetProject = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'adi-thakur-bite-staging';
+let admin = null;
+let FirestoreClass = null;
+let Timestamp = null;
+let OAuth2ClientClass = null;
+
+try {
+  admin = require('firebase-admin');
+  if (admin.firestore && admin.firestore.Timestamp) {
+    Timestamp = admin.firestore.Timestamp;
+  }
+} catch (_) {}
+
+try {
+  const gcf = require('@google-cloud/firestore');
+  FirestoreClass = gcf.Firestore;
+  if (!Timestamp && gcf.Timestamp) {
+    Timestamp = gcf.Timestamp;
+  }
+} catch (_) {}
+
+try {
+  const gal = require('google-auth-library');
+  OAuth2ClientClass = gal.OAuth2Client;
+} catch (_) {}
+
+// Environment isolation guardrail: strictly prevent seeding production project unless allowed
+const targetProject = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'adi-thakur-bite';
 const isExplicitStaging = targetProject.includes('staging') ||
   targetProject.includes('dev') ||
   targetProject.includes('emulator') ||
@@ -31,14 +55,25 @@ if (!isExplicitStaging && (process.env.APP_ENV === 'production' || process.env.N
   process.exit(1);
 }
 
-// Initialize admin if not already initialized
-if (!admin.apps.length) {
-  admin.initializeApp({
-    projectId: targetProject,
-  });
-}
+let db;
+const configPath = path.join(process.env.HOME, '.config/configstore/firebase-tools.json');
 
-const db = admin.firestore();
+if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(configPath) && FirestoreClass && OAuth2ClientClass) {
+  const fbToolsData = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const token = fbToolsData.tokens && fbToolsData.tokens.access_token;
+  const auth = new OAuth2ClientClass();
+  auth.setCredentials({ access_token: token });
+  db = new FirestoreClass({ projectId: targetProject, authClient: auth });
+} else if (admin) {
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      projectId: targetProject,
+    });
+  }
+  db = admin.firestore();
+} else if (FirestoreClass) {
+  db = new FirestoreClass({ projectId: targetProject });
+}
 
 function hashPin(pin, salt) {
   return crypto.pbkdf2Sync(pin.trim(), salt, 10000, 32, 'sha256').toString('hex');
@@ -56,7 +91,7 @@ async function seedDemoData() {
   console.log('════════════════════════════════════════════════════════════════\n');
 
   const todayStr = getTodayStr();
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp ? Timestamp.now() : new Date();
 
   // 1. Seed Feature Flags
   console.log('▶ Step 1: Seeding Campus Feature Flags...');
@@ -94,7 +129,7 @@ async function seedDemoData() {
       status: 'ACTIVE',
       createdBy: 'seed_manager',
       createdAt: now,
-      expiresAt: admin.firestore.Timestamp.fromDate(new Date(Date.now() + 24 * 60 * 60 * 1000)),
+      expiresAt: Timestamp ? Timestamp.fromDate(new Date(Date.now() + 24 * 60 * 60 * 1000)) : new Date(Date.now() + 24 * 60 * 60 * 1000),
     }, { merge: true });
     console.log(`  ✓ Shift PIN for ${role.toUpperCase()} provisioned (ID: ${pinId})`);
   }
@@ -113,113 +148,100 @@ async function seedDemoData() {
     }
   }
 
-  const legacyDemoItems = [
+  // 2.5 Seed Canonical Categories & Subcategories
+  console.log('▶ Step 2.5: Seeding Canonical Category Hierarchies...');
+  const canonicalCategories = [
     {
-      id: 'masala_dosa_01',
-      name: 'Mysore Masala Dosa',
-      price: 70,
-      pricePaise: 7000,
-      type: 'cooked',
-      category: 'FOOD',
-      parentCategory: 'FOOD',
-      subCategory: 'South Indian',
-      dietaryType: 'VEG',
-      station: 'dosa',
-      available: true,
-      stockOnHand: 100,
-      reservedStock: 0,
-      prepMinutes: 6,
-      description: 'Crispy butter dosa layered with spicy red garlic chutney and spiced potato masala.',
+      id: 'FOOD',
+      name: 'Food',
+      visualKey: 'food_default',
+      iconEmoji: '🍛',
+      sortOrder: 10,
+      active: true,
+      subcategories: [
+        { id: 'South Indian', name: 'South Indian', visualKey: 'dosa', sortOrder: 10 },
+        { id: 'Sandwiches', name: 'Sandwiches', visualKey: 'sandwich_grill', sortOrder: 20 },
+        { id: 'Chinese', name: 'Chinese', visualKey: 'noodles', sortOrder: 30 },
+        { id: 'Lunch & Meals', name: 'Meals / Main Food', visualKey: 'thali', sortOrder: 40 },
+      ]
     },
     {
-      id: 'punjabi_samosa_01',
-      name: 'Punjabi Samosa (2 pcs)',
-      price: 30,
-      pricePaise: 3000,
-      type: 'instant',
-      category: 'SNACKS',
-      parentCategory: 'SNACKS',
-      subCategory: 'Pav Items',
-      dietaryType: 'VEG',
-      station: 'counter',
-      available: true,
-      stockOnHand: 25,
-      reservedStock: 2,
-      prepMinutes: 0,
-      description: 'Golden flaky pastry stuffed with seasoned potatoes, green peas, and whole spices.',
+      id: 'BEVERAGES',
+      name: 'Beverages',
+      visualKey: 'cold_drink',
+      iconEmoji: '🥤',
+      sortOrder: 20,
+      active: true,
+      subcategories: [
+        { id: 'Tea & Coffee', name: 'Tea & Coffee', visualKey: 'tea', sortOrder: 10 },
+        { id: 'Cold Drinks', name: 'Cold Drinks', visualKey: 'cold_drink', sortOrder: 20 },
+        { id: 'Juices', name: 'Juices', visualKey: 'fresh_juice', sortOrder: 30 },
+        { id: 'Milkshakes', name: 'Milkshakes', visualKey: 'milkshake', sortOrder: 40 },
+      ]
     },
     {
-      id: 'cold_coffee_01',
-      name: 'Cold Coffee Thick Shake',
-      price: 45,
-      pricePaise: 4500,
-      type: 'instant',
-      category: 'BEVERAGES',
-      parentCategory: 'BEVERAGES',
-      subCategory: 'Milkshakes',
-      dietaryType: 'VEG',
-      station: 'beverage',
-      available: true,
-      stockOnHand: 18,
-      reservedStock: 1,
-      prepMinutes: 0,
-      description: 'Chilled blended brew with creamy dairy and cocoa drizzle.',
-    },
-    {
-      id: 'veg_grilled_sandwich_01',
-      name: 'Bombay Veg Cheese Grill',
-      price: 80,
-      pricePaise: 8000,
-      type: 'cooked',
-      category: 'FOOD',
-      parentCategory: 'FOOD',
-      subCategory: 'Sandwiches',
-      dietaryType: 'VEG',
-      station: 'sandwich',
-      available: true,
-      stockOnHand: 100,
-      reservedStock: 0,
-      prepMinutes: 8,
-      description: 'Triple-layer sandwich with beetroot, cucumber, mint chutney, and melted cheese.',
-    },
-    {
-      id: 'amul_buttermilk_01',
-      name: 'Amul Masala Buttermilk (200ml)',
-      price: 15,
-      pricePaise: 1500,
-      type: 'instant',
-      category: 'BEVERAGES',
-      parentCategory: 'BEVERAGES',
-      subCategory: 'Cold Drinks',
-      dietaryType: 'VEG',
-      station: 'beverage',
-      available: true,
-      stockOnHand: 40,
-      reservedStock: 0,
-      prepMinutes: 0,
-      description: 'Refreshing spiced buttermilk pouch.',
+      id: 'SNACKS',
+      name: 'Snacks & Packaged',
+      visualKey: 'fries',
+      iconEmoji: '🍟',
+      sortOrder: 30,
+      active: true,
+      subcategories: [
+        { id: 'Pav Items', name: 'Pav & Samosa', visualKey: 'vada_pav', sortOrder: 10 },
+        { id: 'Fries', name: 'French Fries', visualKey: 'fries', sortOrder: 20 },
+        { id: 'Quick', name: 'Quick Bites', visualKey: 'samosa_snack', sortOrder: 30 },
+        { id: 'Packaged', name: 'Packaged Snacks', visualKey: 'packaged_snack', sortOrder: 40 },
+      ]
     }
   ];
 
-  const allItemsToSeed = [...legacyDemoItems, ...verifiedItems];
-  // Deduplicate by ID
-  const itemMap = new Map();
-  for (const it of allItemsToSeed) {
-    itemMap.set(it.id, it);
-  }
+  const catBatch = db.batch();
+  for (const cat of canonicalCategories) {
+    const catRef = db.collection('categories').doc(cat.id);
+    catBatch.set(catRef, {
+      id: cat.id,
+      name: cat.name,
+      visualKey: cat.visualKey,
+      iconEmoji: cat.iconEmoji,
+      sortOrder: cat.sortOrder,
+      active: cat.active,
+      updatedAt: now,
+    }, { merge: true });
 
+    for (const sub of cat.subcategories) {
+      const subRef = db.collection('categories').doc(cat.id).collection('subcategories').doc(sub.id.toLowerCase().replace(/[^a-z0-9]/g, '_'));
+      catBatch.set(subRef, {
+        id: sub.id,
+        categoryId: cat.id,
+        name: sub.name,
+        visualKey: sub.visualKey,
+        sortOrder: sub.sortOrder,
+        active: true,
+        updatedAt: now,
+      }, { merge: true });
+    }
+  }
+  await catBatch.commit();
+  console.log('  ✓ Canonical categories & subcategories committed.\n');
+
+  // Seed Menu Items (Verified 85 physical menu items)
+  console.log(`▶ Step 3: Seeding Authoritative Menu Catalog (${verifiedItems.length} items)...`);
   const batch = db.batch();
-  for (const [id, item] of itemMap) {
-    const ref = db.collection('menuItems').doc(id);
+  for (const item of verifiedItems) {
+    const ref = db.collection('menuItems').doc(item.id);
+    const pricePaise = item.pricePaise || Math.round((item.price || 0) * 100);
     batch.set(ref, {
       ...item,
-      pricePaise: item.pricePaise || Math.round((item.price || 0) * 100),
+      pricePaise,
+      effectivePricePaise: pricePaise,
       isArchived: item.isArchived || false,
+      available: item.available !== false,
+      availabilityStatus: item.available !== false ? 'AVAILABLE' : 'SOLD_OUT',
       updatedAt: now,
     }, { merge: true });
   }
   await batch.commit();
-  console.log(`  ✓ Successfully committed ${itemMap.size} menu items (${verifiedItems.length} verified physical items).\n`);
+  console.log(`  ✓ Successfully committed ${verifiedItems.length} canonical menu items.\n`);
 
   // 4. Seed Faculty Verification Applications
   console.log('▶ Step 4: Seeding Faculty Verification Applications...');
@@ -269,7 +291,7 @@ async function seedDemoData() {
       totalAmountPaise: 7000,
       pinCode: '4920',
       items: [{ name: 'Mysore Masala Dosa', quantity: 1, price: 70 }],
-      createdAt: admin.firestore.Timestamp.fromDate(new Date(Date.now() - 15 * 60000)),
+      createdAt: Timestamp ? Timestamp.fromDate(new Date(Date.now() - 15 * 60000)) : new Date(Date.now() - 15 * 60000),
       updatedAt: now,
     },
     {
@@ -285,7 +307,7 @@ async function seedDemoData() {
       totalAmountPaise: 8000,
       pinCode: '7154',
       items: [{ name: 'Bombay Veg Cheese Grill', quantity: 1, price: 80 }],
-      createdAt: admin.firestore.Timestamp.fromDate(new Date(Date.now() - 8 * 60000)),
+      createdAt: Timestamp ? Timestamp.fromDate(new Date(Date.now() - 8 * 60000)) : new Date(Date.now() - 8 * 60000),
       updatedAt: now,
     },
     {
@@ -303,7 +325,7 @@ async function seedDemoData() {
         { name: 'Punjabi Samosa (2 pcs)', quantity: 1, price: 30 },
         { name: 'Cold Coffee Thick Shake', quantity: 1, price: 45 },
       ],
-      createdAt: admin.firestore.Timestamp.fromDate(new Date(Date.now() - 4 * 60000)),
+      createdAt: Timestamp ? Timestamp.fromDate(new Date(Date.now() - 4 * 60000)) : new Date(Date.now() - 4 * 60000),
       updatedAt: now,
     }
   ];

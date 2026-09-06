@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 
 export interface PublicPreparingTicket {
@@ -13,7 +14,7 @@ export interface PublicLiveQueueDocument {
   preparing: PublicPreparingTicket[];
   ready: PublicReadyTicket[];
   activeCount: number;
-  updatedAt: admin.firestore.Timestamp;
+  updatedAt: Timestamp;
 }
 
 /**
@@ -26,7 +27,7 @@ export function buildPublicQueuePayload(
     tokenNumber?: string;
     status?: string;
     estimatedMinutes?: number | null;
-    createdAt?: admin.firestore.Timestamp | Date;
+    createdAt?: Timestamp | Date;
   }>
 ): PublicLiveQueueDocument {
   const preparing: PublicPreparingTicket[] = [];
@@ -54,7 +55,7 @@ export function buildPublicQueuePayload(
     preparing,
     ready,
     activeCount: preparing.length + ready.length,
-    updatedAt: admin.firestore.Timestamp.now(),
+    updatedAt: Timestamp.now(),
   };
 }
 

@@ -1,3 +1,4 @@
+import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
@@ -119,7 +120,7 @@ export const generateShiftPin = onCall<GenerateShiftPinRequest>(async (request) 
   }
   const expiresAt = new Date(`${shiftDate}T${timeStr}+05:30`);
 
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   await pinRef.set({
     pinId,
@@ -135,7 +136,7 @@ export const generateShiftPin = onCall<GenerateShiftPinRequest>(async (request) 
     status: 'ACTIVE',
     createdBy: request.auth.uid,
     createdAt: now,
-    expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+    expiresAt: Timestamp.fromDate(expiresAt),
   });
 
   await logSecurityEvent({
@@ -266,7 +267,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
         const newFails = (data.failedAttempts || 0) + 1;
         const updates: any = { failedAttempts: newFails };
         if (newFails >= 5) {
-          updates.lockedUntil = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 15 * 60000));
+          updates.lockedUntil = Timestamp.fromDate(new Date(Date.now() + 15 * 60000));
         }
         t.update(targetRef, updates);
       }
@@ -314,7 +315,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
         const newFails = (data.failedAttempts || 0) + 1;
         const updates: any = { failedAttempts: newFails };
         if (newFails >= 5) {
-          updates.lockedUntil = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 15 * 60000));
+          updates.lockedUntil = Timestamp.fromDate(new Date(Date.now() + 15 * 60000));
         }
         transaction.update(pinRef, updates);
         throw new HttpsError('unauthenticated', 'Invalid staff credentials.');
@@ -335,7 +336,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
         boundDevices,
         failedAttempts: 0,
         lockedUntil: null,
-        lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastLoginAt: FieldValue.serverTimestamp(),
       });
 
       finalRole = data.role;
@@ -365,8 +366,8 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
     deviceHash: hashedDeviceId,
     shiftDate: todayStr,
     status: 'ACTIVE',
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 8 * 60 * 60 * 1000), // 8 hours
+    createdAt: FieldValue.serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 8 * 60 * 60 * 1000), // 8 hours
   });
 
   customToken = await admin.auth().createCustomToken(workstationUid, {
@@ -429,7 +430,7 @@ export const revokeShiftPin = onCall<RevokeShiftPinRequest>(async (request) => {
 
   await pinRef.update({
     status: 'REVOKED',
-    revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+    revokedAt: FieldValue.serverTimestamp(),
     revokedBy: request.auth.uid,
     revocationReason: reason,
   });
@@ -443,7 +444,7 @@ export const revokeShiftPin = onCall<RevokeShiftPinRequest>(async (request) => {
   for (const sessionDoc of activeSessionsSnap.docs) {
     await sessionDoc.ref.update({
       status: 'REVOKED',
-      revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+      revokedAt: FieldValue.serverTimestamp(),
       revokedBy: request.auth.uid,
       revocationReason: reason,
     });
@@ -481,7 +482,7 @@ export async function assertActiveWorkstationSession(uid: string, token: Record<
     if (sessionData.status !== 'ACTIVE') {
       throw new HttpsError('unauthenticated', 'Workstation session has been revoked. Please re-authenticate with shift PIN.');
     }
-    const now = admin.firestore.Timestamp.now();
+    const now = Timestamp.now();
     if (sessionData.expiresAt && sessionData.expiresAt.toMillis() <= now.toMillis()) {
       throw new HttpsError('unauthenticated', 'Workstation session has expired. Please re-authenticate with shift PIN.');
     }

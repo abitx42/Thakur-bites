@@ -1,6 +1,6 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { UserDocument, VerificationStatus, PriorityLevel } from './types';
+import { UserDocument, VerificationStatus, PriorityLevel, Timestamp } from './types';
 import { classifyIdentity } from './identity_classifier';
 import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
@@ -42,7 +42,22 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
 
   const userId = request.auth.uid;
   const email = (request.auth.token.email as string | undefined)?.trim().toLowerCase() || '';
-  const isAnonymous = request.auth.token.firebase?.sign_in_provider === 'anonymous' || !email;
+  const signInProvider = request.auth.token.firebase?.sign_in_provider;
+  const isGoogle = signInProvider === 'google.com';
+  const callerRole = (request.auth.token.role as string | undefined)?.toLowerCase();
+  const isPrivileged = callerRole && ['developer', 'admin', 'manager', 'security_admin', 'system'].includes(callerRole);
+
+  // Enforce Google-only customer authentication architecture:
+  // Customers must authenticate via Google Sign-In (google.com). Non-Google sign-in attempts
+  // are rejected unless executed by privileged staff / admin roles.
+  if (signInProvider && !isGoogle && !isPrivileged && signInProvider !== 'custom') {
+    throw new HttpsError(
+      'permission-denied',
+      'Customer accounts must authenticate via Google Sign-In (google.com).'
+    );
+  }
+
+  const isAnonymous = signInProvider === 'anonymous' || !email;
   const emailVerified = request.auth.token.email_verified === true;
   const displayNameFromToken = (request.auth.token.name as string | undefined) || '';
   const photoURL = (request.auth.token.picture as string | undefined) || '';
@@ -105,7 +120,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
 
   const userRef = db.collection('users').doc(userId);
   const studentRef = db.collection('students').doc(userId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   const result = await db.runTransaction(async (transaction) => {
     const [userSnap, studentSnap] = await Promise.all([

@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { enforceAppCheck } from './app_check';
@@ -50,10 +51,10 @@ export interface OwnerBusinessMetricsResponse {
   featureFlags: OwnerFeatureFlags;
 }
 
-function getTodayStartTimestamp(): admin.firestore.Timestamp {
+function getTodayStartTimestamp(): Timestamp {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
-  return admin.firestore.Timestamp.fromDate(d);
+  return Timestamp.fromDate(d);
 }
 
 /**
@@ -229,7 +230,7 @@ export const updateOwnerFeatureFlags = onCall<Partial<OwnerFeatureFlags>>(async 
   } = request.data || {};
 
   const updates: Record<string, any> = {
-    updatedAt: admin.firestore.Timestamp.now(),
+    updatedAt: Timestamp.now(),
     updatedBy: request.auth.uid,
   };
 

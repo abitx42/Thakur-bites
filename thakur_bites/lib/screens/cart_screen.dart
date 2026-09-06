@@ -7,6 +7,7 @@ import '../providers/cart_provider.dart';
 import '../services/firestore_service.dart';
 import '../services/checkout_service.dart';
 import '../theme/app_theme.dart';
+import 'login_sheet.dart';
 import 'ticket_screen.dart';
 
 /// Cart screen — stock is checked ONLY at checkout, not at cart level.
@@ -375,6 +376,20 @@ class _CartSummaryState extends State<_CartSummary> {
     if (_isProcessing) return;
     final cart = widget.cart;
     final authProvider = context.read<AuthProvider>();
+
+    // If browsing as guest or unauthenticated, prompt to sign in before checkout
+    if (!authProvider.isLoggedIn || authProvider.currentProfile == null || authProvider.isGuest) {
+      LoginSheet.show(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Please sign in or create an account to place your order! 🍕'),
+          backgroundColor: AppColors.mustardInk,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+      return;
+    }
 
     // 1. If cart has items that went completely unavailable, prompt to clean
     if (cart.hasOutOfStockItems) {

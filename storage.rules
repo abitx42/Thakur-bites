@@ -39,6 +39,13 @@ service firebase.storage {
         && (request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp']);
     }
 
+    match /menu_images/{menuItemId}/{fileName} {
+      allow read: if true;
+      allow write: if isManagerOrAdmin()
+        && request.resource.size <= 2 * 1024 * 1024
+        && (request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp']);
+    }
+
     // Default Deny
     match /{allPaths=**} {
       allow read, write: if false;

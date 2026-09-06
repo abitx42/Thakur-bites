@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { enforceAppCheck } from './app_check';
@@ -31,7 +32,13 @@ export interface UpdateMenuItemDetailsRequest {
     prepMinutes?: number;
     batchDate?: string;
     type?: 'instant' | 'cooked';
+    inventoryMode?: 'MADE_TO_ORDER' | 'STOCK_TRACKED';
     displayOrder?: number;
+    sortOrder?: number;
+    visualKey?: string;
+    isPopular?: boolean;
+    tags?: string[];
+    imageUrl?: string;
   };
 }
 
@@ -46,6 +53,7 @@ export interface UpsertMenuItemRequest {
     dietaryType?: DietaryType;
     description?: string;
     type: 'instant' | 'cooked';
+    inventoryMode?: 'MADE_TO_ORDER' | 'STOCK_TRACKED';
     prepMinutes?: number;
     stockCount?: number;
     batchDate?: string;
@@ -53,7 +61,11 @@ export interface UpsertMenuItemRequest {
     isArchived?: boolean;
     imageUrl?: string;
     iconKey?: string;
+    visualKey?: string;
+    isPopular?: boolean;
+    tags?: string[];
     displayOrder?: number;
+    sortOrder?: number;
   };
 }
 
@@ -133,7 +145,7 @@ export const toggleMenuItemAvailability = onCall<ToggleMenuItemAvailabilityReque
 
   await itemRef.update({
     available,
-    updatedAt: admin.firestore.Timestamp.now(),
+    updatedAt: Timestamp.now(),
     updatedBy: request.auth.uid,
   });
 
@@ -183,7 +195,7 @@ export const updateMenuItemDetails = onCall<UpdateMenuItemDetailsRequest>(async 
   }
 
   const updates: Record<string, any> = {
-    updatedAt: admin.firestore.Timestamp.now(),
+    updatedAt: Timestamp.now(),
     updatedBy: request.auth.uid,
   };
 
@@ -247,6 +259,37 @@ export const updateMenuItemDetails = onCall<UpdateMenuItemDetailsRequest>(async 
       throw new HttpsError('invalid-argument', 'Item type must be either "instant" or "cooked".');
     }
     updates.type = details.type;
+  }
+
+  if (details.inventoryMode !== undefined) {
+    if (!['MADE_TO_ORDER', 'STOCK_TRACKED'].includes(details.inventoryMode)) {
+      throw new HttpsError('invalid-argument', 'inventoryMode must be MADE_TO_ORDER or STOCK_TRACKED.');
+    }
+    updates.inventoryMode = details.inventoryMode;
+  } else if (details.type !== undefined) {
+    updates.inventoryMode = details.type === 'cooked' ? 'MADE_TO_ORDER' : 'STOCK_TRACKED';
+  }
+
+  if (details.visualKey !== undefined) {
+    updates.visualKey = String(details.visualKey).trim().slice(0, 50);
+  }
+
+  if (details.isPopular !== undefined) {
+    updates.isPopular = Boolean(details.isPopular);
+  }
+
+  if (details.tags !== undefined && Array.isArray(details.tags)) {
+    updates.tags = details.tags.map(t => String(t).trim().slice(0, 30)).slice(0, 20);
+  }
+
+  if (details.sortOrder !== undefined) {
+    const s = Number(details.sortOrder) || 0;
+    updates.sortOrder = s;
+    updates.displayOrder = s;
+  }
+
+  if (details.imageUrl !== undefined) {
+    updates.imageUrl = String(details.imageUrl).trim().slice(0, 500);
   }
 
   const itemRef = db.collection('menuItems').doc(itemId);
@@ -361,6 +404,7 @@ export const upsertMenuItem = onCall<UpsertMenuItemRequest>(async (request) => {
     dietaryType,
     description: String(itemData.description || '').trim().slice(0, 500),
     type,
+    inventoryMode: itemData.inventoryMode || (type === 'cooked' ? 'MADE_TO_ORDER' : 'STOCK_TRACKED'),
     prepMinutes: Math.max(0, Math.min(180, Number(itemData.prepMinutes) || 0)),
     stockCount: stockOnHand,
     stockOnHand,
@@ -372,10 +416,14 @@ export const upsertMenuItem = onCall<UpsertMenuItemRequest>(async (request) => {
     availabilityStatus: isAvailable ? 'AVAILABLE' : 'SOLD_OUT',
     imageUrl: String(itemData.imageUrl || '').slice(0, 500),
     iconKey: String(itemData.iconKey || itemData.category || '').slice(0, 50),
-    displayOrder: typeof itemData.displayOrder === 'number' ? itemData.displayOrder : (existingData.displayOrder || 0),
-    updatedAt: admin.firestore.Timestamp.now(),
+    visualKey: String(itemData.visualKey || itemData.iconKey || itemData.category || '').slice(0, 50),
+    isPopular: Boolean(itemData.isPopular),
+    tags: Array.isArray(itemData.tags) ? itemData.tags.map(t => String(t).trim().slice(0, 30)).slice(0, 20) : [],
+    displayOrder: typeof itemData.displayOrder === 'number' ? itemData.displayOrder : (typeof itemData.sortOrder === 'number' ? itemData.sortOrder : (existingData.displayOrder || 0)),
+    sortOrder: typeof itemData.sortOrder === 'number' ? itemData.sortOrder : (typeof itemData.displayOrder === 'number' ? itemData.displayOrder : (existingData.sortOrder || 0)),
+    updatedAt: Timestamp.now(),
     updatedBy: request.auth.uid,
-    createdAt: existingData.createdAt || admin.firestore.Timestamp.now(),
+    createdAt: existingData.createdAt || Timestamp.now(),
   };
 
   await itemRef.set(docPayload, { merge: true });
@@ -433,9 +481,9 @@ export const archiveMenuItem = onCall<ArchiveMenuItemRequest>(async (request) =>
     available: false,
     availabilityStatus: 'UNAVAILABLE',
     archiveReason: String(reason || 'Administrative Archival').slice(0, 200),
-    archivedAt: admin.firestore.Timestamp.now(),
+    archivedAt: Timestamp.now(),
     archivedBy: request.auth.uid,
-    updatedAt: admin.firestore.Timestamp.now(),
+    updatedAt: Timestamp.now(),
     updatedBy: request.auth.uid,
   });
 
@@ -484,7 +532,7 @@ export const bulkImportMenuItems = onCall<BulkImportMenuItemsRequest>(async (req
     throw new HttpsError('invalid-argument', 'Bulk import batch size cannot exceed 200 items.');
   }
 
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
   const batch = db.batch();
   const processedIds: string[] = [];
   const seenNames = new Set<string>();
@@ -613,3 +661,39 @@ export const deleteMenuItemAdmin = onCall<DeleteMenuItemRequest>(async (request)
 
   return { success: true, itemId };
 });
+
+/**
+ * 7. Authoritative Menu Catalog Health & Diagnostics
+ */
+export const getMenuHealth = onCall(async (request) => {
+  enforceAppCheck(request);
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'Authentication is required.');
+  }
+
+  const snap = await db.collection('menuItems').get();
+  const items = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+  const total = items.length;
+  const active = items.filter(i => !i.isArchived);
+  const available = items.filter(i => !i.isArchived && i.available !== false);
+  const soldOut = items.filter(i => !i.isArchived && i.available === false);
+  const missingVisualKey = items.filter(i => !i.visualKey);
+  const withRealPhoto = items.filter(i => i.imageUrl && i.imageUrl.length > 0);
+  const usingFallbackVisual = total - withRealPhoto.length;
+  const popularCount = items.filter(i => i.isPopular === true).length;
+
+  return {
+    totalItems: total,
+    activeItems: active.length,
+    availableItems: available.length,
+    soldOutItems: soldOut.length,
+    missingVisualKeyCount: missingVisualKey.length,
+    withRealPhotoCount: withRealPhoto.length,
+    usingFallbackVisualCount: usingFallbackVisual,
+    popularItemsCount: popularCount,
+    healthy: total >= 80 && missingVisualKey.length === 0,
+    timestamp: Timestamp.now(),
+  };
+});
+

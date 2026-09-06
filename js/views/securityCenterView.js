@@ -14,6 +14,8 @@ let rateLimitsData = null;
 let rateLimitsLoading = false;
 let rateLimitsSaving = false;
 let rateLimitsFeedback = null;
+let menuHealthResult = null;
+let menuHealthLoading = false;
 
 function escapeHtml(str) {
   if (typeof str !== 'string') str = String(str ?? '');
@@ -109,6 +111,78 @@ export function renderSecurityCenterView(container) {
             </div>
           </div>
         ` : ''}
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 0.8: CANONICAL MENU HEALTH & VISUAL CONTENT COVERAGE -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 16px; padding: 1.4rem; margin-bottom: 2rem; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1rem;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <h3 style="font-family: var(--font-display); font-size: 1.4rem; margin: 0; display: flex; align-items: center; gap: 8px;">
+                  <span>📋</span>
+                  <span>MENU CATALOG INTEGRITY & 3-TIER VISUAL COVERAGE</span>
+                </h3>
+                <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; background: ${menuHealthResult && menuHealthResult.status === 'HEALTHY' ? '#DCFCE7' : (menuHealthResult ? '#FEE2E2' : '#F1F5F9')}; color: ${menuHealthResult && menuHealthResult.status === 'HEALTHY' ? '#166534' : (menuHealthResult ? '#991B1B' : '#475569')};">
+                  ${menuHealthResult ? menuHealthResult.status : 'DIAGNOSTIC READY'}
+                </span>
+              </div>
+              <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
+                Verifies that all 85 physical menu items are active, have server-authoritative paise pricing, and resolve through the 3-tier visual fallback engine.
+              </p>
+            </div>
+
+            <button 
+              id="check-menu-health-btn"
+              ${menuHealthLoading ? 'disabled' : ''}
+              style="padding: 8px 16px; border-radius: 8px; background: #0F172A; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;"
+            >
+              ${menuHealthLoading ? '⏳ Verifying Catalog...' : '🔍 Check Menu Health'}
+            </button>
+          </div>
+
+          ${menuHealthResult ? `
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 1rem;">
+              <div style="background: var(--bg-surface); padding: 10px; border-radius: 8px; border: 1px solid var(--border-light);">
+                <div style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--ink-secondary);">TOTAL ITEMS</div>
+                <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800;">${menuHealthResult.totalItems}</div>
+              </div>
+              <div style="background: var(--bg-surface); padding: 10px; border-radius: 8px; border: 1px solid var(--border-light);">
+                <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #16A34A;">ACTIVE CATALOG</div>
+                <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #16A34A;">${menuHealthResult.activeItems}</div>
+              </div>
+              <div style="background: var(--bg-surface); padding: 10px; border-radius: 8px; border: 1px solid var(--border-light);">
+                <div style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--ink-secondary);">REAL PHOTOS</div>
+                <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800;">📷 ${menuHealthResult.itemsWithDirectPhotos}</div>
+              </div>
+              <div style="background: var(--bg-surface); padding: 10px; border-radius: 8px; border: 1px solid var(--border-light);">
+                <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #D97706;">VISUAL KEYS</div>
+                <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #D97706;">🎨 ${menuHealthResult.itemsWithVisualKeys}</div>
+              </div>
+              <div style="background: var(--bg-surface); padding: 10px; border-radius: 8px; border: 1px solid var(--border-light);">
+                <div style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--ink-secondary);">CATEGORIES</div>
+                <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800;">${menuHealthResult.categoriesCount} / ${menuHealthResult.subcategoriesCount}</div>
+              </div>
+            </div>
+
+            ${(menuHealthResult.anomalies || []).length === 0 ? `
+              <div style="padding: 10px 14px; border-radius: 8px; background: #F0FDF4; border: 1px solid #86EFAC; font-family: var(--font-mono); font-size: 0.8rem; color: #166534;">
+                ✅ 100% Menu Health: All canonical items have authoritative prices, dietary classifications, and 3-tier visual resolvers.
+              </div>
+            ` : `
+              <div style="padding: 10px 14px; border-radius: 8px; background: #FEF2F2; border: 1px solid #FCA5A5; font-family: var(--font-mono); font-size: 0.8rem; color: #991B1B;">
+                ⚠️ Catalog Anomalies Detected:
+                <ul style="margin: 6px 0 0 16px; padding: 0;">
+                  ${menuHealthResult.anomalies.map(a => `<li>${escapeHtml(a)}</li>`).join('')}
+                </ul>
+              </div>
+            `}
+          ` : `
+            <div style="padding: 1rem; background: var(--bg-surface); border-radius: 10px; border: 1px dashed var(--border-light); text-align: center; font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary);">
+              Click "Check Menu Health" to run an authoritative diagnostic on the live menu catalog and visual resolver coverage.
+            </div>
+          `}
+        </div>
 
         <!-- ═══════════════════════════════════════════════════════════ -->
         <!-- SECTION 1: INTERACTIVE RBAC PERMISSION SIMULATOR (P2.0)     -->
@@ -363,6 +437,27 @@ export function renderSecurityCenterView(container) {
           alert('Integrity Scan Notice: ' + (err.message || err));
         } finally {
           scanRunning = false;
+          render();
+        }
+      });
+    }
+
+    // Menu Health Diagnostic Listener
+    const checkMenuBtn = container.querySelector('#check-menu-health-btn');
+    if (checkMenuBtn) {
+      checkMenuBtn.addEventListener('click', async () => {
+        menuHealthLoading = true;
+        render();
+
+        try {
+          const functions = getFunctions();
+          const healthFn = httpsCallable(functions, 'getMenuHealth');
+          const res = await healthFn();
+          menuHealthResult = res.data;
+        } catch (err) {
+          alert('Menu Health Diagnostic Error: ' + (err.message || err));
+        } finally {
+          menuHealthLoading = false;
           render();
         }
       });

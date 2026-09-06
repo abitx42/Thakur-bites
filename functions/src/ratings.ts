@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { enforceRateLimit } from './rate_limiter';
@@ -52,7 +53,7 @@ export const createMealRating = onCall<MealRatingRequest>(async (request) => {
   const publicRatingRef = db.collection('ratingsPublic').doc(ratingId);
   const orderRef = db.collection('orders').doc(orderId);
   const itemRef = db.collection('menuItems').doc(itemId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   return await db.runTransaction(async (transaction) => {
     // 1. Read rating document

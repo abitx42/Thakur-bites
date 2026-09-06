@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import { PaymentRecord, FinancialTransactionRecord } from './types';
 import { commitInventoryInTransaction } from './inventory_reservation';
@@ -47,7 +48,7 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     signatureOrRef = '',
   } = params;
 
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
   const orderRef = db.collection('orders').doc(orderId);
 
   return await db.runTransaction(async (transaction) => {
@@ -194,7 +195,11 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       };
     }
 
-    // 5. Create immutable payments collection record
+    // 5. Commit inventory reservation (Phase 2 Two-Phase Inventory Lifecycle)
+    // STRICT FIRESTORE INVARIANT: All reads inside commitInventoryInTransaction must precede all writes.
+    await commitInventoryInTransaction(transaction, db, orderId, actorId);
+
+    // 6. Create immutable payments collection record
     const paymentId = `pay_${gatewayPaymentId}`;
     const paymentRef = db.collection('payments').doc(paymentId);
     const paymentRecord: PaymentRecord = {
@@ -212,7 +217,7 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     };
     transaction.set(paymentRef, paymentRecord);
 
-    // 6. Create immutable double-entry financial transaction record (Phase 5 Invariant)
+    // 7. Create immutable double-entry financial transaction record (Phase 5 Invariant)
     const isCash = source === 'cashier_counter';
     const finTxRef = db.collection('financialTransactions').doc();
     const finRecord: FinancialTransactionRecord = {
@@ -241,9 +246,6 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       status: isCash ? 'SETTLED' : 'CAPTURED',
     };
     transaction.set(finTxRef, finRecord);
-
-    // 7. Commit inventory reservation (Phase 2 Two-Phase Inventory Lifecycle)
-    await commitInventoryInTransaction(transaction, db, orderId, actorId);
 
     // 8. Update order state machine: payment_pending -> confirmed
     transaction.update(orderRef, {

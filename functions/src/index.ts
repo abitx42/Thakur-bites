@@ -1,8 +1,12 @@
 import * as admin from 'firebase-admin';
+import 'firebase-admin/firestore';
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
+try {
+  admin.firestore().settings({ ignoreUndefinedProperties: true });
+} catch (_) {}
 
 export { createCheckout } from './checkout';
 export { updateOrderStatus, cancelOrder } from './order_state';
@@ -55,6 +59,7 @@ export {
   archiveMenuItem,
   bulkImportMenuItems,
   deleteMenuItemAdmin,
+  getMenuHealth,
 } from './menu_management';
 export {
   getSecurityRateLimits,

@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { OrderStatus, UserRole } from './types';
@@ -21,7 +22,7 @@ const ALLOWED_OPERATIONAL_TRANSITIONS: Record<OrderStatus, { next: OrderStatus[]
   draft: [],
   payment_pending: [], // Payment pending cancellations must go through cancelOrExpirePaymentSession or cancelOrder
   paid: [],
-  confirmed: [{ next: ['preparing'], roles: ['kitchen', 'manager', 'admin', 'developer', 'security_admin'] }],
+  confirmed: [{ next: ['preparing', 'ready'], roles: ['kitchen', 'manager', 'admin', 'developer', 'security_admin'] }],
   preparing: [{ next: ['ready'], roles: ['kitchen', 'manager', 'admin', 'developer', 'security_admin'] }],
   ready: [],
   collected: [],
@@ -42,7 +43,8 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
   const actorId = request.auth.uid;
   await enforceRateLimit(actorId, 'order_status');
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  const { orderId, nextStatus } = request.data;
+  const orderId = request.data?.orderId;
+  const nextStatus = request.data?.nextStatus || (request.data as any)?.status;
 
   if (!orderId || !nextStatus) {
     throw new HttpsError('invalid-argument', 'orderId and nextStatus are required.');
@@ -56,7 +58,7 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
   }
 
   const orderRef = db.collection('orders').doc(orderId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   const stateResult = await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(orderRef);
@@ -153,7 +155,7 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
 
   const cleanReason = reason.trim();
   const orderRef = db.collection('orders').doc(orderId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   // 1. Initial order validation & Gateway Refund Execution for Paid Online Orders
   const initialSnap = await orderRef.get();

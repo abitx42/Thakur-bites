@@ -1,4 +1,5 @@
 import { Timestamp } from 'firebase-admin/firestore';
+export { Timestamp };
 
 export type UserRole =
   | 'customer'
@@ -214,6 +215,7 @@ export interface MenuItemDoc {
   category: string;
   image?: string;
   type: 'cooked' | 'instant';
+  inventoryMode?: 'MADE_TO_ORDER' | 'STOCK_TRACKED';
   isPublished: boolean;
   isOrderable: boolean;
   prepMinutes?: number;
@@ -272,7 +274,7 @@ export interface VerificationApplication {
   employeeId: string;
   department: string;
   designation: string;
-  idProofStoragePath?: string;
+  idProofStoragePath?: string | null;
   officialEmail?: string;
   status: 'SUBMITTED' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED';
   submittedAt: Timestamp;

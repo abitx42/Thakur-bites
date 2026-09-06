@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { logSecurityEvent } from './security_logger';
@@ -81,7 +82,7 @@ export async function assertPrivilegedSession(
 
   // Session valid: touch lastActivityAt
   await sessionRef.update({
-    lastActivityAt: admin.firestore.Timestamp.fromMillis(now),
+    lastActivityAt: Timestamp.fromMillis(now),
   }).catch(() => {});
 
   return { sessionId, role: data.role || '' };

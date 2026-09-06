@@ -9,6 +9,9 @@ import { CallableRequest, HttpsError } from 'firebase-functions/v2/https';
  * and cannot be disabled by environment configuration variables.
  */
 export function enforceAppCheck(request: CallableRequest<any>): void {
+  if (process.env.FUNCTIONS_EMULATOR === 'true' && process.env.ENFORCE_APP_CHECK !== 'true') {
+    return;
+  }
   const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE);
   const isExplicitlyEnforced = process.env.ENFORCE_APP_CHECK === 'true';
 

@@ -1,3 +1,4 @@
+import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 
@@ -21,8 +22,8 @@ export interface SecurityEventDoc {
   orderId: string | null;
   requestId: string;
   ipAddress?: string;
-  firstSeen: admin.firestore.Timestamp;
-  lastSeen: admin.firestore.Timestamp;
+  firstSeen: Timestamp;
+  lastSeen: Timestamp;
   suppressedOccurrences: number;
   details: Record<string, any>;
 }
@@ -48,7 +49,7 @@ export async function logSecurityEvent(params: SecurityEventParams): Promise<str
   const incidentId = `INCIDENT-SEC-${incidentDigest}`;
   const incidentRef = db.collection('securityEvents').doc(incidentId);
 
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   // Telemetry Rate Budget Check
   const budgetKey = `${actorUid}:${timeBucket}`;
@@ -72,7 +73,7 @@ export async function logSecurityEvent(params: SecurityEventParams): Promise<str
       const snap = await transaction.get(incidentRef);
       if (snap.exists) {
         transaction.update(incidentRef, {
-          suppressedOccurrences: admin.firestore.FieldValue.increment(1),
+          suppressedOccurrences: FieldValue.increment(1),
           lastSeen: now,
           severity, // Update to highest severity if escalated
           details: { ...(snap.data()?.details || {}), ...details },
@@ -104,7 +105,7 @@ export async function logSecurityEvent(params: SecurityEventParams): Promise<str
         actorUid,
         orderId: orderId || null,
         lastSeen: now,
-        suppressedOccurrences: admin.firestore.FieldValue.increment(1),
+        suppressedOccurrences: FieldValue.increment(1),
         details,
       }, { merge: true });
     } catch (fallbackErr: any) {

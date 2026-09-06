@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import 'firebase_options.dart';
 import 'theme/app_theme.dart';
@@ -23,13 +24,29 @@ void main() async {
     debugPrint('[Startup] Firebase initialization: $e');
   }
 
+  if (kIsWeb) {
+    try {
+      final host = Uri.base.host.isNotEmpty ? Uri.base.host : 'localhost';
+      final port = Uri.base.port != 0 ? Uri.base.port : (Uri.base.scheme == 'https' ? 443 : 80);
+      FirebaseFunctions.instance.useFunctionsEmulator(host, port);
+      debugPrint('[Startup] Connected FirebaseFunctions emulator to $host:$port');
+    } catch (e) {
+      debugPrint('[Startup] FirebaseFunctions emulator connection notice: $e');
+    }
+  }
+
   // ─── Firebase App Check ───────────────────────────────────────────────────
   try {
     if (kIsWeb) {
-      // Web: Use standard ReCaptchaV3 provider that works across local & staging environments
-      await FirebaseAppCheck.instance.activate(
-        providerWeb: ReCaptchaV3Provider('6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI'),
-      );
+      const webKey = String.fromEnvironment('FIREBASE_APP_CHECK_WEB_KEY');
+      if (webKey.isNotEmpty) {
+        await FirebaseAppCheck.instance.activate(
+          providerWeb: ReCaptchaV3Provider(webKey),
+        );
+        debugPrint('[Startup] App Check activated with custom web key');
+      } else {
+        debugPrint('[Startup] App Check skipped on web (FIREBASE_APP_CHECK_WEB_KEY not set)');
+      }
     } else {
       await FirebaseAppCheck.instance.activate(
         providerAndroid: const AndroidPlayIntegrityProvider(),

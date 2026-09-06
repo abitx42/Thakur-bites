@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
@@ -100,7 +101,7 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
   const applicationId = `${applicationType === 'TEACHER' ? 'FAC' : 'STF'}-${hexSuffix}`;
   const appRef = db.collection('verificationApplications').doc(applicationId);
   const userRef = db.collection('users').doc(userId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   await db.runTransaction(async (transaction) => {
     const userSnap = await transaction.get(userRef);
@@ -130,7 +131,7 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
       claimedDepartment: cleanDept,
       claimedDesignation: cleanDesignation,
       claimedOfficialEmail: cleanOfficialEmail,
-      idProofStoragePath: safeProofPath,
+      idProofStoragePath: safeProofPath || null,
       status: 'SUBMITTED',
       submittedAt: now,
     };
@@ -204,7 +205,7 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
   }
 
   const appRef = db.collection('verificationApplications').doc(applicationId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   const reviewResult = await db.runTransaction(async (transaction) => {
     const appSnap = await transaction.get(appRef);
@@ -284,7 +285,7 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
       });
       await db.collection('users').doc(reviewResult.applicantUid).update({
         authClaimsSyncStatus: 'SYNCED',
-        authClaimsSyncedAt: admin.firestore.Timestamp.now(),
+        authClaimsSyncedAt: Timestamp.now(),
       });
       claimsSynced = true;
     } catch (e: any) {
@@ -292,7 +293,7 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
       await db.collection('users').doc(reviewResult.applicantUid).update({
         authClaimsSyncStatus: 'FAILED',
         authClaimsSyncError: String(e.message || e),
-        authClaimsSyncFailedAt: admin.firestore.Timestamp.now(),
+        authClaimsSyncFailedAt: Timestamp.now(),
       });
       // Enqueue to durable claims reconciliation queue for background worker recovery (Finding 23)
       await db.collection('claimsReconciliationQueue').doc(reviewResult.applicantUid).set({
@@ -304,7 +305,7 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
         },
         status: 'PENDING_RETRY',
         error: String(e.message || e),
-        failedAt: admin.firestore.Timestamp.now(),
+        failedAt: Timestamp.now(),
         retryCount: 0,
       });
       await logSecurityEvent({

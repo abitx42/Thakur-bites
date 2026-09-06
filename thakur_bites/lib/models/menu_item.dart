@@ -23,6 +23,7 @@ class MenuItem {
   final String dietaryType; // "VEG" | "NON_VEG" | "EGG"
   final String description;
   final String type; // "cooked" | "instant"
+  final String inventoryMode; // "MADE_TO_ORDER" | "STOCK_TRACKED"
   final int prepMinutes; // 0 for instant items
   final bool available; // staff toggle
   final bool isArchived; // soft delete flag
@@ -31,7 +32,11 @@ class MenuItem {
   final String? batchDate; // optional restock / batch date
   final String imageUrl; // real photos (future)
   final String iconKey; // placeholder icon key
-  final int displayOrder; // sort weight
+  final String visualKey; // canonical visual family key
+  final bool isPopular; // campus favorite badge
+  final List<String> tags; // search keywords and aliases
+  final int displayOrder; // legacy sort weight
+  final int sortOrder; // deterministic category sort weight
 
   MenuItem({
     required this.id,
@@ -43,6 +48,7 @@ class MenuItem {
     this.dietaryType = 'VEG',
     this.description = '',
     required this.type,
+    String? inventoryMode,
     required this.prepMinutes,
     this.available = true,
     this.isArchived = false,
@@ -52,8 +58,16 @@ class MenuItem {
     this.batchDate,
     this.imageUrl = '',
     this.iconKey = '',
-    this.displayOrder = 0,
-  })  : parentCategory = parentCategory ?? _inferParentCategory(category),
+    String? visualKey,
+    this.isPopular = false,
+    this.tags = const [],
+    int? displayOrder,
+    int? sortOrder,
+  })  : inventoryMode = inventoryMode ?? (type == 'cooked' ? 'MADE_TO_ORDER' : 'STOCK_TRACKED'),
+        visualKey = visualKey ?? (iconKey.isNotEmpty ? iconKey : category),
+        displayOrder = displayOrder ?? (sortOrder ?? 0),
+        sortOrder = sortOrder ?? (displayOrder ?? 0),
+        parentCategory = parentCategory ?? _inferParentCategory(category),
         subCategory = subCategory ?? category,
         stockOnHand = stockOnHand ?? (stockCount ?? 100);
 
@@ -129,6 +143,12 @@ class MenuItem {
     final dietaryType = (data['dietaryType'] as String?) ?? 'VEG';
     final description = (data['description'] as String?) ?? '';
     final displayOrder = ((data['displayOrder'] ?? 0) as num).toInt();
+    final sortOrder = ((data['sortOrder'] ?? displayOrder) as num).toInt();
+    final visualKey = (data['visualKey'] as String?) ?? (data['iconKey'] as String?) ?? category;
+    final isPopular = data['isPopular'] == true;
+    final inventoryMode = (data['inventoryMode'] as String?) ?? (type == 'cooked' ? 'MADE_TO_ORDER' : 'STOCK_TRACKED');
+    final rawTags = data['tags'];
+    final tags = rawTags is List ? rawTags.map((e) => e.toString()).toList() : <String>[];
 
     return MenuItem(
       id: docId,
@@ -140,6 +160,7 @@ class MenuItem {
       dietaryType: dietaryType,
       description: description,
       type: type,
+      inventoryMode: inventoryMode,
       prepMinutes: data['prepMinutes'] ?? 0,
       available: !isArchived && isAvail && (type != 'instant' || effectiveAvailable > 0),
       isArchived: isArchived,
@@ -148,7 +169,11 @@ class MenuItem {
       batchDate: data['batchDate'],
       imageUrl: data['imageUrl'] ?? '',
       iconKey: data['iconKey'] ?? data['category'] ?? '',
+      visualKey: visualKey,
+      isPopular: isPopular,
+      tags: tags,
       displayOrder: displayOrder,
+      sortOrder: sortOrder,
     );
   }
 
@@ -162,6 +187,7 @@ class MenuItem {
       'dietaryType': dietaryType,
       'description': description,
       'type': type,
+      'inventoryMode': inventoryMode,
       'prepMinutes': prepMinutes,
       'available': available,
       'isArchived': isArchived,
@@ -171,7 +197,11 @@ class MenuItem {
       'batchDate': batchDate,
       'imageUrl': imageUrl,
       'iconKey': iconKey,
+      'visualKey': visualKey,
+      'isPopular': isPopular,
+      'tags': tags,
       'displayOrder': displayOrder,
+      'sortOrder': sortOrder,
     };
   }
 
@@ -184,6 +214,7 @@ class MenuItem {
     String? dietaryType,
     String? description,
     String? type,
+    String? inventoryMode,
     int? prepMinutes,
     bool? available,
     bool? isArchived,
@@ -193,7 +224,11 @@ class MenuItem {
     String? batchDate,
     String? imageUrl,
     String? iconKey,
+    String? visualKey,
+    bool? isPopular,
+    List<String>? tags,
     int? displayOrder,
+    int? sortOrder,
   }) {
     return MenuItem(
       id: id,
@@ -205,6 +240,7 @@ class MenuItem {
       dietaryType: dietaryType ?? this.dietaryType,
       description: description ?? this.description,
       type: type ?? this.type,
+      inventoryMode: inventoryMode ?? this.inventoryMode,
       prepMinutes: prepMinutes ?? this.prepMinutes,
       available: available ?? this.available,
       isArchived: isArchived ?? this.isArchived,
@@ -213,7 +249,11 @@ class MenuItem {
       batchDate: batchDate ?? this.batchDate,
       imageUrl: imageUrl ?? this.imageUrl,
       iconKey: iconKey ?? this.iconKey,
+      visualKey: visualKey ?? this.visualKey,
+      isPopular: isPopular ?? this.isPopular,
+      tags: tags ?? this.tags,
       displayOrder: displayOrder ?? this.displayOrder,
+      sortOrder: sortOrder ?? this.sortOrder,
     );
   }
 }

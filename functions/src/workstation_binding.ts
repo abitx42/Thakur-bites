@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
@@ -56,8 +57,8 @@ export const createWorkstationInvite = onCall<CreateWorkstationInviteRequest>(as
   const randomSuffix = crypto.randomBytes(3).toString('hex').toUpperCase();
   const inviteCode = `WS-${randomSuffix}`;
 
-  const now = admin.firestore.Timestamp.now();
-  const expiresAt = admin.firestore.Timestamp.fromMillis(now.toMillis() + 15 * 60 * 1000); // 15 mins
+  const now = Timestamp.now();
+  const expiresAt = Timestamp.fromMillis(now.toMillis() + 15 * 60 * 1000); // 15 mins
 
   await db.collection('workstationInvites').doc(inviteCode).set({
     inviteCode,
@@ -120,7 +121,7 @@ export const enrollWorkstation = onCall<EnrollWorkstationRequest>(async (request
     // Mark invite as consumed
     transaction.update(inviteRef, {
       status: 'CONSUMED',
-      consumedAt: admin.firestore.Timestamp.fromMillis(now),
+      consumedAt: Timestamp.fromMillis(now),
     });
 
     const stationType: WorkstationRole = inviteData.stationType;
@@ -140,8 +141,8 @@ export const enrollWorkstation = onCall<EnrollWorkstationRequest>(async (request
       tokenHash,
       deviceName: String(deviceName || 'Canteen Terminal').trim().slice(0, 60),
       status: 'ACTIVE',
-      enrolledAt: admin.firestore.Timestamp.fromMillis(now),
-      lastSeenAt: admin.firestore.Timestamp.fromMillis(now),
+      enrolledAt: Timestamp.fromMillis(now),
+      lastSeenAt: Timestamp.fromMillis(now),
       enrolledBy: inviteData.createdBy,
     });
 
@@ -231,7 +232,7 @@ export const revokeWorkstation = onCall(async (request) => {
 
   await wsRef.update({
     status: 'REVOKED',
-    revokedAt: admin.firestore.Timestamp.now(),
+    revokedAt: Timestamp.now(),
     revokedBy: request.auth.uid,
     revocationReason: String(reason || 'Administrative decommission').slice(0, 200),
   });
@@ -288,7 +289,7 @@ export async function verifyWorkstationCredentials(
 
   // Update terminal activity timestamp
   await db.collection('registeredWorkstations').doc(workstationId).update({
-    lastSeenAt: admin.firestore.Timestamp.now(),
+    lastSeenAt: Timestamp.now(),
   }).catch(() => {});
 
   return { valid: true, stationName: data.stationName };

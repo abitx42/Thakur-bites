@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { UserRole } from './types';
@@ -69,7 +70,7 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     }
   }
 
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   // 2. Monotonically Allocate Global Permissions Version (TB-NEW-023)
   const authorityRef = db.collection('systemConfig').doc('permissions_authority');

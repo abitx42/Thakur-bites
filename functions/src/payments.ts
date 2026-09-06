@@ -1,3 +1,4 @@
+import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
@@ -206,7 +207,7 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
         paymentStatus: 'pending',
         status: 'payment_pending',
         gatewayOrderId,
-        paymentSessionCreatedAt: admin.firestore.Timestamp.now(),
+        paymentSessionCreatedAt: Timestamp.now(),
       });
     } else {
       gatewayOrderId = orderData.gatewayOrderId;
@@ -352,7 +353,7 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
   const eventType = eventPayload.event;
 
   const eventDocRef = db.collection('processedGatewayEvents').doc(eventId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   try {
     // Atomic Transaction Claiming with 30s Lease Timeout (TB-NEW-003 Remediation)
@@ -371,7 +372,7 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
         }
         t.update(eventDocRef, {
           status: 'PROCESSING',
-          attemptCount: admin.firestore.FieldValue.increment(1),
+          attemptCount: FieldValue.increment(1),
           lastAttemptAt: now,
         });
         return { status: 'CLAIMED' };
@@ -425,7 +426,7 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
     // Mark event as successfully PROCESSED
     await eventDocRef.update({
       status: 'PROCESSED',
-      processedAt: admin.firestore.Timestamp.now(),
+      processedAt: Timestamp.now(),
     });
 
     res.status(200).json({ received: true, processed: true });
@@ -437,7 +438,7 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
       status: 'FAILED',
       errorMessage: err.message,
       correlationId,
-      failedAt: admin.firestore.Timestamp.now(),
+      failedAt: Timestamp.now(),
     }, { merge: true }).catch(() => {});
 
     res.status(500).json({
@@ -519,8 +520,8 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
   const startOfDay = new Date(`${dateStr}T00:00:00+05:30`);
   const endOfDay = new Date(`${dateStr}T23:59:59+05:30`);
 
-  const startTimestamp = admin.firestore.Timestamp.fromDate(startOfDay);
-  const endTimestamp = admin.firestore.Timestamp.fromDate(endOfDay);
+  const startTimestamp = Timestamp.fromDate(startOfDay);
+  const endTimestamp = Timestamp.fromDate(endOfDay);
 
   const ordersSnap = await db.collection('orders')
     .where('createdAt', '>=', startTimestamp)
@@ -620,7 +621,7 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
     onlinePaymentsCaptured: onlinePaymentsCapturedPaise / 100,
     counterCashEstimated: counterCashEstimatedPaise / 100,
     discrepanciesCount,
-    reconciledAt: admin.firestore.Timestamp.now(),
+    reconciledAt: Timestamp.now(),
     status: discrepanciesCount === 0 ? 'BALANCED' : 'DISCREPANCY_FLAGGED',
     auditNotes,
   };
@@ -645,7 +646,7 @@ export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: s
   }
 
   const orderRef = db.collection('orders').doc(orderId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   return await db.runTransaction(async (transaction) => {
     const orderSnap = await transaction.get(orderRef);

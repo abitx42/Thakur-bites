@@ -1,5 +1,5 @@
 import * as admin from 'firebase-admin';
-import { AccountType, VerificationStatus, PriorityLevel, UserRole } from './types';
+import { AccountType, VerificationStatus, PriorityLevel, UserRole, Timestamp } from './types';
 
 const db = admin.firestore();
 
@@ -23,7 +23,7 @@ export async function syncUserCustomClaims(
   claimsPatch: Partial<AuthoritativeCustomClaims>
 ): Promise<AuthoritativeCustomClaims> {
   const claimsDocRef = db.collection('authoritativeClaims').doc(uid);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   const mergedClaims = await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(claimsDocRef);

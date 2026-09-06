@@ -9,6 +9,7 @@ class AuthProvider extends ChangeNotifier {
 
   UserProfile? _currentUserProfile;
   bool _isLoading = true;
+  bool _isGuestBrowsing = false;
   String? _errorMessage;
 
   UserProfile? get currentProfile => _currentUserProfile;
@@ -16,7 +17,10 @@ class AuthProvider extends ChangeNotifier {
   UserProfile? get currentStudent => _currentUserProfile;
 
   bool get isLoggedIn => _currentUserProfile != null && !isGuest;
-  bool get isGuest => _authService.currentUser?.isAnonymous ?? false;
+  bool get isGuest =>
+      (_authService.currentUser?.isAnonymous ?? false) ||
+      _isGuestBrowsing ||
+      (_currentUserProfile?.accountType == AccountType.visitor);
   bool get isVerified => _currentUserProfile?.isVerified ?? false;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
@@ -86,104 +90,21 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Enable instant guest browsing mode (synchronous, 0ms latency, pure client-side visitor profile)
+  void enableGuestBrowsing() {
+    _isGuestBrowsing = true;
+    _currentUserProfile = UserProfile.guest();
+    _errorMessage = null;
+    _isLoading = false;
+    notifyListeners();
+  }
+
   /// Sign in as Guest for casual browsing
   Future<void> signInAsGuest() async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      _currentUserProfile = await _authService.signInAsGuest();
-    } catch (e) {
-      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
-      rethrow;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+    enableGuestBrowsing();
   }
 
-  /// Link an anonymous guest session with Google (TB-NEW-004)
-  Future<void> linkGuestWithGoogle() async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
 
-    try {
-      _currentUserProfile = await _authService.linkGuestWithGoogle();
-    } catch (e) {
-      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
-      rethrow;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  /// Sign up with College Email or Visitor Email and Password
-  Future<void> signUpWithEmail({
-    required String email,
-    required String password,
-    required String name,
-    required String phone,
-    String? rollNo,
-    String? department,
-  }) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      _currentUserProfile = await _authService.signUpWithEmail(
-        email: email,
-        password: password,
-        name: name,
-        phone: phone,
-        rollNo: rollNo,
-        department: department,
-      );
-    } catch (e) {
-      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
-      rethrow;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  /// Sign in with Email and Password
-  Future<void> signInWithEmail({
-    required String email,
-    required String password,
-  }) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      _currentUserProfile = await _authService.signInWithEmail(
-        email: email,
-        password: password,
-      );
-    } catch (e) {
-      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
-      rethrow;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  /// Reset Password
-  Future<void> sendPasswordReset(String email) async {
-    _errorMessage = null;
-    try {
-      await _authService.sendPasswordReset(email);
-    } catch (e) {
-      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
-      rethrow;
-    }
-  }
 
   /// Update Profile Details
   Future<void> updateProfile([UserProfile? profile]) async {
@@ -247,6 +168,7 @@ class AuthProvider extends ChangeNotifier {
     try {
       await _authService.signOut();
       _currentUserProfile = null;
+      _isGuestBrowsing = false;
       _errorMessage = null;
     } finally {
       _isLoading = false;

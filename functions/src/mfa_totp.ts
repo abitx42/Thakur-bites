@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
@@ -154,7 +155,7 @@ export const enrollMfaTotp = onCall(async (request) => {
     secretBase32,
     recoveryCodeHashes: hashedCodes,
     mfaEnabled: false,
-    updatedAt: admin.firestore.Timestamp.now(),
+    updatedAt: Timestamp.now(),
   }, { merge: true });
 
   await logSecurityEvent({
@@ -203,7 +204,7 @@ export const verifyAndEnableMfaTotp = onCall(async (request) => {
 
   await db.collection('mfaEnrollments').doc(userId).update({
     mfaEnabled: true,
-    activatedAt: admin.firestore.Timestamp.now(),
+    activatedAt: Timestamp.now(),
     lastUsedStep: result.matchedStep || Math.floor(Date.now() / 1000 / 30),
   });
 
@@ -298,8 +299,8 @@ export const createPrivilegedSession = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'Either 6-digit totpCode or emergency recoveryCode must be provided.');
   }
 
-  const now = admin.firestore.Timestamp.now();
-  const expiresAt = admin.firestore.Timestamp.fromMillis(now.toMillis() + PRIVILEGED_SESSION_LIFETIME_MS);
+  const now = Timestamp.now();
+  const expiresAt = Timestamp.fromMillis(now.toMillis() + PRIVILEGED_SESSION_LIFETIME_MS);
   const sessionId = `psess_${crypto.randomBytes(18).toString('hex')}`;
 
   const sessionData = {

@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 
 export interface ReservationItem {
@@ -11,10 +12,10 @@ export interface InventoryReservationDoc {
   studentId: string;
   items: ReservationItem[];
   status: 'RESERVED' | 'COMMITTED' | 'RELEASED' | 'EXPIRED';
-  expiresAt: admin.firestore.Timestamp;
-  createdAt: admin.firestore.Timestamp;
-  committedAt?: admin.firestore.Timestamp;
-  releasedAt?: admin.firestore.Timestamp;
+  expiresAt: Timestamp;
+  createdAt: Timestamp;
+  committedAt?: Timestamp;
+  releasedAt?: Timestamp;
   releaseReason?: string;
 }
 
@@ -37,8 +38,8 @@ export async function reserveInventoryInTransaction(
   items: ReservationItem[],
   ttlMinutes: number = 15
 ): Promise<void> {
-  const now = admin.firestore.Timestamp.now();
-  const expiresAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + ttlMinutes * 60000));
+  const now = Timestamp.now();
+  const expiresAt = Timestamp.fromDate(new Date(Date.now() + ttlMinutes * 60000));
   const reservationRef = db.collection('inventoryReservations').doc(orderId);
 
   // ═════════════════════════════════════════════════════════════
@@ -150,7 +151,7 @@ export async function commitInventoryInTransaction(
   orderId: string,
   actorId: string
 ): Promise<void> {
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
   const reservationRef = db.collection('inventoryReservations').doc(orderId);
 
   // ═════════════════════════════════════════════════════════════
@@ -253,7 +254,7 @@ export async function releaseInventoryInTransaction(
   reason: string,
   actorId: string
 ): Promise<void> {
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
   const reservationRef = db.collection('inventoryReservations').doc(orderId);
 
   // ═════════════════════════════════════════════════════════════

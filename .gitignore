@@ -10,3 +10,5 @@ service-account*.json
 firebase-debug.log
 .firebase/
 firebase-export/
+.cursor/
+.vscode/

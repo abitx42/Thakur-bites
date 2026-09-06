@@ -4,17 +4,19 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 
-/// Platform 2.0 — Universal Login & Identity Sheet
-/// Features: Google Sign-In, TCET Institutional Email Auth, Instant Fast Login, and Guest Browsing.
+/// Platform 2.0 — Google-Only Universal Login Sheet
+/// Streamlined: Instant Google Sign-In + Automatic Backend Role Classification
 class LoginSheet extends StatefulWidget {
-  const LoginSheet({super.key});
+  final VoidCallback? onGuestBrowse;
 
-  static Future<void> show(BuildContext context) {
+  const LoginSheet({super.key, this.onGuestBrowse});
+
+  static Future<void> show(BuildContext context, {VoidCallback? onGuestBrowse}) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const LoginSheet(),
+      builder: (_) => LoginSheet(onGuestBrowse: onGuestBrowse),
     );
   }
 
@@ -23,28 +25,7 @@ class LoginSheet extends StatefulWidget {
 }
 
 class _LoginSheetState extends State<LoginSheet> {
-  int _selectedTab = 0; // 0 = Google & Guest, 1 = Institutional Email
-  final _emailFormKey = GlobalKey<FormState>();
-
-  // Email Account controllers
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _nameEmailController = TextEditingController();
-  final _phoneEmailController = TextEditingController();
-  final _rollEmailController = TextEditingController();
-  bool _isSignUpMode = false;
-
   bool _isSubmitting = false;
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    _nameEmailController.dispose();
-    _phoneEmailController.dispose();
-    _rollEmailController.dispose();
-    super.dispose();
-  }
 
   Future<void> _handleGoogleSignIn() async {
     if (_isSubmitting) return;
@@ -70,97 +51,40 @@ class _LoginSheetState extends State<LoginSheet> {
     } catch (e) {
       if (mounted) {
         setState(() => _isSubmitting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Google Sign-In: ${e.toString().replaceAll('Exception:', '').trim()}'),
-            backgroundColor: AppColors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
+        final errMsg = e.toString().replaceAll('Exception:', '').trim();
+        // If web redirected, do not show error banner
+        if (!errMsg.toLowerCase().contains('redirect')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Google Sign-In: $errMsg'),
+              backgroundColor: AppColors.red,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        }
       }
     }
   }
 
-  Future<void> _handleGuestBrowse() async {
-    if (_isSubmitting) return;
-    setState(() => _isSubmitting = true);
+  void _handleGuestBrowse() {
     HapticFeedback.lightImpact();
+    final auth = context.read<AuthProvider>();
+    auth.enableGuestBrowsing();
 
-    try {
-      final auth = context.read<AuthProvider>();
-      await auth.signInAsGuest();
-
-      if (mounted) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Browsing as Guest 🍽️ — Sign in anytime to order!'),
-            backgroundColor: AppColors.inkSoft,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isSubmitting = false);
-      }
+    if (mounted) {
+      Navigator.of(context).pop();
+      widget.onGuestBrowse?.call();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Browsing as Guest 🍽️ — Sign in anytime to order!'),
+          backgroundColor: AppColors.inkSoft,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
     }
   }
-
-  Future<void> _submitEmailAuth() async {
-    if (!_emailFormKey.currentState!.validate()) return;
-    if (_isSubmitting) return;
-
-    setState(() => _isSubmitting = true);
-    HapticFeedback.mediumImpact();
-
-    try {
-      final auth = context.read<AuthProvider>();
-      if (_isSignUpMode) {
-        await auth.signUpWithEmail(
-          email: _emailController.text.trim(),
-          password: _passwordController.text,
-          name: _nameEmailController.text.trim(),
-          phone: _phoneEmailController.text.trim(),
-          rollNo: _rollEmailController.text.trim().toUpperCase(),
-        );
-      } else {
-        await auth.signInWithEmail(
-          email: _emailController.text.trim(),
-          password: _passwordController.text,
-        );
-      }
-
-      if (mounted) {
-        Navigator.of(context).pop();
-        final name = auth.currentProfile?.displayName ?? 'Student';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Welcome, $name! 👋'),
-            backgroundColor: AppColors.green,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isSubmitting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString().replaceAll('Exception:', '').trim()),
-            backgroundColor: AppColors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
-      }
-    }
-  }
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -174,360 +98,146 @@ class _LoginSheetState extends State<LoginSheet> {
       padding: EdgeInsets.only(
         left: 20,
         right: 20,
-        top: 12,
+        top: 14,
         bottom: 24 + bottomInset,
       ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Drag Handle
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.line,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Header Title & Tagline
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: AppColors.red.withAlpha(25),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Text('🍱', style: TextStyle(fontSize: 24)),
-                ),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('THAKUR BITES', style: AppFonts.display(fontSize: 22)),
-                    Text(
-                      'Universal Campus Dining Identity',
-                      style: AppFonts.body(fontSize: 12, color: AppColors.inkSoft),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // Mode Selector Chips
-            Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: AppColors.surface2,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.line, width: 1),
-              ),
-              child: Row(
-                children: [
-                  _buildTabChip(0, '⚡️ Google & Guest'),
-                  _buildTabChip(1, '🎓 College Email'),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            // Active Tab View
-            if (_selectedTab == 0) _buildGoogleAndQuickTab(),
-            if (_selectedTab == 1) _buildEmailTab(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTabChip(int index, String label) {
-    final isSelected = _selectedTab == index;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          setState(() => _selectedTab = index);
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: isSelected ? AppColors.surface : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: isSelected
-                ? [
-                    BoxShadow(
-                      color: Colors.black.withAlpha(15),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Center(
-            child: Text(
-              label,
-              style: AppFonts.body(
-                fontSize: 12,
-                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                color: isSelected ? AppColors.red : AppColors.inkSoft,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════════
-  //  TAB 0: GOOGLE & ONE-TAP SIGN IN
-  // ═══════════════════════════════════════════════════════════════════
-  Widget _buildGoogleAndQuickTab() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          'Sign in with your TCET or Personal Google Account. The backend automatically classifies your student, faculty, or visitor privileges.',
-          style: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
-        ),
-        const SizedBox(height: 14),
-
-        // Recommended TCET Google Account Banner
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xFFEFF6FF),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFBFDBFE), width: 1.2),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('💡', style: TextStyle(fontSize: 18)),
-              const SizedBox(width: 10),
-              Expanded(
-                child: RichText(
-                  text: TextSpan(
-                    style: AppFonts.body(fontSize: 12.5, color: const Color(0xFF1E40AF), height: 1.35),
-                    children: const [
-                      TextSpan(text: 'Recommended: ', style: TextStyle(fontWeight: FontWeight.w800)),
-                      TextSpan(text: 'Sign in with your official '),
-                      TextSpan(text: '@tcetmumbai.in', style: TextStyle(fontWeight: FontWeight.w800)),
-                      TextSpan(text: ' Google account for automatic student priority queue access and instant verification!'),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-
-        // Google Sign-In Button
-        ElevatedButton(
-          onPressed: _isSubmitting ? null : _handleGoogleSignIn,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.white,
-            foregroundColor: AppColors.ink,
-            elevation: 1,
-            side: const BorderSide(color: AppColors.line, width: 1.5),
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-          child: _isSubmitting
-              ? const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2.5, color: AppColors.red),
-                )
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Image.network(
-                      'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
-                      width: 20,
-                      height: 20,
-                      errorBuilder: (context, error, stackTrace) => const Icon(Icons.account_circle, color: Colors.blue, size: 20),
-                    ),
-                    const SizedBox(width: 12),
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Continue with Google',
-                          style: AppFonts.body(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.ink),
-                        ),
-                        Text(
-                          'Recommended: @tcetmumbai.in ID',
-                          style: AppFonts.body(fontSize: 11, fontWeight: FontWeight.w500, color: AppColors.red),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-        ),
-        const SizedBox(height: 14),
-
-        // Divider
-        Row(
-          children: [
-            const Expanded(child: Divider(color: AppColors.line)),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text('OR', style: AppFonts.mono(fontSize: 11, color: AppColors.inkSoft)),
-            ),
-            const Expanded(child: Divider(color: AppColors.line)),
-          ],
-        ),
-        const SizedBox(height: 14),
-
-        // Guest Browse Action
-        OutlinedButton.icon(
-          onPressed: _isSubmitting ? null : _handleGuestBrowse,
-          icon: const Icon(Icons.remove_red_eye_outlined, size: 18, color: AppColors.ink),
-          label: Text('Browse Menu as Guest', style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.ink)),
-          style: OutlinedButton.styleFrom(
-            side: const BorderSide(color: AppColors.line, width: 1.5),
-            padding: const EdgeInsets.symmetric(vertical: 13),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // Role Info Banner
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: AppColors.surface2,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('✨ Account Types Supported:', style: AppFonts.body(fontSize: 12, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 4),
-              Text('• @tcetmumbai.in → Verified Student Profile\n• @thakureducation.org → College Faculty / Staff\n• Gmail / Other → Guest Visitor', style: AppFonts.body(fontSize: 11.5, color: AppColors.inkSoft)),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════════
-  //  TAB 1: COLLEGE EMAIL & PASSWORD
-  // ═══════════════════════════════════════════════════════════════════
-  Widget _buildEmailTab() {
-    return Form(
-      key: _emailFormKey,
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Recommended banner for TCET
-          Container(
-            margin: const EdgeInsets.only(bottom: 14),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFEFF6FF),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFBFDBFE), width: 1.2),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('💡', style: TextStyle(fontSize: 18)),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: RichText(
-                    text: TextSpan(
-                      style: AppFonts.body(fontSize: 12.5, color: const Color(0xFF1E40AF), height: 1.35),
-                      children: const [
-                        TextSpan(text: 'Recommended for TCET students: ', style: TextStyle(fontWeight: FontWeight.w800)),
-                        TextSpan(text: 'Use your official '),
-                        TextSpan(text: '@tcetmumbai.in', style: TextStyle(fontWeight: FontWeight.w800)),
-                        TextSpan(text: ' ID for verified student status and priority kitchen queue.'),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+          // Drag Handle
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.line,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
-          if (_isSignUpMode) ...[
-            TextFormField(
-              controller: _nameEmailController,
-              decoration: _inputDecoration('Full Name', Icons.person_outline),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter your name' : null,
-            ),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: _rollEmailController,
-              decoration: _inputDecoration('Roll No / Division (e.g. 1032251174)', Icons.badge_outlined),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter your roll number' : null,
-            ),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: _phoneEmailController,
-              keyboardType: TextInputType.phone,
-              decoration: _inputDecoration('Phone Number', Icons.phone_outlined),
-              validator: (v) => (v == null || v.trim().length < 10) ? 'Enter a valid 10-digit phone' : null,
-            ),
-            const SizedBox(height: 10),
-          ],
-          TextFormField(
-            controller: _emailController,
-            keyboardType: TextInputType.emailAddress,
-            decoration: _inputDecoration('College Email (@tcetmumbai.in)', Icons.email_outlined),
-            validator: (v) {
-              if (v == null || v.trim().isEmpty) return 'Please enter your email';
-              if (!v.contains('@')) return 'Enter a valid email address';
-              return null;
-            },
-          ),
-          const SizedBox(height: 10),
-          TextFormField(
-            controller: _passwordController,
-            obscureText: true,
-            decoration: _inputDecoration('Password', Icons.lock_outline),
-            validator: (v) => (v == null || v.length < 8) ? 'Password must be at least 8 characters' : null,
-          ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
 
+          // Header Title & Tagline
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.red.withAlpha(25),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('🍱', style: TextStyle(fontSize: 24)),
+              ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('THAKUR BITES', style: AppFonts.display(fontSize: 22)),
+                  Text(
+                    'Campus Dining & Quick Pickup',
+                    style: AppFonts.body(fontSize: 12, color: AppColors.inkSoft),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+
+          Text(
+            'Sign in with your Google account to place orders, access student priority queuing, and view past order tickets.',
+            style: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
+          ),
+          const SizedBox(height: 20),
+
+          // Google Sign-In Button
           ElevatedButton(
-            onPressed: _isSubmitting ? null : _submitEmailAuth,
+            onPressed: _isSubmitting ? null : _handleGoogleSignIn,
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.red,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
+              backgroundColor: Colors.white,
+              foregroundColor: AppColors.ink,
+              elevation: 1.5,
+              side: const BorderSide(color: AppColors.line, width: 1.5),
+              padding: const EdgeInsets.symmetric(vertical: 15),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             ),
             child: _isSubmitting
                 ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2.5, color: AppColors.red),
                   )
-                : Text(
-                    _isSignUpMode ? 'Create Student Account' : 'Sign In with Email',
-                    style: AppFonts.body(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white),
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Image.network(
+                        'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
+                        width: 22,
+                        height: 22,
+                        errorBuilder: (context, error, stackTrace) =>
+                            const Icon(Icons.account_circle, color: Colors.blue, size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        'Continue with Google',
+                        style: AppFonts.body(fontSize: 15.5, fontWeight: FontWeight.w700, color: AppColors.ink),
+                      ),
+                    ],
                   ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 16),
 
-          TextButton(
-            onPressed: () {
-              setState(() => _isSignUpMode = !_isSignUpMode);
-            },
-            child: Text(
-              _isSignUpMode ? 'Already have an account? Sign In' : 'New student? Register with TCET ID',
-              style: AppFonts.body(fontSize: 13, color: AppColors.red, fontWeight: FontWeight.w600),
+          // Account Type Guidance Card
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.surface2,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.line, width: 1),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '✨ How accounts are handled:',
+                  style: AppFonts.body(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.ink),
+                ),
+                const SizedBox(height: 6),
+                _buildDomainRow('🎓', '@tcetmumbai.in', 'Student Priority Queue & Verified Profile'),
+                const SizedBox(height: 4),
+                _buildDomainRow('👨‍🏫', '@thakureducation.org', 'Faculty / Staff Verification Workflow'),
+                const SizedBox(height: 4),
+                _buildDomainRow('👤', 'Gmail / Other', 'Guest Visitor Ordering (no password needed)'),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Divider
+          Row(
+            children: [
+              const Expanded(child: Divider(color: AppColors.line)),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text('OR', style: AppFonts.mono(fontSize: 11, color: AppColors.inkSoft)),
+              ),
+              const Expanded(child: Divider(color: AppColors.line)),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // Guest Browse Action
+          OutlinedButton.icon(
+            onPressed: _handleGuestBrowse,
+            icon: const Icon(Icons.remove_red_eye_outlined, size: 18, color: AppColors.ink),
+            label: Text(
+              'Browse Menu as Guest',
+              style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.ink),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: AppColors.line, width: 1.5),
+              padding: const EdgeInsets.symmetric(vertical: 13),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             ),
           ),
         ],
@@ -535,27 +245,27 @@ class _LoginSheetState extends State<LoginSheet> {
     );
   }
 
-
-  InputDecoration _inputDecoration(String label, IconData icon) {
-    return InputDecoration(
-      labelText: label,
-      labelStyle: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
-      prefixIcon: Icon(icon, size: 20, color: AppColors.inkSoft),
-      filled: true,
-      fillColor: AppColors.surface2,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppColors.line),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppColors.line),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppColors.red, width: 1.5),
-      ),
+  Widget _buildDomainRow(String emoji, String domain, String description) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(emoji, style: const TextStyle(fontSize: 12)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: RichText(
+            text: TextSpan(
+              style: AppFonts.body(fontSize: 11.5, color: AppColors.inkSoft, height: 1.3),
+              children: [
+                TextSpan(
+                  text: '$domain → ',
+                  style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.ink),
+                ),
+                TextSpan(text: description),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

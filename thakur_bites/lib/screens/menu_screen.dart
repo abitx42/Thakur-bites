@@ -21,6 +21,7 @@ import '../widgets/menu_shimmer.dart';
 /// Sorting options for the student-facing catalog.
 enum MenuSortOption {
   recommended,
+  popular,
   priceLowToHigh,
   priceHighToLow,
   nameAZ,
@@ -31,6 +32,8 @@ extension MenuSortOptionExtension on MenuSortOption {
     switch (this) {
       case MenuSortOption.recommended:
         return 'Recommended';
+      case MenuSortOption.popular:
+        return 'Popular';
       case MenuSortOption.priceLowToHigh:
         return 'Price: Low → High';
       case MenuSortOption.priceHighToLow:
@@ -44,6 +47,8 @@ extension MenuSortOptionExtension on MenuSortOption {
     switch (this) {
       case MenuSortOption.recommended:
         return Icons.auto_awesome_rounded;
+      case MenuSortOption.popular:
+        return Icons.local_fire_department_rounded;
       case MenuSortOption.priceLowToHigh:
         return Icons.arrow_upward_rounded;
       case MenuSortOption.priceHighToLow:
@@ -165,13 +170,17 @@ class _MenuScreenState extends State<MenuScreen> {
                         context.read<CartProvider>().syncAvailability(allItems);
                       });
 
-                      // Filter out unavailable or archived items
-                      final availableItems = allItems
-                          .where((i) => i.available && !i.isArchived)
+                      // Active catalog items (excluding soft-archived items)
+                      // Sold out items remain visible with sold-out badge and disabled add button
+                      final catalogItems = allItems
+                          .where((i) => !i.isArchived)
                           .toList();
 
                       // 1. Client-side Parent Category filter
-                      var filtered = availableItems.where((i) {
+                      var filtered = catalogItems.where((i) {
+                        if (_activeParentCategory == 'popular') {
+                          return i.isPopular;
+                        }
                         if (_activeParentCategory == 'all') return true;
                         final parent = i.parentCategory.trim().toUpperCase();
                         if (parent.isNotEmpty) {
@@ -192,7 +201,7 @@ class _MenuScreenState extends State<MenuScreen> {
                       }).toList();
 
                       // 2. Client-side Subcategory filter
-                      if (_activeSubCategory != 'all') {
+                      if (_activeSubCategory != 'all' && _activeParentCategory != 'popular') {
                         filtered = filtered.where((i) {
                           final sub = i.subCategory.trim().toLowerCase();
                           final cat = i.category.trim().toLowerCase();
@@ -201,21 +210,30 @@ class _MenuScreenState extends State<MenuScreen> {
                         }).toList();
                       }
 
-                      // 3. Search query filter (name, subcategory, parentCategory, description)
+                      // 3. Search query filter (name, tags, subcategory, visualKey, description)
                       if (_searchQuery.isNotEmpty) {
                         final q = _searchQuery.toLowerCase();
                         filtered = filtered.where((i) {
                           return i.name.toLowerCase().contains(q) ||
                               i.subCategory.toLowerCase().contains(q) ||
                               i.parentCategory.toLowerCase().contains(q) ||
+                              i.visualKey.toLowerCase().contains(q) ||
+                              i.tags.any((t) => t.toLowerCase().contains(q)) ||
                               i.description.toLowerCase().contains(q);
                         }).toList();
                       }
 
-                      // 4. Multi-tier Sorting
+                      // 4. Multi-tier Immutable Sorting
                       switch (_selectedSort) {
                         case MenuSortOption.recommended:
-                          filtered.sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+                          filtered.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+                          break;
+                        case MenuSortOption.popular:
+                          filtered.sort((a, b) {
+                            if (a.isPopular && !b.isPopular) return -1;
+                            if (!a.isPopular && b.isPopular) return 1;
+                            return a.sortOrder.compareTo(b.sortOrder);
+                          });
                           break;
                         case MenuSortOption.priceLowToHigh:
                           filtered.sort((a, b) => a.pricePaise.compareTo(b.pricePaise));
@@ -315,7 +333,10 @@ class _MenuScreenState extends State<MenuScreen> {
                     ),
                   ] else ...[
                     GestureDetector(
-                      onTap: () => LoginSheet.show(context),
+                      onTap: () => LoginSheet.show(
+                        context,
+                        onGuestBrowse: () => setState(() => _currentNavIndex = 0),
+                      ),
                       child: Container(
                         margin: const EdgeInsets.only(right: 10),
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -922,7 +943,10 @@ class _MenuScreenState extends State<MenuScreen> {
                   ),
                   const SizedBox(height: 24),
                   ElevatedButton(
-                    onPressed: () => LoginSheet.show(context),
+                    onPressed: () => LoginSheet.show(
+                      context,
+                      onGuestBrowse: () => setState(() => _currentNavIndex = 0),
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.red,
                       foregroundColor: Colors.white,
@@ -935,6 +959,23 @@ class _MenuScreenState extends State<MenuScreen> {
                             fontSize: 14.5,
                             fontWeight: FontWeight.w700,
                             color: Colors.white)),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      final auth = context.read<AuthProvider>();
+                      auth.enableGuestBrowsing();
+                      setState(() => _currentNavIndex = 0);
+                    },
+                    icon: const Icon(Icons.restaurant_menu_rounded, size: 16),
+                    label: const Text('Browse Menu as Guest'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.ink,
+                      side: const BorderSide(color: AppColors.line),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(999)),
+                    ),
                   ),
                 ],
               ),
@@ -1157,8 +1198,8 @@ class _MenuScreenState extends State<MenuScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         ),
-                        onPressed: () => auth.linkGuestWithGoogle(),
-                        child: const Text('Save Account', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+                        onPressed: () => auth.signInWithGoogle(),
+                        child: const Text('Sign in', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
                       ),
                     ],
                   ),

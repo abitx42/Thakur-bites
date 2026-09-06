@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
@@ -33,11 +34,12 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
   await enforceRateLimit(request.auth.uid, 'pickup_verify');
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  if (actorRole !== 'pickup' && actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin') {
+  if (actorRole !== 'pickup' && actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin' && (actorRole as string) !== 'developer') {
     throw new HttpsError('permission-denied', 'Only pickup counter staff can verify and collect orders.');
   }
 
-  const { orderId, pinCode, qrToken } = request.data;
+  const { orderId, qrToken } = request.data || {};
+  const pinCode = request.data?.pinCode || (request.data as any)?.pin;
   if (!orderId || (!pinCode && !qrToken)) {
     throw new HttpsError('invalid-argument', 'orderId and either pinCode or qrToken are required.');
   }
@@ -58,7 +60,7 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
 
   const orderRef = db.collection('orders').doc(orderId);
   const secretRef = db.collection('orderSecrets').doc(orderId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   const verifyResult = await db.runTransaction(async (transaction) => {
     const [orderSnap, secretSnap] = await Promise.all([
@@ -284,7 +286,7 @@ export const unlockOrderPickupVerification = onCall<{ orderId: string; reason: s
 
   const orderRef = db.collection('orders').doc(orderId);
   const secretRef = db.collection('orderSecrets').doc(orderId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   return await db.runTransaction(async (transaction) => {
     const [snap, secretSnap] = await Promise.all([
@@ -350,7 +352,7 @@ export const getStudentPickupQr = onCall<{ orderId: string; appVersion?: string 
 
   const orderRef = db.collection('orders').doc(orderId);
   const secretRef = db.collection('orderSecrets').doc(orderId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
   const currentUnix = Math.floor(Date.now() / 1000);
 
   return await db.runTransaction(async (transaction) => {

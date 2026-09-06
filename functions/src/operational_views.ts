@@ -63,13 +63,12 @@ export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async 
   await enforceRateLimit(request.auth.uid, 'kitchen_view');
 
   const role = (request.auth.token.role as UserRole) || 'student';
-  if (role !== 'kitchen' && role !== 'manager' && role !== 'admin') {
+  if (role !== 'kitchen' && role !== 'manager' && role !== 'admin' && (role as string) !== 'developer') {
     throw new HttpsError('permission-denied', 'Permission denied: Kitchen role required.');
   }
 
   const snap = await db.collection('orders')
     .where('status', 'in', ['confirmed', 'preparing'])
-    .orderBy('createdAt', 'asc')
     .limit(100)
     .get();
 
@@ -126,13 +125,12 @@ export const getPickupOrders = onCall<void, Promise<PickupOrderView[]>>(async (r
   await enforceRateLimit(request.auth.uid, 'pickup_view');
 
   const role = (request.auth.token.role as UserRole) || 'student';
-  if (role !== 'pickup' && role !== 'manager' && role !== 'admin') {
+  if (role !== 'pickup' && role !== 'manager' && role !== 'admin' && (role as string) !== 'developer') {
     throw new HttpsError('permission-denied', 'Permission denied: Pickup role required.');
   }
 
   const snap = await db.collection('orders')
     .where('status', 'in', ['ready', 'preparing'])
-    .orderBy('createdAt', 'asc')
     .limit(100)
     .get();
 
@@ -168,14 +166,13 @@ export const getCashierOrders = onCall<void, Promise<CashierOrderView[]>>(async 
   await enforceRateLimit(request.auth.uid, 'cashier_view');
 
   const role = (request.auth.token.role as UserRole) || 'student';
-  if (role !== 'cashier' && role !== 'manager' && role !== 'admin') {
+  if (role !== 'cashier' && role !== 'manager' && role !== 'admin' && (role as string) !== 'developer') {
     throw new HttpsError('permission-denied', 'Permission denied: Cashier role required.');
   }
 
   const snap = await db.collection('orders')
     .where('paymentMethod', '==', 'counter_cash')
     .where('paymentStatus', '==', 'unpaid')
-    .orderBy('createdAt', 'asc')
     .limit(100)
     .get();
 

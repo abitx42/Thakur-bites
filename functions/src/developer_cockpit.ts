@@ -1,3 +1,4 @@
+import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
@@ -257,9 +258,9 @@ export const requestEmergencyStepUpChallenge = onCall<RequestStepUpChallengeData
     reason: cleanReason,
     nonceHash,
     used: false,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    expiresAt: admin.firestore.Timestamp.fromDate(expiresAtDate),
-    ttl: admin.firestore.Timestamp.fromDate(new Date(Date.now() + 24 * 60 * 60 * 1000)), // Automated TTL cleanup
+    createdAt: FieldValue.serverTimestamp(),
+    expiresAt: Timestamp.fromDate(expiresAtDate),
+    ttl: Timestamp.fromDate(new Date(Date.now() + 24 * 60 * 60 * 1000)), // Automated TTL cleanup
   });
 
   await logSecurityEvent({
@@ -337,7 +338,7 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
     // Atomically consume challenge
     transaction.update(sessionRef, {
       used: true,
-      consumedAt: admin.firestore.FieldValue.serverTimestamp(),
+      consumedAt: FieldValue.serverTimestamp(),
       consumedBy: authUid,
     });
 
@@ -350,19 +351,19 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
         financialOperationsFrozen: true,
         reason,
         updatedBy: authUid,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
 
       transaction.set(publicStatusRef, {
         mode: 'EMERGENCY_HALT',
         orderingAvailable: false,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
 
       transaction.set(publicStatusGlobalRef, {
         mode: 'EMERGENCY_HALT',
         orderingAvailable: false,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
     } else if (action === 'FREEZE_FINANCIALS') {
       newMode = 'FINANCIAL_FROZEN';
@@ -372,19 +373,19 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
         financialOperationsFrozen: true,
         reason,
         updatedBy: authUid,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
 
       transaction.set(publicStatusRef, {
         mode: 'FINANCIAL_FROZEN',
         orderingAvailable: false,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
 
       transaction.set(publicStatusGlobalRef, {
         mode: 'FINANCIAL_FROZEN',
         orderingAvailable: false,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
     } else {
       // UNFREEZE_PLATFORM
@@ -395,19 +396,19 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
         financialOperationsFrozen: false,
         reason,
         updatedBy: authUid,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
 
       transaction.set(publicStatusRef, {
         mode: 'NORMAL',
         orderingAvailable: true,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
 
       transaction.set(publicStatusGlobalRef, {
         mode: 'NORMAL',
         orderingAvailable: true,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
     }
   });

@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { UserRole } from './types';
@@ -13,8 +14,9 @@ export type InventoryChangeType = 'RESTOCK' | 'WASTE' | 'MANUAL_CORRECTION' | 'E
 
 export interface InventoryAdjustmentRequest {
   itemId: string;
-  changeType: InventoryChangeType;
-  deltaUnits: number;
+  changeType?: InventoryChangeType;
+  deltaUnits?: number;
+  newStock?: number;
   reason: string;
 }
 
@@ -57,9 +59,20 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
 
   await enforceRateLimit(request.auth.uid, 'inventory_adjustment');
 
-  const { itemId, changeType, deltaUnits, reason } = request.data;
-  if (!itemId || typeof itemId !== 'string' || itemId.length > 128 || !changeType || !Number.isSafeInteger(deltaUnits) || deltaUnits === 0) {
-    throw new HttpsError('invalid-argument', 'Valid itemId (max 128 chars), changeType, and non-zero integer deltaUnits are required.');
+  const { itemId, changeType, deltaUnits, newStock, reason } = request.data || {};
+  if (!itemId || typeof itemId !== 'string' || itemId.length > 128) {
+    throw new HttpsError('invalid-argument', 'Valid itemId (max 128 chars) is required.');
+  }
+
+  const hasNewStock = newStock !== undefined;
+  if (hasNewStock) {
+    if (typeof newStock !== 'number' || !Number.isSafeInteger(newStock) || newStock < 0) {
+      throw new HttpsError('invalid-argument', 'newStock must be a non-negative integer.');
+    }
+  } else {
+    if (!changeType || !Number.isSafeInteger(deltaUnits) || deltaUnits === 0) {
+      throw new HttpsError('invalid-argument', 'Valid itemId (max 128 chars), changeType, and non-zero integer deltaUnits are required.');
+    }
   }
 
   if (!reason || typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 200) {
@@ -67,7 +80,7 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
   }
 
   const itemRef = db.collection('menuItems').doc(itemId);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   return await db.runTransaction(async (transaction) => {
     const itemSnap = await transaction.get(itemRef);
@@ -76,8 +89,38 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
     }
 
     const itemData = itemSnap.data()!;
-    const previousStockOnHand = itemData.stockOnHand;
-    const reservedStock = itemData.reservedStock !== undefined ? itemData.reservedStock : 0;
+    let previousStockOnHand = itemData.stockOnHand;
+    if (typeof previousStockOnHand !== 'number' || !Number.isSafeInteger(previousStockOnHand) || previousStockOnHand < 0) {
+      if (typeof itemData.stockCount === 'number' && Number.isSafeInteger(itemData.stockCount) && itemData.stockCount >= 0) {
+        previousStockOnHand = itemData.stockCount;
+      } else {
+        previousStockOnHand = 0;
+      }
+    }
+    const reservedStock = (typeof itemData.reservedStock === 'number' && Number.isSafeInteger(itemData.reservedStock) && itemData.reservedStock >= 0)
+      ? itemData.reservedStock
+      : 0;
+
+    let effectiveDelta = deltaUnits;
+    let effectiveChangeType = changeType;
+
+    if (hasNewStock) {
+      effectiveDelta = newStock! - previousStockOnHand;
+      if (effectiveDelta === 0) {
+        return {
+          success: true,
+          itemId,
+          previousStockOnHand,
+          newStockOnHand: previousStockOnHand,
+          reservedStock,
+          previousAvailable: previousStockOnHand - reservedStock,
+          newAvailable: previousStockOnHand - reservedStock,
+          deltaUnits: 0,
+          changeType: 'MANUAL_CORRECTION' as InventoryChangeType,
+        };
+      }
+      effectiveChangeType = effectiveDelta > 0 ? 'RESTOCK' : 'MANUAL_CORRECTION';
+    }
 
     // Fail-closed invariant validation
     if (typeof previousStockOnHand !== 'number' || !Number.isSafeInteger(previousStockOnHand) || previousStockOnHand < 0) {
@@ -88,13 +131,13 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
     }
 
     const previousAvailable = previousStockOnHand - reservedStock;
-    const newStockOnHand = previousStockOnHand + deltaUnits;
+    const newStockOnHand = previousStockOnHand + effectiveDelta!;
 
     // Invariant 1: Physical Stock on Hand cannot drop below 0
     if (newStockOnHand < 0) {
       throw new HttpsError(
         'failed-precondition',
-        `Cannot reduce stock by ${Math.abs(deltaUnits)}. Current physical stock on hand is only ${previousStockOnHand}.`
+        `Cannot reduce stock by ${Math.abs(effectiveDelta!)}. Current physical stock on hand is only ${previousStockOnHand}.`
       );
     }
 
@@ -111,10 +154,11 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
     // 1. Update MenuItem stock maintaining single source of truth (stockCount purged)
     transaction.update(itemRef, {
       stockOnHand: newStockOnHand,
+      stockCount: newStockOnHand,
       reservedStock,
       isOrderable: newAvailable > 0,
       available: newAvailable > 0,
-      lastRestockedAt: deltaUnits > 0 ? now : itemData.lastRestockedAt || now,
+      lastRestockedAt: effectiveDelta! > 0 ? now : itemData.lastRestockedAt || now,
       updatedAt: now,
     });
 
@@ -123,8 +167,8 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
     transaction.set(ledgerRef, {
       ledgerId: ledgerRef.id,
       itemId,
-      changeType,
-      deltaUnits,
+      changeType: effectiveChangeType,
+      deltaUnits: effectiveDelta,
       previousStockOnHand,
       newStockOnHand,
       reservedStock,
@@ -144,8 +188,8 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
       reservedStock,
       previousAvailable,
       newAvailable,
-      deltaUnits,
-      changeType,
+      deltaUnits: effectiveDelta!,
+      changeType: effectiveChangeType!,
     };
   });
 });
