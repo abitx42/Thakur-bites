@@ -152,7 +152,7 @@ class InsufficientStockException implements Exception {
   @override
   String toString() => available > 0
       ? 'Only $available units of "$itemName" remaining.'
-      : '"$itemName" is out of stock.';
+      : 'Sorry, you got late! Someone already grabbed "$itemName".';
 }
 
 /// General checkout error with a user-facing message.

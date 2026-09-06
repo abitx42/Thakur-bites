@@ -455,6 +455,14 @@ class _CartSummaryState extends State<_CartSummary> {
       cart.capItemQuantity(e.itemId, e.availableStock);
       if (mounted) {
         _showStockLimitedAlert({e.itemId: e.availableStock});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString()),
+            backgroundColor: AppColors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
       }
     } catch (e) {
       setState(() => _isProcessing = false);
@@ -478,7 +486,7 @@ class _CartSummaryState extends State<_CartSummary> {
       final cartEntry = cart.entries.where((e) => e.item.id == entry.key).firstOrNull;
       if (cartEntry != null) {
         if (entry.value <= 0) {
-          lines.add('• ${cartEntry.item.name}: Sold out');
+          lines.add('• ${cartEntry.item.name}: Sorry, you got late! Someone already grabbed it.');
         } else {
           lines.add('• ${cartEntry.item.name}: Only ${entry.value} available');
         }
