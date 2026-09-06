@@ -6,7 +6,7 @@ import { logSecurityEvent } from './security_logger';
 import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
 import { assertActiveWorkstationSession } from './shift_pins';
-import { assertCapability } from './authorization_policy';
+import { hasCapability, isOperationalStaffRole } from './authorization_policy';
 
 const db = admin.firestore();
 
@@ -33,7 +33,7 @@ export interface InventoryAdjustmentResponse {
 }
 
 /**
- * Manager/Admin Authoritative Unified Inventory Adjustment (Fail-Closed Hardened).
+ * Manager/Admin & Operational Staff Unified Inventory Adjustment (Fail-Closed Hardened).
  * Operates purely on stockOnHand and strictly maintains availableStock = stockOnHand - reservedStock.
  */
 export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (request) => {
@@ -45,16 +45,14 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
   await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  try {
-    assertCapability(actorRole, 'adjust_inventory');
-  } catch (err) {
+  if (!hasCapability(actorRole, 'adjust_inventory') && !isOperationalStaffRole(actorRole)) {
     await logSecurityEvent({
       eventType: 'UNAUTHORIZED_INVENTORY_ADJUSTMENT',
       severity: 'HIGH',
       actorUid: request.auth.uid,
       details: { role: actorRole },
     });
-    throw new HttpsError('permission-denied', 'Only managers and administrators can perform manual inventory adjustments.');
+    throw new HttpsError('permission-denied', 'Staff authorization is required to perform inventory adjustments.');
   }
 
   await enforceRateLimit(request.auth.uid, 'inventory_adjustment');

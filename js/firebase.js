@@ -1,5 +1,5 @@
 // Firebase JS SDK Configuration & Real-Time Firestore Service for Staff Dashboard
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { 
   getFirestore, 
   collection, 
@@ -43,8 +43,8 @@ const firebaseConfig = {
   measurementId: "G-XRRX9EBZQ8"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase safely
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const functions = getFunctions(app, 'us-central1');

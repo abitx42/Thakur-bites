@@ -9,9 +9,9 @@ import {
   archiveMenuItem,
   deleteMenuItem,
   uploadMenuImage
-} from '../firebase.js';
+} from '../firebase.js?v=4';
 import { renderMenuVisualHtml, VISUAL_FAMILIES } from '../menuVisualResolver.js';
-import { staffAuth } from '../auth.js';
+import { staffAuth } from '../auth.js?v=8';
 import { doc, onSnapshot, collection, query, where } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
@@ -30,7 +30,9 @@ let modeLoading = false;
 let selectedParentFilter = 'ALL';
 let selectedSubFilter = 'ALL';
 
-export function renderAdminView(container) {
+export function renderAdminView(container, options = {}) {
+  const isStaffMode = Boolean(options && options.staffMode);
+
   if (unsubscribeMenu) unsubscribeMenu();
   if (unsubscribeStatus) unsubscribeStatus();
   if (unsubscribeApps) unsubscribeApps();
@@ -64,6 +66,7 @@ export function renderAdminView(container) {
     container.innerHTML = `
       <div class="main-wrapper" style="max-width: 1300px; margin: 0 auto; padding: 1.5rem 1rem;">
         
+        ${!isStaffMode ? `
         <!-- Emergency Operational Mode Controller Bar -->
         <div style="background: ${activeColor.bg}; border: 2px solid ${activeColor.border}; border-radius: 14px; padding: 1.2rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
           <div>
@@ -95,13 +98,14 @@ export function renderAdminView(container) {
             </button>
           </div>
         </div>
+        ` : ''}
         
         <!-- Header -->
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
           <div>
             <div style="display: flex; align-items: center; gap: 10px;">
               <h2 style="font-family: var(--font-display); font-size: 2.2rem; letter-spacing: 0.05em; margin: 0; line-height: 1;">
-                MENU & INVENTORY MANAGEMENT
+                ${isStaffMode ? 'STAFF MENU & INVENTORY MANAGEMENT' : 'MENU & INVENTORY MANAGEMENT'}
               </h2>
               <span style="background: #22C55E; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 999px;">
                 ● LIVE SYNC
@@ -147,6 +151,7 @@ export function renderAdminView(container) {
           </div>
         </div>
 
+        ${!isStaffMode ? `
         <!-- ═══════════════════════════════════════════════════════════ -->
         <!-- SECTION 0: FACULTY & STAFF VERIFICATION (PLATFORM 2.0)      -->
         <!-- ═══════════════════════════════════════════════════════════ -->
@@ -299,6 +304,7 @@ export function renderAdminView(container) {
             </div>
           `}
         </div>
+        ` : ''}
 
         <!-- ═══════════════════════════════════════════════════════════ -->
         <!-- MENU TAXONOMY & CATEGORY FILTER BAR                        -->
@@ -1311,38 +1317,40 @@ export function renderAdminView(container) {
     console.error("Status subscription notice:", err);
   });
 
-  // Subscribe to verification applications (Platform 2.0)
-  try {
-    const appsQuery = query(
-      collection(db, 'verificationApplications'),
-      where('status', 'in', ['SUBMITTED', 'UNDER_REVIEW'])
-    );
-    unsubscribeApps = onSnapshot(appsQuery, (snap) => {
-      currentApplications = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      render();
-    }, (err) => {
-      console.warn("Verification applications subscription notice:", err);
-    });
-  } catch (err) {
-    console.warn("Could not query verification applications:", err);
-  }
+  if (!isStaffMode) {
+    // Subscribe to verification applications (Platform 2.0)
+    try {
+      const appsQuery = query(
+        collection(db, 'verificationApplications'),
+        where('status', 'in', ['SUBMITTED', 'UNDER_REVIEW'])
+      );
+      unsubscribeApps = onSnapshot(appsQuery, (snap) => {
+        currentApplications = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        render();
+      }, (err) => {
+        console.warn("Verification applications subscription notice:", err);
+      });
+    } catch (err) {
+      console.warn("Could not query verification applications:", err);
+    }
 
-  // Subscribe to shift PINs (Platform 2.0)
-  try {
-    const d = new Date();
-    const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const pinsQuery = query(
-      collection(db, 'shiftPins'),
-      where('shiftDate', '==', todayStr)
-    );
-    unsubscribePins = onSnapshot(pinsQuery, (snap) => {
-      currentShiftPins = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      render();
-    }, (err) => {
-      console.warn("Shift PINs subscription notice:", err);
-    });
-  } catch (err) {
-    console.warn("Could not query shift PINs:", err);
+    // Subscribe to shift PINs (Platform 2.0)
+    try {
+      const d = new Date();
+      const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const pinsQuery = query(
+        collection(db, 'shiftPins'),
+        where('shiftDate', '==', todayStr)
+      );
+      unsubscribePins = onSnapshot(pinsQuery, (snap) => {
+        currentShiftPins = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        render();
+      }, (err) => {
+        console.warn("Shift PINs subscription notice:", err);
+      });
+    } catch (err) {
+      console.warn("Could not query shift PINs:", err);
+    }
   }
 }
 

@@ -56,20 +56,20 @@ service cloud.firestore {
     }
 
     // ─── Menu Items (Server Authority Architecture) ───────────────
-    // Public read for live canteen catalog. Audited Cloud Functions or Manager/Admin writes.
+    // Public read for live canteen catalog. Audited Cloud Functions or Staff/Admin writes.
     match /menuItems/{itemId} {
       allow read: if true;
-      allow write: if isManagerOrAdmin();
+      allow write: if isOperationalStaff();
     }
 
     // ─── Categories & Subcategories Taxonomy ──────────────────────
     match /categories/{categoryId} {
       allow read: if true;
-      allow write: if isManagerOrAdmin();
+      allow write: if isOperationalStaff();
 
       match /subcategories/{subId} {
         allow read: if true;
-        allow write: if isManagerOrAdmin();
+        allow write: if isOperationalStaff();
       }
     }
 

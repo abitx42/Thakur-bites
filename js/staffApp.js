@@ -2,8 +2,9 @@
 import { staffAuth, renderPinPadModal, getRegisteredWorkstation } from './auth.js?v=8';
 import { renderKitchenView } from './views/kitchenView.js?v=5';
 import { renderPickupView } from './views/pickupView.js?v=5';
+import { renderAdminView } from './views/adminView.js?v=6';
 
-let currentStaffWorkstationView = 'kitchen'; // 'kitchen' | 'pickup'
+let currentStaffWorkstationView = 'kitchen'; // 'kitchen' | 'pickup' | 'menu'
 
 function initStaffWorkstation() {
   const root = document.getElementById('app-root');
@@ -95,6 +96,9 @@ function initStaffWorkstation() {
             <button class="staff-nav-btn ${currentStaffWorkstationView === 'pickup' ? 'active' : ''}" data-view="pickup">
               📦 Pickup Counter
             </button>
+            <button class="staff-nav-btn ${currentStaffWorkstationView === 'menu' ? 'active' : ''}" data-view="menu">
+              📋 Menu & Stock (Add / Quantity)
+            </button>
           </nav>
 
           <!-- Quick Portal Actions -->
@@ -148,6 +152,8 @@ function initStaffWorkstation() {
       renderKitchenView(viewTarget);
     } else if (currentStaffWorkstationView === 'pickup') {
       renderPickupView(viewTarget);
+    } else if (currentStaffWorkstationView === 'menu') {
+      renderAdminView(viewTarget, { staffMode: true });
     }
   }
 

@@ -4,7 +4,7 @@ import * as admin from 'firebase-admin';
 import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
-import { assertCapability } from './authorization_policy';
+import { assertCapability, hasCapability, isOperationalStaffRole } from './authorization_policy';
 import { assertActiveWorkstationSession } from './shift_pins';
 import { UserRole, ParentCategory, DietaryType } from './types';
 
@@ -103,7 +103,7 @@ export interface DeleteMenuItemRequest {
 
 /**
  * 1. Authoritative Menu Item Availability Toggle
- * Restricted strictly to staff roles possessing the 'manage_menu' capability.
+ * Accessible to managers, admins, and operational workstation staff.
  */
 export const toggleMenuItemAvailability = onCall<ToggleMenuItemAvailabilityRequest>(async (request) => {
   enforceAppCheck(request);
@@ -115,16 +115,14 @@ export const toggleMenuItemAvailability = onCall<ToggleMenuItemAvailabilityReque
   await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  try {
-    assertCapability(actorRole, 'manage_menu');
-  } catch (_) {
+  if (!hasCapability(actorRole, 'manage_menu') && !isOperationalStaffRole(actorRole)) {
     await logSecurityEvent({
       eventType: 'UNAUTHORIZED_MENU_MODIFICATION',
       severity: 'HIGH',
       actorUid: request.auth.uid,
       details: { role: actorRole, action: 'toggle_availability' },
     });
-    throw new HttpsError('permission-denied', 'Only managers and administrators can update menu item availability.');
+    throw new HttpsError('permission-denied', 'Staff authorization is required to update menu item availability.');
   }
 
   await enforceRateLimit(request.auth.uid, 'menu_management');
@@ -172,16 +170,14 @@ export const updateMenuItemDetails = onCall<UpdateMenuItemDetailsRequest>(async 
   await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  try {
-    assertCapability(actorRole, 'manage_menu');
-  } catch (_) {
+  if (!hasCapability(actorRole, 'manage_menu') && !isOperationalStaffRole(actorRole)) {
     await logSecurityEvent({
       eventType: 'UNAUTHORIZED_MENU_MODIFICATION',
       severity: 'HIGH',
       actorUid: request.auth.uid,
       details: { role: actorRole, action: 'update_details' },
     });
-    throw new HttpsError('permission-denied', 'Only managers and administrators can modify menu items.');
+    throw new HttpsError('permission-denied', 'Staff authorization is required to modify menu items.');
   }
 
   await enforceRateLimit(request.auth.uid, 'menu_management');
@@ -337,16 +333,14 @@ export const upsertMenuItem = onCall<UpsertMenuItemRequest>(async (request) => {
   await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  try {
-    assertCapability(actorRole, 'manage_menu');
-  } catch (_) {
+  if (!hasCapability(actorRole, 'manage_menu') && !isOperationalStaffRole(actorRole)) {
     await logSecurityEvent({
       eventType: 'UNAUTHORIZED_MENU_MODIFICATION',
       severity: 'HIGH',
       actorUid: request.auth.uid,
       details: { role: actorRole, action: 'upsert_item' },
     });
-    throw new HttpsError('permission-denied', 'Only managers and administrators can add or overwrite menu items.');
+    throw new HttpsError('permission-denied', 'Staff authorization is required to add or overwrite menu items.');
   }
 
   await enforceRateLimit(request.auth.uid, 'menu_management');
