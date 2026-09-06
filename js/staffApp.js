@@ -127,7 +127,6 @@ function initStaffWorkstation() {
         renderPinPadModal(modalCont, () => render());
       }
     });
-    `;
 
     // Attach Station View Switcher Listeners
     root.querySelectorAll('.staff-nav-btn').forEach(btn => {
