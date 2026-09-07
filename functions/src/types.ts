@@ -186,7 +186,7 @@ export interface LedgerPosting {
 export interface FinancialTransactionRecord {
   transactionId: string;
   orderId: string;
-  type: 'PAYMENT_CAPTURE' | 'REFUND_DISBURSEMENT' | 'SETTLEMENT_CREDIT';
+  type: 'PAYMENT_CAPTURE' | 'REFUND_DISBURSEMENT' | 'SETTLEMENT_CREDIT' | 'COMPENSATING_ADJUSTMENT';
   amount: number;
   amountPaise: number;
   currency: 'INR';
@@ -196,6 +196,9 @@ export interface FinancialTransactionRecord {
   actorId: string;
   timestamp: Timestamp;
   status: 'CAPTURED' | 'SETTLED' | 'REFUNDED';
+  isCompensatingEntry?: boolean;
+  compensatingForTransactionId?: string;
+  compensationReason?: string;
 }
 
 export interface DailyReconciliationRecord {
@@ -359,7 +362,7 @@ export interface ReconcilePaymentResponse {
 
 export type CircuitBreakerLevel = 'WARNING' | 'RESTRICTED' | 'EMERGENCY_FREEZE';
 
-export type AnomalyResolutionStatus = 'ACTIVE' | 'INVESTIGATING' | 'RESOLVED';
+export type AnomalyResolutionStatus = 'ACTIVE' | 'INVESTIGATING' | 'REPAIR_ATTEMPTED' | 'VERIFIED_RESOLVED';
 
 export interface IntegrityAnomalyDoc {
   anomalyId: string;
@@ -370,9 +373,13 @@ export interface IntegrityAnomalyDoc {
   details: string;
   relatedEntityId?: string;
   detectedAt: Timestamp;
+  investigatedBy?: string;
+  repairAttemptedAt?: Timestamp;
+  repairAttemptNotes?: string;
   resolvedAt?: Timestamp;
   resolvedBy?: string;
   resolutionNotes?: string;
+  verifiedByScanId?: string;
 }
 
 export interface DisasterRecoveryLogDoc {
@@ -384,13 +391,17 @@ export interface DisasterRecoveryLogDoc {
   justification: string;
   resolvedAnomalyIds: string[];
   postRepairScanId?: string;
+  fourEyesApproved: boolean;
+  requestedBy?: string;
+  isBreakGlass?: boolean;
+  breakGlassReason?: string;
   timestamp: Timestamp;
 }
 
 export interface IntegrityRepairRequest {
-  repairType: 'EXPIRED_RESERVATION_LEAKS' | 'RESOLVE_ANOMALIES';
+  repairType: 'EXPIRED_RESERVATION_LEAKS' | 'ATTEMPT_REPAIR' | 'VERIFY_AND_RESOLVE';
   anomalyIds?: string[];
-  resolutionNotes?: string;
+  notes?: string;
 }
 
 export interface IntegrityRepairResponse {
@@ -398,6 +409,22 @@ export interface IntegrityRepairResponse {
   repairType: string;
   repairedCount: number;
   details: string[];
+  timestamp: string;
+}
+
+export interface CompensatingEntryRequest {
+  originalTransactionId: string;
+  amountPaise: number;
+  reason: string;
+  debitAccount: LedgerAccount;
+  creditAccount: LedgerAccount;
+}
+
+export interface CompensatingEntryResponse {
+  success: boolean;
+  transactionId: string;
+  originalTransactionId: string;
+  amountPaise: number;
   timestamp: string;
 }
 

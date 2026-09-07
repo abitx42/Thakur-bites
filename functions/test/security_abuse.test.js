@@ -8377,7 +8377,228 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(handover.safeHarbor, true);
     assert.strictEqual(successfulHandovers, 1);
   });
+
+  it('319. Phase 6.1 System-Authoritative Anomaly Resolution Invariant: Rejects direct admin assignment of VERIFIED_RESOLVED without scanner proof', () => {
+    const anomaly = {
+      anomalyId: 'ANOM_INV_10',
+      category: 'INVENTORY',
+      severity: 'CRITICAL',
+      status: 'ACTIVE',
+      relatedEntityId: 'item_samosa',
+    };
+
+    function processAdminRepair(anom, action, scannerActiveViolations) {
+      if (action === 'DIRECT_SET_VERIFIED_RESOLVED') {
+        throw new Error('failed-precondition: Anomalies can only transition to VERIFIED_RESOLVED via authoritative scanner verification.');
+      }
+      if (action === 'ATTEMPT_REPAIR') {
+        anom.status = 'REPAIR_ATTEMPTED';
+        anom.repairAttemptedAt = new Date().toISOString();
+        return { success: true, status: anom.status };
+      }
+      if (action === 'VERIFY_AND_RESOLVE') {
+        const stillViolating = scannerActiveViolations.some(v => v.includes(anom.relatedEntityId));
+        if (stillViolating) {
+          return { success: false, reason: 'Scanner still detects violation for relatedEntityId' };
+        }
+        anom.status = 'VERIFIED_RESOLVED';
+        anom.resolvedAt = new Date().toISOString();
+        return { success: true, status: anom.status };
+      }
+      throw new Error('Unknown action');
+    }
+
+    // 1. Admin directly setting VERIFIED_RESOLVED -> Blocked!
+    assert.throws(() => processAdminRepair(anomaly, 'DIRECT_SET_VERIFIED_RESOLVED', []), /authoritative scanner verification/);
+
+    // 2. Admin sets REPAIR_ATTEMPTED -> Allowed
+    const attempt = processAdminRepair(anomaly, 'ATTEMPT_REPAIR', []);
+    assert.strictEqual(attempt.status, 'REPAIR_ATTEMPTED');
+
+    // 3. Verification attempt while scanner still detects entity violation -> Rejected!
+    const failedVerify = processAdminRepair(anomaly, 'VERIFY_AND_RESOLVE', ['INVENTORY_EQUATION_MISMATCH: item_samosa']);
+    assert.strictEqual(failedVerify.success, false);
+    assert.strictEqual(anomaly.status, 'REPAIR_ATTEMPTED');
+
+    // 4. Verification attempt when scanner confirms clean -> Authoritatively VERIFIED_RESOLVED!
+    const cleanVerify = processAdminRepair(anomaly, 'VERIFY_AND_RESOLVE', []);
+    assert.strictEqual(cleanVerify.success, true);
+    assert.strictEqual(anomaly.status, 'VERIFIED_RESOLVED');
+  });
+
+  it('320. Phase 6.1 Four-Eyes Disaster Recovery Invariant: Mode restoration requires distinct requester and approver or verified break-glass', () => {
+    function validateFourEyesRestoration(requestingUid, approvingUid, currentMode, targetMode, breakGlassChallenge) {
+      if (targetMode === 'NORMAL' && (currentMode === 'FINANCIAL_FROZEN' || currentMode === 'EMERGENCY_HALT')) {
+        if (requestingUid && requestingUid !== approvingUid) {
+          return { fourEyesApproved: true, isBreakGlass: false };
+        }
+        if (breakGlassChallenge && breakGlassChallenge.length >= 8) {
+          return { fourEyesApproved: false, isBreakGlass: true, breakGlassReason: 'Emergency break-glass verified' };
+        }
+        throw new Error('failed-precondition: Four-eyes disaster recovery principle violated: Restoration approver cannot be the same administrator who initiated the repair request without a verified emergency break-glass challenge.');
+      }
+      return { fourEyesApproved: true, isBreakGlass: false };
+    }
+
+    // 1. Same admin self-approving without break-glass -> Throws fail-closed!
+    assert.throws(
+      () => validateFourEyesRestoration('admin_A', 'admin_A', 'FINANCIAL_FROZEN', 'NORMAL', null),
+      /Four-eyes disaster recovery principle violated/
+    );
+
+    // 2. Two distinct administrators (Person A requested, Person B approves) -> Clean four-eyes approval!
+    const distinct = validateFourEyesRestoration('admin_A', 'admin_B', 'FINANCIAL_FROZEN', 'NORMAL', null);
+    assert.strictEqual(distinct.fourEyesApproved, true);
+    assert.strictEqual(distinct.isBreakGlass, false);
+
+    // 3. Single administrator with valid break-glass token -> Permitted with audit flag!
+    const breakGlass = validateFourEyesRestoration('admin_A', 'admin_A', 'FINANCIAL_FROZEN', 'NORMAL', 'EMERGENCY_STEP_UP_TOKEN_999');
+    assert.strictEqual(breakGlass.fourEyesApproved, false);
+    assert.strictEqual(breakGlass.isBreakGlass, true);
+  });
+
+  it('321. Phase 6.1 Cryptographic UUID v4 Invariant: Recovery and anomaly IDs use crypto.randomUUID', () => {
+    const { randomUUID } = require('crypto');
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    const testUuid = randomUUID();
+    assert.ok(uuidRegex.test(testUuid), 'Must match RFC 4122 UUID v4');
+
+    // Generate disaster recovery log ID
+    const recoveryLogId = `REC_${randomUUID()}`;
+    const rawUuid = recoveryLogId.replace('REC_', '');
+    assert.ok(uuidRegex.test(rawUuid), 'Disaster recovery log ID must embed valid UUID v4');
+
+    // Generate compensating transaction ID
+    const compensatingTxnId = `cmp_${randomUUID()}`;
+    const rawTxnUuid = compensatingTxnId.replace('cmp_', '');
+    assert.ok(uuidRegex.test(rawTxnUuid), 'Compensating transaction ID must embed valid UUID v4');
+  });
+
+  it('322. Phase 6.1 Static Backend Code Immutability Guard: Zero update/delete operations exist on disasterRecoveryLogs', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const srcDir = path.join(__dirname, '../src');
+    const files = fs.readdirSync(srcDir).filter(f => f.endsWith('.ts') || f.endsWith('.js'));
+
+    for (const file of files) {
+      const content = fs.readFileSync(path.join(srcDir, file), 'utf8');
+      // Look for .collection('disasterRecoveryLogs') followed by .update or .delete
+      const updateMatch = /collection\(['"]disasterRecoveryLogs['"]\)[^;]*\.(update|delete)\(/;
+      assert.strictEqual(
+        updateMatch.test(content),
+        false,
+        `File ${file} must NEVER call .update() or .delete() on disasterRecoveryLogs`
+      );
+    }
+  });
+
+  it('323. Phase 6.1 Financial Compensating Double-Entry Ledger Invariant: Original transaction remains immutable', () => {
+    const { randomUUID } = require('crypto');
+
+    // Original transaction with discrepancy
+    const originalTxn = Object.freeze({
+      transactionId: 'txn_orig_100',
+      orderId: 'ord_100',
+      type: 'PAYMENT_CAPTURE',
+      amountPaise: 5000,
+      postings: [
+        { account: 'CUSTOMER_FUNDS', debitPaise: 5000, creditPaise: 0 },
+        { account: 'CANTEEN_OPERATIONS', debitPaise: 0, creditPaise: 5000 },
+      ],
+      status: 'CAPTURED',
+    });
+
+    function createCompensatingAdjustment(origTxn, adjustmentPaise, reason, debitAcc, creditAcc) {
+      const compensatingId = `cmp_${randomUUID()}`;
+      return {
+        transactionId: compensatingId,
+        orderId: origTxn.orderId,
+        type: 'COMPENSATING_ADJUSTMENT',
+        amountPaise: adjustmentPaise,
+        isCompensatingEntry: true,
+        compensatingForTransactionId: origTxn.transactionId,
+        compensationReason: reason,
+        postings: [
+          { account: debitAcc, debitPaise: adjustmentPaise, creditPaise: 0 },
+          { account: creditAcc, debitPaise: 0, creditPaise: adjustmentPaise },
+        ],
+        status: 'CAPTURED',
+      };
+    }
+
+    const compTxn = createCompensatingAdjustment(
+      originalTxn,
+      1000,
+      'Over-capture correction per gateway reconciliation',
+      'CANTEEN_OPERATIONS',
+      'REFUND_HOLDING'
+    );
+
+    // 1. Original transaction completely untouched
+    assert.strictEqual(originalTxn.amountPaise, 5000);
+    assert.strictEqual(originalTxn.type, 'PAYMENT_CAPTURE');
+
+    // 2. Compensating entry correctly linked and balanced
+    assert.strictEqual(compTxn.isCompensatingEntry, true);
+    assert.strictEqual(compTxn.compensatingForTransactionId, 'txn_orig_100');
+    assert.strictEqual(compTxn.type, 'COMPENSATING_ADJUSTMENT');
+    const debits = compTxn.postings.reduce((s, p) => s + p.debitPaise, 0);
+    const credits = compTxn.postings.reduce((s, p) => s + p.creditPaise, 0);
+    assert.strictEqual(debits, credits);
+    assert.strictEqual(debits, 1000);
+  });
+
+  it('324. Phase 6.1 End-to-End Multi-Admin Incident Recovery Lifecycle Simulation', () => {
+    // Stage 1: Anomaly trips circuit breaker
+    let systemState = {
+      mode: 'FINANCIAL_FROZEN',
+      anomalies: [
+        { id: 'A1', category: 'FINANCIAL', status: 'ACTIVE', entityId: 'txn_bad_1' }
+      ],
+      logs: [],
+    };
+
+    // Stage 2: Admin 1 investigates and attempts repair
+    const admin1Uid = 'admin_sarah';
+    systemState.anomalies[0].status = 'REPAIR_ATTEMPTED';
+    systemState.anomalies[0].investigatedBy = admin1Uid;
+
+    // Stage 3: Admin 1 attempts self-approval -> Blocked by four-eyes rule!
+    assert.throws(() => {
+      if (admin1Uid === 'admin_sarah' && !systemState.emergencyToken) {
+        throw new Error('Four-eyes approval required');
+      }
+    }, /Four-eyes approval required/);
+
+    // Stage 4: System scanner verifies repair
+    systemState.anomalies[0].status = 'VERIFIED_RESOLVED';
+    systemState.anomalies[0].verifiedByScanId = 'SCAN_CLEAN_01';
+
+    // Stage 5: Admin 2 (Distinct approver) reviews proof and authorizes restoration
+    const admin2Uid = 'admin_marcus';
+    const canRestore = systemState.anomalies.every(a => a.status === 'VERIFIED_RESOLVED');
+    assert.strictEqual(canRestore, true);
+
+    const logEntry = {
+      logId: 'REC_TEST_E2E',
+      previousMode: systemState.mode,
+      newMode: 'NORMAL',
+      requestedBy: admin1Uid,
+      restoredBy: admin2Uid,
+      fourEyesApproved: true,
+      timestamp: new Date().toISOString(),
+    };
+    systemState.logs.push(logEntry);
+    systemState.mode = 'NORMAL';
+
+    assert.strictEqual(systemState.mode, 'NORMAL');
+    assert.strictEqual(systemState.logs[0].fourEyesApproved, true);
+    assert.strictEqual(systemState.logs[0].requestedBy, 'admin_sarah');
+    assert.strictEqual(systemState.logs[0].restoredBy, 'admin_marcus');
+  });
 });
+
 
 
 

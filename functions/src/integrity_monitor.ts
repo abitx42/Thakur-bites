@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
@@ -55,7 +56,7 @@ export interface IntegrityScanResult {
  *    - Level 3 (Emergency Freeze): Financial breach -> FINANCIAL_FROZEN (blocks checkout/payments, permits ready->collected).
  */
 export async function executeIntegrityScan(): Promise<IntegrityScanResult> {
-  const scanId = `SCAN_${Date.now()}`;
+  const scanId = `SCAN_${randomUUID()}`;
   const now = Timestamp.now();
   const nowMillis = now.toMillis();
 

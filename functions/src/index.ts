@@ -52,6 +52,7 @@ export {
   getIntegrityAnomalies,
   executeIntegrityRepair,
   adminRestoreOperationalMode,
+  recordCompensatingFinancialEntry,
 } from './disaster_recovery';
 export {
   getDeveloperTelemetry,
