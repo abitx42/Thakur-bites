@@ -93,5 +93,7 @@ export {
   listRegisteredWorkstations,
   revokeWorkstation,
 } from './workstation_binding';
+export { evaluateOperationalSLOs } from './alert_thresholds';
+
 
 

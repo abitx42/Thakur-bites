@@ -72,6 +72,14 @@ echo "▶ Step 8.1: Executing TCET Campus Lunch Rush Multi-Wave Load Simulator (
 node scripts/simulate_tcet_lunch_rush.js
 
 echo ""
+echo "▶ Step 8.2: Executing Realistic Latency & Contention Benchmark (p50/p95/p99 under 1,000 orders)..."
+node scripts/benchmark_realistic_latency.js
+
+echo ""
+echo "▶ Step 8.3: Verifying Multi-Environment Seed Engine Guardrails (Production Dry-Run)..."
+node scripts/seed_environment.js --env=production --dry-run
+
+echo ""
 echo "▶ Step 9: Executing Automated Staging DAST Security Attack Harness (10 Attack Classes)..."
 node scripts/run_dast_suite.js
 
