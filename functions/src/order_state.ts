@@ -21,11 +21,11 @@ const db = admin.firestore();
  */
 const ALLOWED_OPERATIONAL_TRANSITIONS: Record<OrderStatus, { next: OrderStatus[]; roles: UserRole[] }[]> = {
   draft: [],
-  payment_pending: [{ next: ['preparing', 'ready'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
-  paid: [{ next: ['preparing', 'ready', 'collected'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
-  confirmed: [{ next: ['preparing', 'ready', 'collected'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
-  preparing: [{ next: ['ready', 'collected'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
-  ready: [{ next: ['collected'], roles: ['pickup', 'kitchen', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
+  payment_pending: [], // Payment must be confirmed through payment gateway or cashier cash recording
+  paid: [{ next: ['preparing', 'ready'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
+  confirmed: [{ next: ['preparing', 'ready'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
+  preparing: [{ next: ['ready'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
+  ready: [], // ready -> collected strictly reserved for verifyPickup
   collected: [],
   cancelled: [],
 };
@@ -58,6 +58,13 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
     );
   }
 
+  if (nextStatus === 'collected') {
+    throw new HttpsError(
+      'failed-precondition',
+      'Handover to collected is strictly reserved for verifyPickup with customer QR token or PIN.'
+    );
+  }
+
   const orderRef = db.collection('orders').doc(orderId);
   const now = Timestamp.now();
 
@@ -72,6 +79,14 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
 
     if (currentStatus === nextStatus) {
       return { success: true, message: `Order already in status ${nextStatus}` };
+    }
+
+    const isPaid = orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured';
+    if (!isPaid) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Cannot transition unpaid order. Order payment must be confirmed before kitchen preparation.'
+      );
     }
 
     // Check transition validity
@@ -107,26 +122,7 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
       }
     }
 
-    if (nextStatus === 'collected') {
-      updates.collectedAt = now;
-      updates.collectedByStaffId = actorId;
-      if (!orderData.readyAt) {
-        updates.readyAt = now;
-      }
-      try {
-        await commitInventoryInTransaction(transaction, db, orderId, actorId);
-      } catch (err) {
-        console.warn('Inventory commit notice during collected transition:', err);
-      }
-    }
-
     transaction.update(orderRef, updates);
-
-    // Release Faculty Priority Lock (TB-004) so faculty can place another priority order
-    if (nextStatus === 'collected' && orderData.studentId) {
-      const facultyLockRef = db.collection('facultyPriorityLocks').doc(orderData.studentId);
-      transaction.delete(facultyLockRef);
-    }
 
     // Record immutable orderEvent
     const eventRef = db.collection('orderEvents').doc();

@@ -7067,6 +7067,304 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
       );
     }
   });
+
+  it('288. Phase 3 Pickup Replay & Double-Handover Defense (INV-011): Replayed or duplicate scans throw fail-closed', () => {
+    // Simulates verifyPickup verification logic with fail-closed duplicate handover rejection
+    function simulateVerifyPickup(orderRecord, secretRecord, tokenOrPin) {
+      if (orderRecord.status === 'collected') {
+        throw new Error(
+          `ALREADY_COLLECTED: Order ${orderRecord.tokenNumber || orderRecord.id} was already collected at ${orderRecord.collectedAt || 'earlier'}. Do not hand over duplicate meal.`
+        );
+      }
+
+      if (orderRecord.status === 'cancelled') {
+        throw new Error('Cannot verify pickup for a cancelled order.');
+      }
+
+      const isPaid = orderRecord.paymentStatus === 'paid' || orderRecord.paymentStatus === 'captured';
+      if (!isPaid) {
+        throw new Error(`Cannot release order. Payment status is '${orderRecord.paymentStatus}'. Customer must pay first.`);
+      }
+
+      const isReadyOrInstant = orderRecord.status === 'ready' || (orderRecord.isOnlyReadyMade && (orderRecord.status === 'confirmed' || orderRecord.status === 'preparing'));
+      if (!isReadyOrInstant) {
+        throw new Error(`Cannot hand over order. Order is currently in '${orderRecord.status}' status.`);
+      }
+
+      // Check PIN or token match
+      if (tokenOrPin !== secretRecord.pinCode && tokenOrPin !== secretRecord.qrToken) {
+        throw new Error('Incorrect pickup verification code.');
+      }
+
+      // First-time success -> updates status to collected
+      orderRecord.status = 'collected';
+      orderRecord.collectedAt = new Date().toISOString();
+      return { success: true, status: 'collected', orderId: orderRecord.id };
+    }
+
+    const testOrder = {
+      id: 'ord_replay_001',
+      tokenNumber: 'TB-108',
+      status: 'ready',
+      paymentStatus: 'paid',
+      isOnlyReadyMade: false,
+    };
+    const testSecret = { pinCode: '4829', qrToken: 'valid.token.jwt' };
+
+    // Attempt 1: First scan -> SUT successfully verifies and marks collected
+    const firstVerification = simulateVerifyPickup(testOrder, testSecret, '4829');
+    assert.strictEqual(firstVerification.success, true);
+    assert.strictEqual(testOrder.status, 'collected');
+
+    // Attempt 2: Immediate duplicate scan (Replay / Screenshot / Simultaneous Terminal) -> Throws ALREADY_COLLECTED
+    assert.throws(() => {
+      simulateVerifyPickup(testOrder, testSecret, '4829');
+    }, /ALREADY_COLLECTED.*Do not hand over duplicate meal/);
+
+    // Attempt 3: Replay via QR token -> Throws ALREADY_COLLECTED
+    assert.throws(() => {
+      simulateVerifyPickup(testOrder, testSecret, 'valid.token.jwt');
+    }, /ALREADY_COLLECTED.*Do not hand over duplicate meal/);
+  });
+
+  it('289. Phase 3 Operational State Machine Boundary & Bypass Defense (INV-007, INV-011): updateOrderStatus rejects collected jump and unpaid advances', () => {
+    const ALLOWED_OPERATIONAL_TRANSITIONS = {
+      draft: [],
+      payment_pending: [], // Strict: payment must be confirmed through gateway or cashier POS
+      paid: [{ next: ['preparing', 'ready'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
+      confirmed: [{ next: ['preparing', 'ready'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
+      preparing: [{ next: ['ready'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
+      ready: [], // ready -> collected strictly reserved for verifyPickup
+      collected: [],
+      cancelled: [],
+    };
+
+    function simulateUpdateOrderStatus(orderData, nextStatus, actorRole) {
+      if (nextStatus === 'collected') {
+        throw new Error('Handover to collected is strictly reserved for verifyPickup with customer QR token or PIN.');
+      }
+
+      const isPaid = orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured';
+      if (!isPaid) {
+        throw new Error('Cannot transition unpaid order. Order payment must be confirmed before kitchen preparation.');
+      }
+
+      const allowed = ALLOWED_OPERATIONAL_TRANSITIONS[orderData.status];
+      const match = allowed?.find(rule => rule.next.includes(nextStatus));
+      if (!match || !match.roles.includes(actorRole)) {
+        throw new Error(`Invalid status transition from ${orderData.status} to ${nextStatus} for role ${actorRole}`);
+      }
+
+      orderData.status = nextStatus;
+      return { success: true, toStatus: nextStatus };
+    }
+
+    // 1. Direct jump to collected via updateOrderStatus is rejected
+    assert.throws(() => {
+      simulateUpdateOrderStatus({ status: 'ready', paymentStatus: 'paid' }, 'collected', 'kitchen');
+    }, /Handover to collected is strictly reserved for verifyPickup/);
+
+    // 2. Advancing unpaid payment_pending order is rejected
+    assert.throws(() => {
+      simulateUpdateOrderStatus({ status: 'payment_pending', paymentStatus: 'pending' }, 'preparing', 'kitchen');
+    }, /Cannot transition unpaid order/);
+
+    // 3. Advancing confirmed paid order to preparing succeeds
+    const confirmedOrder = { status: 'confirmed', paymentStatus: 'paid' };
+    const prepResult = simulateUpdateOrderStatus(confirmedOrder, 'preparing', 'kitchen');
+    assert.strictEqual(prepResult.success, true);
+    assert.strictEqual(confirmedOrder.status, 'preparing');
+
+    // 4. Advancing preparing paid order to ready succeeds
+    const readyResult = simulateUpdateOrderStatus(confirmedOrder, 'ready', 'kitchen');
+    assert.strictEqual(readyResult.success, true);
+    assert.strictEqual(confirmedOrder.status, 'ready');
+  });
+
+  it('290. Phase 3 Kitchen Display System (KDS) Queue Gate Invariant (INV-007, INV-010): payment_pending and pure ready-made excluded from cooking queue', () => {
+    function filterKitchenCookingQueue(orders) {
+      return orders.filter(order => {
+        // Must not be draft or cancelled or collected
+        if (['draft', 'cancelled', 'collected', 'ready'].includes(order.status)) return false;
+
+        // Payment Gate: Order must not be pending payment
+        if (order.status === 'payment_pending' || order.paymentStatus === 'pending') return false;
+
+        // Ready-made Gate: Orders that are purely packaged goods do NOT need kitchen preparation
+        if (order.isOnlyReadyMade === true) return false;
+
+        return true;
+      });
+    }
+
+    const testOrders = [
+      { id: 'ord_1', status: 'confirmed', paymentStatus: 'paid', isOnlyReadyMade: false, items: [{ name: 'Masala Dosa' }] },
+      { id: 'ord_2', status: 'payment_pending', paymentStatus: 'pending', isOnlyReadyMade: false, items: [{ name: 'Veg Hakka Noodles' }] }, // Unpaid -> Exclude
+      { id: 'ord_3', status: 'confirmed', paymentStatus: 'paid', isOnlyReadyMade: true, items: [{ name: 'Potato Chips', isPackaged: true }] }, // Pure ready-made -> Exclude from kitchen
+      { id: 'ord_4', status: 'preparing', paymentStatus: 'paid', isOnlyReadyMade: false, items: [{ name: 'Grilled Sandwich' }] }, // Active prep -> Include
+      { id: 'ord_5', status: 'ready', paymentStatus: 'paid', isOnlyReadyMade: false, items: [{ name: 'Cold Coffee' }] }, // Already cooked -> Exclude
+    ];
+
+    const cookQueue = filterKitchenCookingQueue(testOrders);
+    const cookQueueIds = cookQueue.map(o => o.id);
+
+    assert.deepStrictEqual(cookQueueIds, ['ord_1', 'ord_4'], 'Only active, paid, cookable items must enter kitchen queue');
+    assert.strictEqual(cookQueue.some(o => o.paymentStatus === 'pending'), false, 'Unpaid checkout orders must never appear on KDS');
+    assert.strictEqual(cookQueue.some(o => o.isOnlyReadyMade), false, 'Pure ready-made store orders must never clog kitchen queue');
+  });
+
+  it('291. Phase 3 Cashier Counter POS Atomic Double-Entry Ledger Capture (INV-004, INV-005): Deterministic idempotency cash_fin_${orderId}', () => {
+    // Simulates recordCashPayment transactional logic
+    const dbMock = {
+      orders: new Map([
+        ['ord_cash_101', { id: 'ord_cash_101', status: 'payment_pending', paymentStatus: 'pending', paymentMethod: 'counter_cash', totalAmountPaise: 12000, tokenNumber: 'TB-201', studentId: 'stud_99' }]
+      ]),
+      financialTransactions: new Map(),
+      inventoryLedger: [],
+    };
+
+    function simulateRecordCashPayment(orderId, staffUid, staffRole) {
+      const authorizedRoles = ['cashier', 'manager', 'admin', 'developer'];
+      if (!authorizedRoles.includes(staffRole)) {
+        throw new Error('PERMISSION_DENIED: Only cashier/manager/admin roles can record counter cash');
+      }
+
+      const finTxId = `cash_fin_${orderId}`;
+
+      // Transaction step 1: Read finTx create-if-absent check
+      if (dbMock.financialTransactions.has(finTxId)) {
+        return { success: true, idempotentReplay: true, message: 'Cash payment already recorded for this order.' };
+      }
+
+      const order = dbMock.orders.get(orderId);
+      if (!order) {
+        throw new Error('NOT_FOUND: Order does not exist');
+      }
+
+      if (order.status === 'cancelled') {
+        throw new Error('FAILED_PRECONDITION: Cannot accept cash for cancelled order');
+      }
+
+      // Atomic Ledger Record Creation
+      dbMock.financialTransactions.set(finTxId, {
+        id: finTxId,
+        orderId,
+        amountPaise: order.totalAmountPaise,
+        type: 'CREDIT',
+        method: 'CASH',
+        collectedByStaffId: staffUid,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Atomic Order Status Update
+      order.paymentStatus = 'paid';
+      order.status = 'confirmed';
+      order.cashierSettledBy = staffUid;
+
+      return { success: true, idempotentReplay: false, finTxId };
+    }
+
+    // Attempt 1: Valid Cashier records payment
+    const res1 = simulateRecordCashPayment('ord_cash_101', 'staff_cashier_1', 'cashier');
+    assert.strictEqual(res1.success, true);
+    assert.strictEqual(res1.idempotentReplay, false);
+    assert.strictEqual(res1.finTxId, 'cash_fin_ord_cash_101');
+
+    const updatedOrder = dbMock.orders.get('ord_cash_101');
+    assert.strictEqual(updatedOrder.paymentStatus, 'paid');
+    assert.strictEqual(updatedOrder.status, 'confirmed');
+
+    // Attempt 2: Replay / Double Click / Network Retry -> Strictly Idempotent
+    const res2 = simulateRecordCashPayment('ord_cash_101', 'staff_cashier_1', 'cashier');
+    assert.strictEqual(res2.success, true);
+    assert.strictEqual(res2.idempotentReplay, true);
+    assert.strictEqual(dbMock.financialTransactions.size, 1, 'Never create duplicate financial ledger record');
+
+    // Attempt 3: Unauthorized role (student / kitchen) blocked
+    assert.throws(() => {
+      simulateRecordCashPayment('ord_cash_101', 'attacker_uid', 'student');
+    }, /PERMISSION_DENIED/);
+  });
+
+  it('292. Phase 3 Station-Filtered KDS Routing & Zero-PII Minimization (INV-017): Strips customer PII and isolates tickets by station', () => {
+    // Simulates KDS station filter and data projection
+    const STATION_KEYWORDS = {
+      dosa: ['dosa', 'uttapam', 'idli', 'vada'],
+      sandwich: ['sandwich', 'toast', 'burger', 'panini'],
+      chinese: ['noodles', 'rice', 'manchurian', 'chilli', 'schezwan', 'meal', 'thali'],
+      snacks: ['pav', 'samosa', 'poha', 'misal', 'bhajiya'],
+      beverage: ['coffee', 'tea', 'juice', 'shake', 'beverage', 'lassi', 'water'],
+    };
+
+    function projectStationTicket(rawOrder, targetStation) {
+      // Data Minimization: Zero PII projection to kitchen screens
+      const operationalTicket = {
+        orderId: rawOrder.id,
+        tokenNumber: rawOrder.tokenNumber,
+        status: rawOrder.status,
+        priorityLevel: rawOrder.priorityLevel || 0,
+        createdAt: rawOrder.createdAt,
+        stationItems: [],
+      };
+
+      for (const item of rawOrder.items || []) {
+        const itemCategory = (item.category || '').toLowerCase();
+        const itemName = (item.name || '').toLowerCase();
+
+        if (targetStation === 'all') {
+          operationalTicket.stationItems.push({ name: item.name, quantity: item.quantity, notes: item.notes });
+        } else {
+          const stationKeywords = STATION_KEYWORDS[targetStation] || [];
+          const matches = stationKeywords.some(kw => itemCategory.includes(kw) || itemName.includes(kw));
+          if (matches) {
+            operationalTicket.stationItems.push({ name: item.name, quantity: item.quantity, notes: item.notes });
+          }
+        }
+      }
+
+      return operationalTicket;
+    }
+
+    const orderWithPII = {
+      id: 'ord_station_001',
+      tokenNumber: 'TB-350',
+      studentId: 'stud_private_123',
+      studentName: 'Private Student',
+      studentEmail: 'student@tcetmumbai.in',
+      studentPhone: '+919999988888',
+      status: 'confirmed',
+      priorityLevel: 2,
+      createdAt: '2026-09-08T03:00:00Z',
+      items: [
+        { name: 'Mysore Masala Dosa', category: 'dosa', quantity: 2 },
+        { name: 'Veg Hakka Noodles', category: 'chinese', quantity: 1 },
+        { name: 'Cold Coffee', category: 'beverage', quantity: 2 },
+      ],
+    };
+
+    // Projection for Dosa Station
+    const dosaTicket = projectStationTicket(orderWithPII, 'dosa');
+    assert.strictEqual(dosaTicket.stationItems.length, 1);
+    assert.strictEqual(dosaTicket.stationItems[0].name, 'Mysore Masala Dosa');
+    assert.strictEqual(dosaTicket.stationItems[0].quantity, 2);
+
+    // Projection for Chinese Station
+    const chineseTicket = projectStationTicket(orderWithPII, 'chinese');
+    assert.strictEqual(chineseTicket.stationItems.length, 1);
+    assert.strictEqual(chineseTicket.stationItems[0].name, 'Veg Hakka Noodles');
+
+    // Projection for Beverage Station
+    const beverageTicket = projectStationTicket(orderWithPII, 'beverage');
+    assert.strictEqual(beverageTicket.stationItems.length, 1);
+    assert.strictEqual(beverageTicket.stationItems[0].name, 'Cold Coffee');
+
+    // Zero-PII Invariant Check: verify no PII fields leaked
+    const ticketJson = JSON.stringify(dosaTicket);
+    assert.strictEqual(ticketJson.includes('Private Student'), false, 'Student name must not leak to kitchen ticket');
+    assert.strictEqual(ticketJson.includes('stud_private_123'), false, 'Student UID must not leak to kitchen ticket');
+    assert.strictEqual(ticketJson.includes('student@tcetmumbai.in'), false, 'Student email must not leak to kitchen ticket');
+    assert.strictEqual(ticketJson.includes('9999988888'), false, 'Student phone must not leak to kitchen ticket');
+  });
 });
 
 

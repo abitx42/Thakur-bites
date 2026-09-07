@@ -60,12 +60,19 @@ export function renderKitchenView(container) {
     // 1. Filter all active uncompleted orders (never drop or miss any order)
     const activeOrders = currentOrders.filter(o => o.status !== 'collected' && o.status !== 'cancelled');
 
-    // 2. Cook Queue: includes payment_pending, placed, confirmed, preparing
+    // 2. Cook Queue: Only confirmed and paid orders that require kitchen cooking
+    // (excludes payment_pending orders and 100% packaged store items)
     const cookOrders = activeOrders.filter(o => {
-      const isCookingState = o.status === 'placed' || o.status === 'preparing' || o.status === 'confirmed' || o.status === 'payment_pending';
+      const isCookingState = (o.status === 'placed' || o.status === 'preparing' || o.status === 'confirmed' || o.status === 'paid') && !o.isOnlyReadyMade;
       if (!isCookingState) return false;
       if (selectedCategoryFilter === 'all') return true;
-      return o.items && o.items.some(i => (i.name || '').toLowerCase().includes(selectedCategoryFilter) || (i.station || '').toLowerCase() === selectedCategoryFilter);
+      return o.items && o.items.some(i => {
+        const name = (i.name || '').toLowerCase();
+        const cat = (i.category || '').toLowerCase();
+        const sub = (i.subCategory || '').toLowerCase();
+        const station = (i.station || '').toLowerCase();
+        return name.includes(selectedCategoryFilter) || cat.includes(selectedCategoryFilter) || sub.includes(selectedCategoryFilter) || station === selectedCategoryFilter;
+      });
     });
 
     // Dynamic Effective Priority Score calculation: Base + (WaitMinutes * 5)
@@ -205,13 +212,20 @@ export function renderKitchenView(container) {
 
         <!-- Filter Chips -->
         <div style="display: flex; gap: 8px; margin-bottom: 1.3rem; overflow-x: auto; padding-bottom: 4px;">
-          ${['all', 'dosa', 'sandwich', 'snack', 'beverage'].map(cat => `
+          ${[
+            { id: 'all', label: '🍽️ All Stations' },
+            { id: 'dosa', label: '🥞 Dosa Station' },
+            { id: 'sandwich', label: '🥪 Sandwich Grill' },
+            { id: 'chinese', label: '🍜 Chinese & Meals' },
+            { id: 'snack', label: '🥖 Pav & Snacks' },
+            { id: 'beverage', label: '🥤 Beverage Counter' },
+          ].map(cat => `
             <button 
-              class="kds-filter-btn ${selectedCategoryFilter === cat ? 'active' : ''}" 
-              data-cat="${cat}"
-              style="padding: 7px 16px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; border: 1.5px solid ${selectedCategoryFilter === cat ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedCategoryFilter === cat ? 'var(--brand-red)' : '#FFF'}; color: ${selectedCategoryFilter === cat ? '#FFF' : 'var(--ink-secondary)'}; transition: all 0.15s ease;"
+              class="kds-filter-btn ${selectedCategoryFilter === cat.id ? 'active' : ''}" 
+              data-cat="${cat.id}"
+              style="padding: 7px 16px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; border: 1.5px solid ${selectedCategoryFilter === cat.id ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedCategoryFilter === cat.id ? 'var(--brand-red)' : '#FFF'}; color: ${selectedCategoryFilter === cat.id ? '#FFF' : 'var(--ink-secondary)'}; transition: all 0.15s ease;"
             >
-              ${cat === 'all' ? '🍽️ All Stations' : cat.toUpperCase()}
+              ${cat.label}
             </button>
           `).join('')}
         </div>

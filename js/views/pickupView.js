@@ -83,14 +83,19 @@ export function renderPickupView(container) {
         }, 4000);
       } catch (err) {
         playScanSound(false);
-        scannerFeedbackMessage = `❌ Scan Error: ${err.message || 'Invalid or already consumed QR Token'}`;
+        const isReplay = String(err.message || '').includes('ALREADY_COLLECTED');
+        if (isReplay) {
+          scannerFeedbackMessage = `🚨 REPLAY DETECTED: Order already collected! Do not hand over meal.`;
+        } else {
+          scannerFeedbackMessage = `❌ Scan Error: ${err.message || 'Invalid or already consumed QR Token'}`;
+        }
         scannerFeedbackType = 'error';
         render();
 
         setTimeout(() => {
           scannerFeedbackMessage = null;
           render();
-        }, 5000);
+        }, 6000);
       }
     } else if (/^\d{4,6}$/.test(cleanPayload)) {
       // 4 to 6 digit PIN scan / keypress
@@ -373,7 +378,14 @@ export function renderPickupView(container) {
         } catch (err) {
           console.error("PIN verification error:", err);
           playScanSound(false);
-          alert("PIN Verification Failed: " + (err.message || err));
+          const isReplay = String(err.message || '').includes('ALREADY_COLLECTED');
+          const alertMsg = isReplay 
+            ? "🚨 REPLAY REJECTED: This order was ALREADY collected! Do not hand over meal."
+            : ("PIN Verification Failed: " + (err.message || err));
+          scannerFeedbackMessage = `❌ ${alertMsg}`;
+          scannerFeedbackType = 'error';
+          render();
+          alert(alertMsg);
           btn.disabled = false;
           btn.innerHTML = origContent;
         }

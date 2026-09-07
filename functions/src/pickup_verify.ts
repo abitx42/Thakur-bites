@@ -77,7 +77,14 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
     const secretData = secretSnap.exists ? secretSnap.data()! : null;
 
     if (orderData.status === 'collected') {
-      return { success: true, alreadyCollected: true, message: 'Order has already been collected.' };
+      throw new HttpsError(
+        'failed-precondition',
+        `ALREADY_COLLECTED: Order ${orderData.tokenNumber || orderId} was already collected at ${orderData.collectedAt?.toDate()?.toLocaleTimeString() || 'earlier'}. Do not hand over duplicate meal.`
+      );
+    }
+
+    if (orderData.status === 'cancelled') {
+      throw new HttpsError('failed-precondition', 'Cannot verify pickup for a cancelled order.');
     }
 
     // Check if order is locked due to excessive PIN failures

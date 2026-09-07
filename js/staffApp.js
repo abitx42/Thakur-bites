@@ -1,9 +1,10 @@
 import { staffAuth, renderPinPadModal, getRegisteredWorkstation, onStaffAuthStateChanged } from './auth.js?v=10';
 import { renderKitchenView } from './views/kitchenView.js?v=6';
 import { renderPickupView } from './views/pickupView.js?v=6';
+import { renderCashierView } from './views/cashierView.js?v=1';
 import { renderAdminView } from './views/adminView.js?v=9';
 
-let currentStaffWorkstationView = 'kitchen'; // 'kitchen' | 'pickup' | 'menu'
+let currentStaffWorkstationView = 'kitchen'; // 'kitchen' | 'pickup' | 'cashier' | 'menu'
 
 function initStaffWorkstation() {
   const root = document.getElementById('app-root');
@@ -95,6 +96,9 @@ function initStaffWorkstation() {
             <button class="staff-nav-btn ${currentStaffWorkstationView === 'pickup' ? 'active' : ''}" data-view="pickup">
               📦 Pickup Counter
             </button>
+            <button class="staff-nav-btn ${currentStaffWorkstationView === 'cashier' ? 'active' : ''}" data-view="cashier">
+              💵 Cashier POS
+            </button>
             <button class="staff-nav-btn ${currentStaffWorkstationView === 'menu' ? 'active' : ''}" data-view="menu">
               📋 Menu & Stock (Add / Quantity)
             </button>
@@ -151,6 +155,8 @@ function initStaffWorkstation() {
       renderKitchenView(viewTarget);
     } else if (currentStaffWorkstationView === 'pickup') {
       renderPickupView(viewTarget);
+    } else if (currentStaffWorkstationView === 'cashier') {
+      renderCashierView(viewTarget);
     } else if (currentStaffWorkstationView === 'menu') {
       renderAdminView(viewTarget, { staffMode: true });
     }
