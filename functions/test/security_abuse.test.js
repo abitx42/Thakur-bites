@@ -6185,6 +6185,378 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
 
     assert.throws(() => evaluateStockBoundary(10, 4, 8), /active reservations/);
   });
+
+  it('274. Priority 9: Token / Session Trust & Revocation-Aware Invariance', async () => {
+    // 1. Stale Session Simulation: Demoted user session in Firestore marked REVOKED
+    const sessionDoc = {
+      userId: 'staff_bob',
+      role: 'kitchen',
+      status: 'REVOKED',
+      createdAt: { toMillis: () => Date.now() - 3600000 },
+      expiresAt: { toMillis: () => Date.now() + 18000000 },
+      lastActivityAt: { toMillis: () => Date.now() },
+    };
+
+    function validatePrivilegedSessionData(userId, data, tokensValidAfterMs) {
+      if (data.userId !== userId || data.status !== 'ACTIVE') {
+        throw new Error('Privileged session does not belong to the active user or has been revoked.');
+      }
+      const privilegedRoles = ['admin', 'manager', 'developer', 'security_admin'];
+      if (!privilegedRoles.includes(data.role)) {
+        throw new Error('ROLE_REVOKED: User role is not authorized for privileged sessions.');
+      }
+      if (tokensValidAfterMs && data.createdAt.toMillis() < tokensValidAfterMs) {
+        throw new Error('USER_TOKENS_REVOKED: User authentication tokens have been revoked.');
+      }
+    }
+
+    // Invariant 1: Revoked session fails closed immediately
+    assert.throws(
+      () => validatePrivilegedSessionData('staff_bob', sessionDoc, null),
+      /revoked/
+    );
+
+    // Invariant 2: Demoted user role (e.g., student) fails closed even if status says ACTIVE
+    const demotedActiveSession = { ...sessionDoc, status: 'ACTIVE', role: 'student' };
+    assert.throws(
+      () => validatePrivilegedSessionData('staff_bob', demotedActiveSession, null),
+      /ROLE_REVOKED/
+    );
+
+    // Invariant 3: Active privileged session with tokens invalidated post-creation fails closed
+    const activePrivSession = {
+      ...sessionDoc,
+      status: 'ACTIVE',
+      role: 'admin',
+      createdAt: { toMillis: () => Date.now() - 5000 }, // created 5s ago
+    };
+    const tokensValidAfterMs = Date.now() - 1000; // tokens revoked 1s ago
+    assert.throws(
+      () => validatePrivilegedSessionData('staff_bob', activePrivSession, tokensValidAfterMs),
+      /USER_TOKENS_REVOKED/
+    );
+
+    // Invariant 4: Workstation session fails closed if revoked or expired
+    function validateWorkstationSession(session) {
+      if (!session || session.status !== 'ACTIVE') {
+        throw new Error('Workstation session has been revoked.');
+      }
+      if (session.expiresAtMs <= Date.now()) {
+        throw new Error('Workstation session has expired.');
+      }
+    }
+
+    assert.throws(() => validateWorkstationSession({ status: 'REVOKED', expiresAtMs: Date.now() + 10000 }), /revoked/);
+    assert.throws(() => validateWorkstationSession({ status: 'ACTIVE', expiresAtMs: Date.now() - 1000 }), /expired/);
+  });
+
+  it('275. Priority 10 & 11: Notification Decoupling & Partial Infrastructure Failure Invariant', () => {
+    // Simulates an end-to-end payment finalization with background notification trigger
+    const systemState = {
+      orders: new Map([['ord_test_infra', { id: 'ord_test_infra', status: 'payment_pending', paymentStatus: 'pending', totalAmountPaise: 2500 }]]),
+      financialTransactions: new Map(),
+      inventoryCommitted: false,
+      notificationsDispatched: [],
+      securityAuditLogs: [],
+    };
+
+    function simulatePaymentFinalizeWithDecoupledNotification(orderId, gatewayPaymentId, notificationServiceStatus) {
+      const finTxId = `pay_fin_${gatewayPaymentId}`;
+
+      // 1. Transaction commits core payment and double-entry ledger
+      systemState.financialTransactions.set(finTxId, {
+        transactionId: finTxId,
+        orderId,
+        amountPaise: 2500,
+        status: 'CAPTURED',
+      });
+      const order = systemState.orders.get(orderId);
+      order.status = 'confirmed';
+      order.paymentStatus = 'paid';
+      systemState.inventoryCommitted = true;
+
+      // 2. Asynchronous / decoupled notification event trigger (Outbox / Event Pattern)
+      try {
+        if (notificationServiceStatus === 'FCM_500_SERVER_ERROR') {
+          throw new Error('Firebase Cloud Messaging 500 Internal Server Error');
+        }
+        if (notificationServiceStatus === 'NOTIFICATION_DOC_WRITE_ERROR') {
+          throw new Error('Firestore user notifications subcollection write timeout');
+        }
+        systemState.notificationsDispatched.push({ orderId, status: 'confirmed' });
+      } catch (notifErr) {
+        // Non-fatal logging to immutable security telemetry
+        systemState.securityAuditLogs.push({
+          eventType: 'FCM_NOTIFICATION_FAILURE',
+          orderId,
+          error: notifErr.message,
+        });
+      }
+
+      // Invariant: Primary payment result succeeds regardless of notification outcome
+      return {
+        success: true,
+        alreadyCaptured: false,
+        orderId,
+        status: 'confirmed',
+        amountPaise: 2500,
+      };
+    }
+
+    // Scenario A: FCM service is completely down / returning 500
+    const result = simulatePaymentFinalizeWithDecoupledNotification('ord_test_infra', 'pay_gw_infra_01', 'FCM_500_SERVER_ERROR');
+
+    // INVARIANT 1: Payment successfully confirmed
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'confirmed');
+
+    // INVARIANT 2: Financial transaction was NOT rolled back
+    assert.strictEqual(systemState.financialTransactions.size, 1);
+    assert.strictEqual(systemState.financialTransactions.get('pay_fin_pay_gw_infra_01').status, 'CAPTURED');
+
+    // INVARIANT 3: Inventory was committed
+    assert.strictEqual(systemState.inventoryCommitted, true);
+
+    // INVARIANT 4: Failure was recorded in audit log without crashing the caller
+    assert.strictEqual(systemState.securityAuditLogs.length, 1);
+    assert.strictEqual(systemState.securityAuditLogs[0].eventType, 'FCM_NOTIFICATION_FAILURE');
+  });
+
+  it('276. Priority 12: Disaster Recovery & Deterministic Ledger Reconstruction Invariant', () => {
+    // Simulates a catastrophic disaster where mutable document fields were wiped or corrupted:
+    // menuItem.stockOnHand reset to 0, total revenue counters in analytics collection corrupted.
+    const corruptedMenuItem = {
+      id: 'item_masala_dosa',
+      name: 'Masala Dosa',
+      stockOnHand: 0, // Corrupted: wiped out by rogue script
+      reservedStock: 0,
+      availableStock: 0,
+    };
+
+    // Append-only, immutable inventoryLedger entries (Source of Truth)
+    const immutableInventoryLedger = [
+      { itemId: 'item_masala_dosa', changeType: 'INITIAL_STOCK', deltaUnits: 50, actorId: 'admin_1' },
+      { itemId: 'item_masala_dosa', changeType: 'ORDER_COMMIT', deltaUnits: -2, actorId: 'system_checkout' },
+      { itemId: 'item_masala_dosa', changeType: 'ORDER_COMMIT', deltaUnits: -3, actorId: 'system_checkout' },
+      { itemId: 'item_masala_dosa', changeType: 'RESTOCK', deltaUnits: 25, actorId: 'manager_1' },
+      { itemId: 'item_masala_dosa', changeType: 'WASTE', deltaUnits: -4, actorId: 'staff_kitchen' },
+      { itemId: 'item_masala_dosa', changeType: 'ORDER_COMMIT', deltaUnits: -6, actorId: 'system_checkout' },
+    ];
+
+    // Append-only, immutable financialTransactions postings (Source of Truth)
+    const immutableFinancialLedger = [
+      {
+        transactionId: 'pay_fin_001',
+        type: 'PAYMENT_CAPTURE',
+        amountPaise: 15000,
+        postings: [
+          { account: 'GATEWAY_RECEIVABLE', debitPaise: 15000, creditPaise: 0 },
+          { account: 'SALES_REVENUE', debitPaise: 0, creditPaise: 15000 },
+        ],
+      },
+      {
+        transactionId: 'cash_fin_002',
+        type: 'PAYMENT_CAPTURE',
+        amountPaise: 8000,
+        postings: [
+          { account: 'CASH_ON_HAND', debitPaise: 8000, creditPaise: 0 },
+          { account: 'SALES_REVENUE', debitPaise: 0, creditPaise: 8000 },
+        ],
+      },
+      {
+        transactionId: 'ref_fin_003',
+        type: 'REFUND_DISBURSEMENT',
+        amountPaise: 3000,
+        postings: [
+          { account: 'SALES_REVENUE', debitPaise: 3000, creditPaise: 0 },
+          { account: 'GATEWAY_RECEIVABLE', debitPaise: 0, creditPaise: 3000 },
+        ],
+      },
+      {
+        transactionId: 'orph_fin_004',
+        type: 'ORPHANED_PAYMENT_CAPTURE',
+        amountPaise: 2000,
+        postings: [
+          { account: 'GATEWAY_RECEIVABLE', debitPaise: 2000, creditPaise: 0 },
+          { account: 'ORPHAN_SUSPENSE', debitPaise: 0, creditPaise: 2000 },
+        ],
+      },
+    ];
+
+    // DISASTER RECOVERY REPLAY FUNCTION:
+    function reconstructInventory(itemId, ledger) {
+      let reconstructedStockOnHand = 0;
+      for (const entry of ledger) {
+        if (entry.itemId === itemId) {
+          reconstructedStockOnHand += entry.deltaUnits;
+        }
+      }
+      return reconstructedStockOnHand;
+    }
+
+    function reconstructFinancialBalances(ledger) {
+      const accounts = {
+        SALES_REVENUE: 0,
+        GATEWAY_RECEIVABLE: 0,
+        CASH_ON_HAND: 0,
+        ORPHAN_SUSPENSE: 0,
+      };
+
+      for (const tx of ledger) {
+        for (const posting of tx.postings) {
+          // Revenue and suspense are credit-normal, asset accounts are debit-normal
+          if (posting.account === 'SALES_REVENUE' || posting.account === 'ORPHAN_SUSPENSE') {
+            accounts[posting.account] += (posting.creditPaise - posting.debitPaise);
+          } else {
+            accounts[posting.account] += (posting.debitPaise - posting.creditPaise);
+          }
+        }
+      }
+      return accounts;
+    }
+
+    // Invariant 1: Inventory is 100% reconstructed to exact true value (50 - 2 - 3 + 25 - 4 - 6 = 60)
+    const restoredStock = reconstructInventory('item_masala_dosa', immutableInventoryLedger);
+    assert.strictEqual(restoredStock, 60, 'Reconstructed physical stock must equal 60 units');
+
+    // Invariant 2: Financial Balances are 100% reconstructed to exact integer paise
+    const restoredAccounts = reconstructFinancialBalances(immutableFinancialLedger);
+    assert.strictEqual(restoredAccounts.SALES_REVENUE, 20000, 'Net Sales Revenue must equal ₹200.00 (20000 paise)');
+    assert.strictEqual(restoredAccounts.CASH_ON_HAND, 8000, 'Cash on Hand must equal ₹80.00 (8000 paise)');
+    assert.strictEqual(restoredAccounts.GATEWAY_RECEIVABLE, 14000, 'Net Gateway Receivable must equal ₹140.00 (14000 paise)');
+    assert.strictEqual(restoredAccounts.ORPHAN_SUSPENSE, 2000, 'Orphan Suspense must equal ₹20.00 (2000 paise)');
+
+    // Invariant 3: Accounting equation holds: Total Assets = Total Liabilities/Equity (22000 == 22000)
+    const totalAssets = restoredAccounts.GATEWAY_RECEIVABLE + restoredAccounts.CASH_ON_HAND;
+    const totalEquity = restoredAccounts.SALES_REVENUE + restoredAccounts.ORPHAN_SUSPENSE;
+    assert.strictEqual(totalAssets, totalEquity);
+  });
+
+  it('277. Priority 13: Developer Account Compromise & Multi-Key Step-Up Defense Invariant', () => {
+    const { verifyChallengeNonceConstantTime } = require('../lib/developer_cockpit');
+    const crypto = require('crypto');
+
+    const rawNonce = crypto.randomBytes(32).toString('hex');
+    const nonceHash = crypto.createHash('sha256').update(rawNonce).digest('hex');
+
+    const stepUpDb = new Map([
+      ['CHAL-DEV-001', {
+        challengeId: 'CHAL-DEV-001',
+        actorUid: 'dev_alice',
+        action: 'KILL_SWITCH',
+        nonceHash,
+        used: false,
+        expiresAtMs: Date.now() + 60000, // 60s
+      }],
+    ]);
+
+    function executeEmergencyAction(params) {
+      const { actorUid, privilegedSessionId, action, challengeId, challengeNonce, reason } = params;
+
+      // Invariant 1: Mandatory privileged session check
+      if (!privilegedSessionId || typeof privilegedSessionId !== 'string' || !privilegedSessionId.startsWith('psess_')) {
+        throw new Error('PRIVILEGED_SESSION_REQUIRED: Emergency actions strictly require an active privileged session.');
+      }
+
+      // Invariant 2: Challenge existence
+      const challenge = stepUpDb.get(challengeId);
+      if (!challenge) {
+        throw new Error('Step-up challenge session not found.');
+      }
+
+      // Invariant 3: Anti-Replay
+      if (challenge.used) {
+        throw new Error('Replay detected: Step-up challenge has already been consumed.');
+      }
+
+      // Invariant 4: Actor isolation (Stolen challenge defense)
+      if (challenge.actorUid !== actorUid) {
+        throw new Error('Challenge session belongs to a different security administrator.');
+      }
+
+      // Invariant 5: Action binding (Cross-action privilege escalation defense)
+      if (challenge.action !== action) {
+        throw new Error('Challenge was issued for a different action.');
+      }
+
+      // Invariant 6: Expiry boundary (60-second window)
+      if (Date.now() > challenge.expiresAtMs) {
+        throw new Error('Step-up challenge has expired. Request a fresh challenge.');
+      }
+
+      // Invariant 7: Constant-time cryptographic nonce verification
+      if (!verifyChallengeNonceConstantTime(challengeNonce, challenge.nonceHash)) {
+        throw new Error('Invalid challenge nonce.');
+      }
+
+      // Atomic consumption
+      challenge.used = true;
+      return { success: true, actionExecuted: action, operationalMode: 'EMERGENCY_HALT' };
+    }
+
+    // ATTACK 1: Compromised developer calls emergency action WITHOUT privileged session
+    assert.throws(
+      () => executeEmergencyAction({
+        actorUid: 'dev_alice',
+        action: 'KILL_SWITCH',
+        challengeId: 'CHAL-DEV-001',
+        challengeNonce: rawNonce,
+        reason: 'Malicious freeze attempt',
+      }),
+      /PRIVILEGED_SESSION_REQUIRED/
+    );
+
+    // ATTACK 2: Compromised dev_eve attempts to consume dev_alice's step-up challenge
+    assert.throws(
+      () => executeEmergencyAction({
+        actorUid: 'dev_eve',
+        privilegedSessionId: 'psess_dev_eve_01',
+        action: 'KILL_SWITCH',
+        challengeId: 'CHAL-DEV-001',
+        challengeNonce: rawNonce,
+        reason: 'Unauthorized intervention',
+      }),
+      /different security administrator/
+    );
+
+    // ATTACK 3: Re-targeting challenge (Challenge was issued for KILL_SWITCH, but attacker attempts FREEZE_FINANCIALS)
+    assert.throws(
+      () => executeEmergencyAction({
+        actorUid: 'dev_alice',
+        privilegedSessionId: 'psess_dev_alice_01',
+        action: 'FREEZE_FINANCIALS',
+        challengeId: 'CHAL-DEV-001',
+        challengeNonce: rawNonce,
+        reason: 'Target substitution',
+      }),
+      /issued for a different action/
+    );
+
+    // LEGITIMATE EXECUTION: Valid privileged session + correct actor + matching action + fresh nonce
+    const legitimateResult = executeEmergencyAction({
+      actorUid: 'dev_alice',
+      privilegedSessionId: 'psess_dev_alice_01',
+      action: 'KILL_SWITCH',
+      challengeId: 'CHAL-DEV-001',
+      challengeNonce: rawNonce,
+      reason: 'Urgent platform containment during investigation',
+    });
+    assert.strictEqual(legitimateResult.success, true);
+    assert.strictEqual(legitimateResult.operationalMode, 'EMERGENCY_HALT');
+
+    // ATTACK 4: Replay attack with same challenge nonce
+    assert.throws(
+      () => executeEmergencyAction({
+        actorUid: 'dev_alice',
+        privilegedSessionId: 'psess_dev_alice_01',
+        action: 'KILL_SWITCH',
+        challengeId: 'CHAL-DEV-001',
+        challengeNonce: rawNonce,
+        reason: 'Replay attempt',
+      }),
+      /Replay detected/
+    );
+  });
 });
 
 

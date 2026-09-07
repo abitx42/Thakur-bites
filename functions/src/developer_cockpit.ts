@@ -198,7 +198,7 @@ export type EmergencyActionType = 'FREEZE_FINANCIALS' | 'KILL_SWITCH' | 'UNFREEZ
 export interface RequestStepUpChallengeData {
   action: EmergencyActionType;
   reason: string;
-  privilegedSessionId?: string;
+  privilegedSessionId: string;
 }
 
 export interface RequestStepUpChallengeResponse {
@@ -213,7 +213,7 @@ export interface EmergencyActionRequest {
   challengeId: string;
   challengeNonce: string;
   reason: string;
-  privilegedSessionId?: string;
+  privilegedSessionId: string;
 }
 
 /**
@@ -245,11 +245,12 @@ export const requestEmergencyStepUpChallenge = onCall<RequestStepUpChallengeData
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'emergency_freeze', 'Separation of Duties: Step-up challenges restricted strictly to authorized engineering administrators (developer / security_admin).');
 
-  if (request.data?.privilegedSessionId) {
-    await assertPrivilegedSession(request.auth.uid, request.data.privilegedSessionId, 'request_emergency_step_up');
+  const { action, reason, privilegedSessionId } = request.data || {};
+  if (!privilegedSessionId || typeof privilegedSessionId !== 'string' || !privilegedSessionId.startsWith('psess_')) {
+    throw new HttpsError('permission-denied', 'PRIVILEGED_SESSION_REQUIRED: Requesting emergency step-up challenge strictly requires an active privileged session.');
   }
+  await assertPrivilegedSession(request.auth.uid, privilegedSessionId, 'request_emergency_step_up');
 
-  const { action, reason } = request.data || {};
   if (!action || !reason || typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 200 || !['FREEZE_FINANCIALS', 'KILL_SWITCH', 'UNFREEZE_PLATFORM'].includes(action)) {
     throw new HttpsError('invalid-argument', 'Valid action and operational justification reason (1-200 chars) are required.');
   }
@@ -305,11 +306,12 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'emergency_freeze', 'Separation of Duties: Emergency actions restricted strictly to authorized engineering administrators (developer / security_admin).');
 
-  if (request.data?.privilegedSessionId) {
-    await assertPrivilegedSession(request.auth.uid, request.data.privilegedSessionId, 'execute_emergency_action');
+  const { action, challengeId, challengeNonce, reason, privilegedSessionId } = request.data || {};
+  if (!privilegedSessionId || typeof privilegedSessionId !== 'string' || !privilegedSessionId.startsWith('psess_')) {
+    throw new HttpsError('permission-denied', 'PRIVILEGED_SESSION_REQUIRED: Executing emergency action strictly requires an active privileged session.');
   }
+  await assertPrivilegedSession(request.auth.uid, privilegedSessionId, 'execute_emergency_action');
 
-  const { action, challengeId, challengeNonce, reason } = request.data || {};
   if (!action || !challengeId || !challengeNonce || !reason) {
     throw new HttpsError('invalid-argument', 'Action, challengeId, challengeNonce, and reason are required.');
   }

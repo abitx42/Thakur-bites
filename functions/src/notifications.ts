@@ -99,18 +99,27 @@ export const onOrderStatusNotification = onDocumentUpdated('orders/{orderId}', a
   const notification = buildOrderNotification(orderId, tokenNumber, fromStatus, toStatus);
   if (!notification) return;
 
-  // 1. Record notification in canonical user notifications subcollection
-  const notifRef = db.collection('users').doc(studentId).collection('notifications').doc();
-  await notifRef.set({
-    notificationId: notifRef.id,
-    orderId,
-    tokenNumber,
-    status: toStatus,
-    title: notification.title,
-    body: notification.body,
-    createdAt: Timestamp.now(),
-    isRead: false,
-  });
+  // 1. Record notification in canonical user notifications subcollection (Non-fatal side effect)
+  try {
+    const notifRef = db.collection('users').doc(studentId).collection('notifications').doc();
+    await notifRef.set({
+      notificationId: notifRef.id,
+      orderId,
+      tokenNumber,
+      status: toStatus,
+      title: notification.title,
+      body: notification.body,
+      createdAt: Timestamp.now(),
+      isRead: false,
+    });
+  } catch (err: any) {
+    await logSecurityEvent({
+      eventType: 'NOTIFICATION_RECORD_FAILURE',
+      severity: 'LOW',
+      actorUid: studentId,
+      details: { orderId, error: err.message },
+    }).catch(() => {});
+  }
 
   // 2. Fetch user FCM Device Tokens from canonical users collection
   try {
@@ -153,6 +162,6 @@ export const onOrderStatusNotification = onDocumentUpdated('orders/{orderId}', a
       severity: 'LOW',
       actorUid: studentId,
       details: { orderId, error: err.message },
-    });
+    }).catch(() => {});
   }
 });

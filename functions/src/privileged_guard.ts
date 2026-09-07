@@ -43,7 +43,36 @@ export async function assertPrivilegedSession(
 
   const data = sessionDoc.data()!;
   if (data.userId !== userId || data.status !== 'ACTIVE') {
-    throw new HttpsError('permission-denied', 'Privileged session does not belong to the active user.');
+    throw new HttpsError('permission-denied', 'Privileged session does not belong to the active user or has been revoked.');
+  }
+
+  // Priority 9: Privileged role check - Demoted roles immediately lose privileged session validity
+  const privilegedRoles = ['admin', 'manager', 'developer', 'security_admin'];
+  if (!privilegedRoles.includes(data.role)) {
+    await sessionRef.update({ status: 'REVOKED', reason: 'ROLE_NOT_PRIVILEGED' }).catch(() => {});
+    throw new HttpsError('permission-denied', 'ROLE_REVOKED: User role is not authorized for privileged sessions.');
+  }
+
+  // Priority 9: Token revocation awareness via Firebase Auth tokensValidAfterTime
+  try {
+    const authUser = await admin.auth().getUser(userId);
+    if (authUser && authUser.tokensValidAfterTime) {
+      const validAfterMs = new Date(authUser.tokensValidAfterTime).getTime();
+      const sessionCreatedMs = data.createdAt ? data.createdAt.toMillis() : 0;
+      if (sessionCreatedMs < validAfterMs) {
+        await sessionRef.update({ status: 'REVOKED', reason: 'FIREBASE_TOKENS_REVOKED' }).catch(() => {});
+        throw new HttpsError(
+          'unauthenticated',
+          'USER_TOKENS_REVOKED: User authentication tokens have been revoked. Please sign in again.'
+        );
+      }
+    }
+  } catch (err: any) {
+    if (err instanceof HttpsError) throw err;
+    if (err?.code === 'auth/user-not-found') {
+      await sessionRef.update({ status: 'REVOKED', reason: 'USER_NOT_FOUND' }).catch(() => {});
+      throw new HttpsError('unauthenticated', 'USER_NOT_FOUND: User account does not exist.');
+    }
   }
 
   const now = Date.now();
