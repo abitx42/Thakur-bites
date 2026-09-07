@@ -4,11 +4,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 /**
- * Phase 8 — Firebase Emulator Integration Testing Harness
+ * Phase 8 — Static Configuration & Rules File Inspection
  * Validates emulator configuration, security rules AST match targets,
- * and emulator-aware environment routing for Cloud Functions and client SDKs.
+ * and environment routing for Cloud Functions and client SDKs.
  */
-describe('Phase 8: Firebase Emulator Integration Testing Harness', () => {
+describe('Phase 8: Static Configuration & Rules File Inspection', () => {
 
   it('1. Firebase Emulator Configuration Invariant: Validates ports and services in firebase.json', () => {
     const configPath = path.resolve(__dirname, '../../firebase.json');

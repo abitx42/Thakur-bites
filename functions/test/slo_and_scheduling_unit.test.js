@@ -8,11 +8,11 @@ const { validateEnvironmentCredentials, detectEnvironment } = require('../lib/en
 const { evaluateCampusSchedule, calculateSmartCanteenForecast } = require('../lib/smart_canteen');
 
 /**
- * Phase 9 — Real Production Function & Emulator Integration Test Suite
+ * Phase 9 — SLO Evaluation & Campus Scheduling Unit Tests
  * Directly executes actual compiled Cloud Function logic and validates
  * operational SLO evaluation, environment segregation, and production invariants.
  */
-describe('Phase 9: Real Cloud Function & Emulator Integration Suite', () => {
+describe('Phase 9: SLO Evaluation & Campus Scheduling Unit Tests', () => {
 
   // ──────────────────────────────────────────────────────────────────────────
   // 1. Authoritative Operational SLO Engine

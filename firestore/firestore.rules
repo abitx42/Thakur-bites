@@ -333,6 +333,20 @@ service cloud.firestore {
       allow write: if false; // Server Admin SDK Only (Client create/update/delete strictly denied)
     }
 
+    // ─── Recovery Approval Requests (Server Admin SDK Only) ─────────
+    match /recoveryApprovalRequests/{requestId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Server Admin SDK Only — created/approved by Cloud Functions
+    }
+
+    // ─── Staff Notifications (Server Admin SDK Only) ──────────────
+    // TB-16: Explicit rule rather than relying on default-deny catch-all.
+    // Staff receive notifications via callable Cloud Functions, not direct Firestore listeners.
+    match /staffNotifications/{notificationId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Server Admin SDK Only
+    }
+
     // ─── Disaster Recovery & Repair Audit Trail (Server Admin SDK Only) ───
     match /disasterRecoveryLogs/{logId} {
       allow read: if isManagerOrAdmin();

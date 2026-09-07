@@ -9,6 +9,7 @@ import {
   IncidentStatus,
   IncidentTimelineEntry,
   IncidentPostmortem,
+  VALID_INCIDENT_TRANSITIONS,
 } from './types';
 import { enforceAppCheck } from './app_check';
 import { assertCapability } from './authorization_policy';
@@ -109,10 +110,45 @@ export const updateIncidentStatus = onCall<{
   }
 
   const { incidentId, status, actionNote } = request.data;
+
+  // Validate that the target status is a valid IncidentStatus
+  const allStatuses = Object.keys(VALID_INCIDENT_TRANSITIONS) as IncidentStatus[];
+  if (!allStatuses.includes(status)) {
+    throw new HttpsError(
+      'invalid-argument',
+      `Invalid incident status: "${status}". Valid statuses: ${allStatuses.join(', ')}.`
+    );
+  }
+
   const docRef = db.collection('incidents').doc(incidentId);
   const snap = await docRef.get();
   if (!snap.exists) {
     throw new HttpsError('not-found', `Incident ${incidentId} not found.`);
+  }
+
+  const incidentData = snap.data() as IncidentDoc;
+  const currentStatus = incidentData.status;
+
+  // Enforce state machine transitions — no illegal jumps
+  const allowedNextStates = VALID_INCIDENT_TRANSITIONS[currentStatus];
+  if (!allowedNextStates || !allowedNextStates.includes(status)) {
+    throw new HttpsError(
+      'failed-precondition',
+      `Illegal incident state transition: "${currentStatus}" → "${status}". ` +
+      `Allowed transitions from "${currentStatus}": [${(allowedNextStates || []).join(', ')}].`
+    );
+  }
+
+  // Require postmortem before transitioning to POST_INCIDENT_REVIEW
+  // The only legal path to POST_INCIDENT_REVIEW is from POSTMORTEM_REQUIRED,
+  // and we require that recordPostmortemReview has been called first.
+  if (status === 'POST_INCIDENT_REVIEW') {
+    if (!incidentData.postmortem || !incidentData.postmortem.rootCause) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Cannot transition to POST_INCIDENT_REVIEW: A postmortem review with root cause and preventive actions must be recorded first. Call recordPostmortemReview before closing.'
+      );
+    }
   }
 
   const now = Timestamp.now();
@@ -138,6 +174,7 @@ export const updateIncidentStatus = onCall<{
   return {
     success: true,
     incidentId,
+    previousStatus: currentStatus,
     status,
     updatedAt: now.toDate().toISOString(),
   };
@@ -166,6 +203,21 @@ export const recordPostmortemReview = onCall<{
     throw new HttpsError('invalid-argument', 'At least 1 preventive action item is required.');
   }
 
+  // Validate incident exists and is in the correct state for postmortem
+  const docRef = db.collection('incidents').doc(incidentId);
+  const snap = await docRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `Incident ${incidentId} not found.`);
+  }
+
+  const incidentData = snap.data() as IncidentDoc;
+  if (incidentData.status !== 'RECOVERED' && incidentData.status !== 'POSTMORTEM_REQUIRED') {
+    throw new HttpsError(
+      'failed-precondition',
+      `Postmortem can only be recorded when incident is in RECOVERED or POSTMORTEM_REQUIRED state. Current state: ${incidentData.status}.`
+    );
+  }
+
   const now = Timestamp.now();
   const postmortem: IncidentPostmortem = {
     rootCause: rootCause.trim(),
@@ -174,16 +226,19 @@ export const recordPostmortemReview = onCall<{
     reviewedAt: now,
   };
 
-  await db.collection('incidents').doc(incidentId).update({
+  // Record the postmortem and advance to POSTMORTEM_REQUIRED.
+  // The transition to POST_INCIDENT_REVIEW (closure) must be done explicitly
+  // via updateIncidentStatus, which will verify the postmortem exists.
+  await docRef.update({
     postmortem,
-    status: 'POST_INCIDENT_REVIEW',
-    closedAt: now,
+    status: 'POSTMORTEM_REQUIRED',
   });
 
   return {
     success: true,
     incidentId,
-    status: 'POST_INCIDENT_REVIEW',
+    status: 'POSTMORTEM_REQUIRED',
     reviewedAt: now.toDate().toISOString(),
+    message: 'Postmortem recorded. Call updateIncidentStatus to transition to POST_INCIDENT_REVIEW (closure).',
   };
 });

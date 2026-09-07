@@ -51,6 +51,8 @@ export {
 export {
   getIntegrityAnomalies,
   executeIntegrityRepair,
+  requestRecoveryApproval,
+  generateBreakGlassToken,
   adminRestoreOperationalMode,
   recordCompensatingFinancialEntry,
 } from './disaster_recovery';

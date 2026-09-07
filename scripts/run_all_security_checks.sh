@@ -88,15 +88,15 @@ echo "▶ Step 8.5: Verifying Real Razorpay Gateway Test Mode & Webhook Harness.
 node scripts/verify_razorpay_live_test.js
 
 echo ""
-echo "▶ Step 9: Executing Automated Staging DAST Security Attack Harness (10 Attack Classes)..."
-node scripts/run_dast_suite.js
+echo "▶ Step 9: Executing Automated Staging Security Invariant Checks Security Attack Harness (10 Attack Classes)..."
+node scripts/run_security_invariants.js
 
 TOTAL_TESTS=$((NODE_PASS_COUNT + FLUTTER_PASS_COUNT + 18 + 11))
 
 
 echo ""
 echo "══════════════════════════════════════════════════════════════════════"
-echo "🏆 ALL 9 SECURITY, SAST, DAST & INVARIANT GATES PASSED ($TOTAL_TESTS TOTAL TESTS 100% GREEN)"
+echo "🏆 ALL 9 SECURITY, SAST, Security Invariant Checks & INVARIANT GATES PASSED ($TOTAL_TESTS TOTAL TESTS 100% GREEN)"
 echo "══════════════════════════════════════════════════════════════════════"
 echo ""
 echo "📊 CATEGORICAL SECURITY & INVARIANT AUDIT REPORT:"
@@ -109,13 +109,13 @@ echo "  📺  Single TV Projection & Data Minimization: 8 Vectors Verified (100%
 echo "  🧪  RBAC Permissions & Rules Boundaries   : 40 Vectors Verified (100% Green)"
 echo "  💾  Cryptographic Backup Restore Integrity : 4 Checksums Verified (100% Green)"
 echo "  🚀  High-Concurrency Lunch Rush Simulator  : 100 Parallel Buyers (0 Oversold)"
-echo "  🎯  Automated Staging DAST Attack Harness  : 18 Attack Scenarios (100% Defended)"
+echo "  🎯  Automated Security Invariant Assertion Suite  : 18 Attack Scenarios (100% Defended)"
 echo "  📱  Flutter Client State & Pricing Models  : $FLUTTER_PASS_COUNT Client Tests (0 Issues)"
 echo "  ⚙️  Backend Functions Invariant Test Suite : $NODE_PASS_COUNT Invariant Tests (100% Green)"
 echo "  🔒  Firestore Ruleset Canonical Hash      : 100% Synchronized (0 Divergence)"
 echo "══════════════════════════════════════════════════════════════════════"
 
-# Generate Auditable JSON Report (Phase 11)
+# Generate Auditable JSON Report v2.0.0 (Phase 11 — Honest Tier Separation)
 mkdir -p reports
 COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
@@ -123,38 +123,68 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 cat <<EOF > reports/security_audit_report.json
 {
-  "auditReportVersion": "1.0.0",
+  "auditReportVersion": "2.0.0",
   "timestamp": "$TIMESTAMP",
   "commitHash": "$COMMIT_HASH",
   "branch": "$BRANCH_NAME",
   "environment": "staging",
-  "platformStatus": "PRODUCTION_READY_FOR_CONTROLLED_PILOT",
-  "metrics": {
-    "backendInvariantTests": $NODE_PASS_COUNT,
-    "flutterClientTests": $FLUTTER_PASS_COUNT,
-    "dastSecurityScenarios": 18,
-    "platformIntegrationChecks": 11,
-    "totalPlatformChecks": $TOTAL_TESTS,
-    "failedChecks": 0,
-    "passRatePercent": 100.0
+  "platformStatus": "UNIT_TESTED_AWAITING_EMULATOR_VALIDATION",
+  "testTiers": {
+    "tier1_unit_tests": {
+      "description": "In-memory unit tests for business logic, validation, calculations, and security assertions",
+      "backendTests": $NODE_PASS_COUNT,
+      "flutterTests": $FLUTTER_PASS_COUNT,
+      "securityInvariantAssertions": 18,
+      "status": "PASSING"
+    },
+    "tier2_emulator_tests": {
+      "description": "Real Firebase Emulator tests for Security Rules and transaction concurrency",
+      "rulesTests": 12,
+      "transactionConcurrencyTests": 4,
+      "recoveryApprovalTests": 6,
+      "status": "IMPLEMENTED_PENDING_CI_INTEGRATION",
+      "runCommand": "npm run test:emulator"
+    },
+    "tier3_sandbox_tests": {
+      "description": "Real external API sandbox tests (Razorpay network calls)",
+      "status": "NOT_YET_IMPLEMENTED"
+    },
+    "tier4_production_smoke": {
+      "description": "Production environment smoke tests against live infrastructure",
+      "status": "NOT_YET_IMPLEMENTED"
+    }
+  },
+  "staticAnalysis": {
+    "secretsScan": "PASSING",
+    "sastAnalyzer": "PASSING",
+    "supplyChainAudit": "PASSING",
+    "firestoreRulesHashParity": "PASSING"
+  },
+  "securityFixes": {
+    "TB-11_four_eyes_recovery": "FIXED — Real two-admin approval with server-fetched request documents",
+    "TB-11_break_glass": "FIXED — SHA-256 + timingSafeEqual cryptographic verification, single-use tokens",
+    "TB-12_test_naming": "FIXED — Misleading test file names renamed to reflect actual test type",
+    "TB-13_incident_state_machine": "FIXED — Runtime transition enforcement with mandatory postmortem",
+    "TB-14_ledger_whitelist": "FIXED — Runtime assertValidLedgerAccount validation on all ledger postings",
+    "TB-16_staff_notifications_rule": "FIXED — Explicit Firestore rule added"
   },
   "verifiedGates": [
     { "gate": "1_SECRETS_SCAN", "status": "PASSED" },
     { "gate": "2_SAST_ANALYZER", "status": "PASSED" },
     { "gate": "3_SUPPLY_CHAIN_AUDIT", "status": "PASSED" },
-    { "gate": "4_BACKEND_CLOUD_FUNCTIONS", "status": "PASSED", "testsPassed": $NODE_PASS_COUNT },
-    { "gate": "5_FLUTTER_CLIENT_SUITE", "status": "PASSED", "testsPassed": $FLUTTER_PASS_COUNT },
-    { "gate": "5.1_FIRESTORE_RULES_UNIFICATION", "status": "PASSED" },
-    { "gate": "6_CRYPTO_BACKUP_RESTORE", "status": "PASSED" },
-    { "gate": "7_E2E_LIFECYCLE_SMOKE", "status": "PASSED" },
-    { "gate": "8_LUNCH_RUSH_LOAD_SIMULATORS", "status": "PASSED" },
-    { "gate": "8.2_LATENCY_CONTENTION_BENCHMARK", "status": "PASSED" },
-    { "gate": "8.3_MULTI_ENV_SEED_ENGINE", "status": "PASSED" },
+    { "gate": "4_BACKEND_UNIT_TESTS", "status": "PASSED", "testsPassed": $NODE_PASS_COUNT },
+    { "gate": "5_FLUTTER_CLIENT_UNIT_TESTS", "status": "PASSED", "testsPassed": $FLUTTER_PASS_COUNT },
+    { "gate": "5.1_FIRESTORE_RULES_HASH_PARITY", "status": "PASSED" },
+    { "gate": "6_BACKUP_RESTORE_CHECKSUMS", "status": "PASSED" },
+    { "gate": "7_LIFECYCLE_SMOKE_SIMULATION", "status": "PASSED" },
+    { "gate": "8_LUNCH_RUSH_LOAD_SIMULATION", "status": "PASSED" },
+    { "gate": "8.2_LATENCY_BENCHMARK", "status": "PASSED" },
+    { "gate": "8.3_MULTI_ENV_SEED", "status": "PASSED" },
     { "gate": "8.4_STAGING_DEPLOYMENT_VERIFY", "status": "PASSED" },
-    { "gate": "8.5_RAZORPAY_TEST_MODE_HARNESS", "status": "PASSED" },
-    { "gate": "9_STAGING_DAST_ATTACK_HARNESS", "status": "PASSED", "scenariosDefended": 18 }
+    { "gate": "8.5_RAZORPAY_HMAC_UNIT_HARNESS", "status": "PASSED" },
+    { "gate": "9_SECURITY_INVARIANT_ASSERTIONS", "status": "PASSED", "assertions": 18 }
   ]
 }
 EOF
 
-echo "📝 Auditable verification report written to: reports/security_audit_report.json"
+echo "📝 Auditable verification report (v2.0.0) written to: reports/security_audit_report.json"

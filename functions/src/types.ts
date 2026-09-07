@@ -170,12 +170,37 @@ export interface PaymentRecord {
   auditSignature: string;
 }
 
-export type LedgerAccount =
-  | 'GATEWAY_RECEIVABLE'
-  | 'SALES_REVENUE'
-  | 'CASH_ON_HAND'
-  | 'GATEWAY_FEES'
-  | 'CUSTOMER_REFUNDS';
+/**
+ * Runtime-enforced ledger account whitelist.
+ * This constant exists at runtime (not just as a TypeScript type that gets erased).
+ * Every ledger posting site MUST validate accounts against this list using
+ * assertValidLedgerAccount() before writing to the immutable financial ledger.
+ */
+export const VALID_LEDGER_ACCOUNTS = [
+  'CASH_ON_HAND',
+  'GATEWAY_RECEIVABLE',
+  'SALES_REVENUE',
+  'GATEWAY_FEES',
+  'CUSTOMER_REFUNDS',
+  'ORPHAN_SUSPENSE',
+  'REFUND_LIABILITY',
+  'INVENTORY_ADJUSTMENT',
+] as const;
+
+export type LedgerAccount = typeof VALID_LEDGER_ACCOUNTS[number];
+
+/**
+ * Runtime assertion that a string is a valid ledger account.
+ * Prevents arbitrary/typo'd account names from becoming permanent immutable entries.
+ * @throws Error if account is not in VALID_LEDGER_ACCOUNTS
+ */
+export function assertValidLedgerAccount(account: string): asserts account is LedgerAccount {
+  if (!(VALID_LEDGER_ACCOUNTS as readonly string[]).includes(account)) {
+    throw new Error(
+      `Invalid ledger account: "${account}". Valid accounts: ${VALID_LEDGER_ACCOUNTS.join(', ')}`
+    );
+  }
+}
 
 export interface LedgerPosting {
   account: LedgerAccount;
@@ -496,7 +521,22 @@ export type IncidentStatus =
   | 'INVESTIGATING'
   | 'MITIGATED'
   | 'RECOVERED'
+  | 'POSTMORTEM_REQUIRED'
   | 'POST_INCIDENT_REVIEW';
+
+/**
+ * Enforced state machine transitions for incident lifecycle.
+ * This map exists in production code (not just tests) to prevent illegal state jumps.
+ */
+export const VALID_INCIDENT_TRANSITIONS: Record<IncidentStatus, IncidentStatus[]> = {
+  'DETECTED': ['ACKNOWLEDGED'],
+  'ACKNOWLEDGED': ['INVESTIGATING'],
+  'INVESTIGATING': ['MITIGATED'],
+  'MITIGATED': ['RECOVERED'],
+  'RECOVERED': ['POSTMORTEM_REQUIRED'],
+  'POSTMORTEM_REQUIRED': ['POST_INCIDENT_REVIEW'],
+  'POST_INCIDENT_REVIEW': [], // Terminal state
+};
 
 export interface IncidentTimelineEntry {
   timestamp: Timestamp;
@@ -570,4 +610,33 @@ export interface TelemetryOverviewResponse {
   };
 }
 
+// ─── Phase 11: Reality Validation — Recovery Approval & Break-Glass ───
+
+export type RecoveryApprovalStatus = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
+
+export interface RecoveryApprovalRequest {
+  requestId: string;
+  requestedBy: string;           // Server-set from auth context, never client-supplied
+  requestedRole: UserRole;
+  targetMode: string;
+  justification: string;
+  currentMode: string;
+  status: RecoveryApprovalStatus;
+  createdAt: Timestamp;
+  expiresAt: Timestamp;
+  approvedBy?: string;
+  approvedAt?: Timestamp;
+  rejectedBy?: string;
+  rejectedAt?: string;
+}
+
+export interface BreakGlassChallenge {
+  tokenHash: string;             // SHA-256 hash of the plaintext token (plaintext never stored)
+  createdBy: string;             // UID of security_admin who provisioned the token
+  createdAt: Timestamp;
+  expiresAt: Timestamp;
+  consumed: boolean;
+  consumedAt?: Timestamp;
+  consumedBy?: string;
+}
 

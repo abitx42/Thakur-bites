@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash, timingSafeEqual } from 'crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
@@ -11,6 +11,9 @@ import {
   CompensatingEntryRequest,
   CompensatingEntryResponse,
   FinancialTransactionRecord,
+  RecoveryApprovalRequest,
+  BreakGlassChallenge,
+  assertValidLedgerAccount,
 } from './types';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
@@ -263,12 +266,171 @@ export const executeIntegrityRepair = onCall<IntegrityRepairRequest, Promise<Int
 /**
  * 3. Controlled Administrative Operational Mode Restoration (With Four-Eyes Check)
  */
+/**
+ * 3a. Request Recovery Approval (Step 1 of Two-Admin Flow)
+ *
+ * Admin A calls this to create a pending recovery approval request.
+ * The requestedBy field is SERVER-SET from auth context, never from client input.
+ * Returns the requestId that Admin B must reference when approving.
+ */
+export const requestRecoveryApproval = onCall<{
+  targetMode: SystemOperationalMode;
+  justification: string;
+}>(async (request) => {
+  enforceAppCheck(request);
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  if (callerRole !== 'security_admin' && callerRole !== 'admin' && (callerRole as string) !== 'developer') {
+    throw new HttpsError(
+      'permission-denied',
+      'Permission denied: Only Security Administrators or Admins can request recovery approval.'
+    );
+  }
+
+  const { targetMode, justification } = request.data;
+
+  const validModes: SystemOperationalMode[] = ['NORMAL', 'DEGRADED', 'FINANCIAL_FROZEN', 'EMERGENCY_HALT'];
+  if (!targetMode || !validModes.includes(targetMode)) {
+    throw new HttpsError('invalid-argument', `Invalid targetMode. Must be one of: ${validModes.join(', ')}.`);
+  }
+
+  if (typeof justification !== 'string' || justification.trim().length < 5 || justification.length > 300) {
+    throw new HttpsError(
+      'invalid-argument',
+      'A valid administrative justification (between 5 and 300 characters) is strictly required.'
+    );
+  }
+
+  const now = Timestamp.now();
+  const requestId = `RAR_${randomUUID()}`;
+
+  // Recovery requests expire after 30 minutes
+  const expiresAt = Timestamp.fromMillis(now.toMillis() + 30 * 60 * 1000);
+
+  const currentSnap = await db.collection('systemConfig').doc('global').get();
+  const currentMode = (currentSnap.data()?.mode as SystemOperationalMode) || 'NORMAL';
+
+  const approvalRequest: RecoveryApprovalRequest = {
+    requestId,
+    requestedBy: request.auth.uid, // Server-set, never client-supplied
+    requestedRole: callerRole,
+    targetMode,
+    justification: justification.trim(),
+    currentMode,
+    status: 'PENDING_APPROVAL',
+    createdAt: now,
+    expiresAt,
+  };
+
+  await db.collection('recoveryApprovalRequests').doc(requestId).set(approvalRequest);
+
+  await logSecurityEvent({
+    eventType: 'RECOVERY_APPROVAL_REQUESTED',
+    severity: 'HIGH',
+    actorUid: request.auth.uid,
+    details: { requestId, targetMode, currentMode, justification: justification.trim() },
+  });
+
+  return {
+    success: true,
+    requestId,
+    expiresAt: expiresAt.toDate().toISOString(),
+    message: 'Recovery request created. A different administrator must approve this request using the requestId.',
+  };
+});
+
+/**
+ * 3b. Generate Break-Glass Emergency Token (Pre-Provisioned by Security Admin)
+ *
+ * Only security_admin can call this. Generates a cryptographically random token,
+ * stores ONLY the SHA-256 hash in Firestore, and returns the plaintext ONCE.
+ * The plaintext is never stored — it must be securely communicated to the
+ * emergency responder out-of-band.
+ */
+export const generateBreakGlassToken = onCall<{
+  expiryHours?: number;
+}>(async (request) => {
+  enforceAppCheck(request);
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  if (callerRole !== 'security_admin') {
+    throw new HttpsError(
+      'permission-denied',
+      'Permission denied: Only Security Administrators can provision break-glass emergency tokens.'
+    );
+  }
+
+  // Generate a cryptographically strong random token
+  const plaintextToken = `BG_${randomUUID()}_${randomUUID()}`;
+  const tokenHash = createHash('sha256').update(plaintextToken).digest('hex');
+
+  const now = Timestamp.now();
+  const expiryHours = Math.min(Math.max(request.data?.expiryHours || 24, 1), 72);
+  const expiresAt = Timestamp.fromMillis(now.toMillis() + expiryHours * 60 * 60 * 1000);
+
+  const challenge: BreakGlassChallenge = {
+    tokenHash,
+    createdBy: request.auth.uid,
+    createdAt: now,
+    expiresAt,
+    consumed: false,
+  };
+
+  await db.collection('systemConfig').doc('breakGlassChallenge').set(challenge);
+
+  await logSecurityEvent({
+    eventType: 'BREAK_GLASS_TOKEN_PROVISIONED',
+    severity: 'HIGH',
+    actorUid: request.auth.uid,
+    details: {
+      tokenHashPrefix: tokenHash.substring(0, 8) + '...',
+      expiresAt: expiresAt.toDate().toISOString(),
+      expiryHours,
+    },
+  });
+
+  return {
+    success: true,
+    plaintextToken, // Returned ONCE — never stored in plaintext
+    expiresAt: expiresAt.toDate().toISOString(),
+    warning: 'This token is shown ONCE and never stored. Securely deliver it to the emergency responder.',
+  };
+});
+
+/**
+ * 3c. Controlled Administrative Operational Mode Restoration (Real Four-Eyes Check)
+ *
+ * Two paths to restore from FINANCIAL_FROZEN / EMERGENCY_HALT to NORMAL:
+ *
+ * Path 1 — Two-Admin Approval:
+ *   Admin A calls requestRecoveryApproval() → creates PENDING request
+ *   Admin B calls adminRestoreOperationalMode({ recoveryRequestId }) → server verifies:
+ *     • Request exists and is PENDING_APPROVAL
+ *     • Request has not expired
+ *     • Admin B ≠ Admin A (verified from the server-stored requestedBy field)
+ *     • Admin B has required role
+ *
+ * Path 2 — Cryptographic Break-Glass:
+ *   Security admin pre-provisions token via generateBreakGlassToken()
+ *   Emergency responder calls adminRestoreOperationalMode({ breakGlassToken }) → server verifies:
+ *     • SHA-256(token) matches stored hash via timingSafeEqual
+ *     • Token is not consumed (single-use)
+ *     • Token is not expired
+ *     • Atomically marks token as consumed
+ *     • Creates a security incident automatically
+ */
 export const adminRestoreOperationalMode = onCall<{
   targetMode: SystemOperationalMode;
   justification: string;
   resolvedAnomalyIds?: string[];
-  requestingAdminUid?: string;
-  breakGlassEmergencyChallenge?: string;
+  recoveryRequestId?: string;
+  breakGlassToken?: string;
 }>(async (request) => {
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
@@ -288,8 +450,8 @@ export const adminRestoreOperationalMode = onCall<{
     targetMode,
     justification,
     resolvedAnomalyIds = [],
-    requestingAdminUid,
-    breakGlassEmergencyChallenge,
+    recoveryRequestId,
+    breakGlassToken,
   } = request.data;
 
   const validModes: SystemOperationalMode[] = ['NORMAL', 'DEGRADED', 'FINANCIAL_FROZEN', 'EMERGENCY_HALT'];
@@ -310,25 +472,150 @@ export const adminRestoreOperationalMode = onCall<{
   const currentSnap = await db.collection('systemConfig').doc('global').get();
   const currentMode = (currentSnap.data()?.mode as SystemOperationalMode) || 'NORMAL';
 
-  // 2. Four-Eyes Approval Enforcement
+  // 2. Real Four-Eyes Approval Enforcement
   let fourEyesApproved = false;
   let isBreakGlass = false;
   let breakGlassReason: string | undefined;
+  let requestedByUid: string = approvingAdminUid;
 
   if (targetMode === 'NORMAL' && (currentMode === 'FINANCIAL_FROZEN' || currentMode === 'EMERGENCY_HALT')) {
-    if (requestingAdminUid && requestingAdminUid !== approvingAdminUid) {
-      fourEyesApproved = true;
-    } else {
-      // Single administrator attempting recovery: Must provide verified emergency break-glass challenge
-      if (typeof breakGlassEmergencyChallenge === 'string' && breakGlassEmergencyChallenge.trim().length >= 8) {
-        isBreakGlass = true;
-        breakGlassReason = 'Emergency single-admin break-glass override with verified challenge token.';
-      } else {
+    if (recoveryRequestId && typeof recoveryRequestId === 'string') {
+      // Path 1: Two-Admin Approval — server fetches and verifies the request document
+      const requestDocRef = db.collection('recoveryApprovalRequests').doc(recoveryRequestId);
+      const requestSnap = await requestDocRef.get();
+
+      if (!requestSnap.exists) {
         throw new HttpsError(
-          'failed-precondition',
-          'Four-eyes disaster recovery principle violated: Mode restoration from a frozen state requires distinct requesting and approving administrators, or an explicit emergency break-glass challenge token.'
+          'not-found',
+          `Recovery approval request ${recoveryRequestId} not found.`
         );
       }
+
+      const requestData = requestSnap.data() as RecoveryApprovalRequest;
+
+      // Verify request is still pending
+      if (requestData.status !== 'PENDING_APPROVAL') {
+        throw new HttpsError(
+          'failed-precondition',
+          `Recovery request ${recoveryRequestId} is no longer pending (current status: ${requestData.status}).`
+        );
+      }
+
+      // Verify request has not expired
+      const now = Timestamp.now();
+      if (now.toMillis() > requestData.expiresAt.toMillis()) {
+        // Atomically mark as expired
+        await requestDocRef.update({ status: 'EXPIRED' });
+        throw new HttpsError(
+          'failed-precondition',
+          `Recovery request ${recoveryRequestId} has expired.`
+        );
+      }
+
+      // CRITICAL: Verify approver is a DIFFERENT person than the requester
+      // The requestedBy field was SERVER-SET when the request was created — not client input
+      if (requestData.requestedBy === approvingAdminUid) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Four-eyes principle violated: The approving administrator must be a different person than the requesting administrator. You cannot approve your own recovery request.'
+        );
+      }
+
+      // Verify the target mode matches
+      if (requestData.targetMode !== targetMode) {
+        throw new HttpsError(
+          'invalid-argument',
+          `Target mode mismatch: request specifies ${requestData.targetMode}, but ${targetMode} was provided.`
+        );
+      }
+
+      // All checks pass — atomically approve
+      await requestDocRef.update({
+        status: 'APPROVED',
+        approvedBy: approvingAdminUid,
+        approvedAt: Timestamp.now(),
+      });
+
+      fourEyesApproved = true;
+      requestedByUid = requestData.requestedBy;
+
+    } else if (breakGlassToken && typeof breakGlassToken === 'string') {
+      // Path 2: Cryptographic Break-Glass — server verifies token hash
+      const challengeSnap = await db.collection('systemConfig').doc('breakGlassChallenge').get();
+
+      if (!challengeSnap.exists) {
+        throw new HttpsError(
+          'failed-precondition',
+          'No break-glass challenge token has been provisioned. A security_admin must generate one first.'
+        );
+      }
+
+      const challengeData = challengeSnap.data() as BreakGlassChallenge;
+
+      // Verify token has not been consumed (single-use)
+      if (challengeData.consumed) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Break-glass token has already been consumed. It is single-use. A new token must be provisioned.'
+        );
+      }
+
+      // Verify token has not expired
+      const now = Timestamp.now();
+      if (now.toMillis() > challengeData.expiresAt.toMillis()) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Break-glass token has expired. A new token must be provisioned.'
+        );
+      }
+
+      // Cryptographic verification: compute SHA-256 of provided token and compare
+      const providedHash = createHash('sha256').update(breakGlassToken).digest('hex');
+      const storedHashBuffer = Buffer.from(challengeData.tokenHash, 'hex');
+      const providedHashBuffer = Buffer.from(providedHash, 'hex');
+
+      if (storedHashBuffer.length !== providedHashBuffer.length ||
+          !timingSafeEqual(storedHashBuffer, providedHashBuffer)) {
+        await logSecurityEvent({
+          eventType: 'BREAK_GLASS_TOKEN_REJECTED',
+          severity: 'CRITICAL',
+          actorUid: approvingAdminUid,
+          details: { reason: 'Cryptographic hash mismatch — invalid token provided.' },
+        });
+        throw new HttpsError(
+          'failed-precondition',
+          'Break-glass token verification failed: invalid token.'
+        );
+      }
+
+      // Atomically mark token as consumed (single-use)
+      await db.collection('systemConfig').doc('breakGlassChallenge').update({
+        consumed: true,
+        consumedAt: Timestamp.now(),
+        consumedBy: approvingAdminUid,
+      });
+
+      isBreakGlass = true;
+      breakGlassReason = 'Emergency single-admin break-glass override. Token cryptographically verified via SHA-256 + timingSafeEqual comparison and consumed (single-use).';
+
+      // Automatically create a security incident for forensic review
+      await logSecurityEvent({
+        eventType: 'BREAK_GLASS_TOKEN_CONSUMED',
+        severity: 'CRITICAL',
+        actorUid: approvingAdminUid,
+        details: {
+          tokenHashPrefix: challengeData.tokenHash.substring(0, 8) + '...',
+          provisionedBy: challengeData.createdBy,
+          consumedBy: approvingAdminUid,
+          reason: 'Break-glass emergency override invoked. Mandatory post-incident review required.',
+        },
+      });
+
+    } else {
+      throw new HttpsError(
+        'failed-precondition',
+        'Four-eyes disaster recovery principle: Restoring from a frozen/halted state requires either (a) a recoveryRequestId from a different administrator\'s pending request, or (b) a valid break-glass emergency token. Neither was provided.'
+      );
     }
   }
 
@@ -372,7 +659,7 @@ export const adminRestoreOperationalMode = onCall<{
     justification: safeJustification,
     resolvedAnomalyIds,
     fourEyesApproved,
-    requestedBy: requestingAdminUid || approvingAdminUid,
+    requestedBy: requestedByUid,
     isBreakGlass,
     breakGlassReason,
     timestamp: now,
@@ -418,6 +705,8 @@ export const adminRestoreOperationalMode = onCall<{
     previousMode: currentMode,
     newMode: targetMode,
     restoredBy: approvingAdminUid,
+    fourEyesApproved,
+    isBreakGlass,
     timestamp: now.toDate().toISOString(),
   };
 });
@@ -456,6 +745,15 @@ export const recordCompensatingFinancialEntry = onCall<CompensatingEntryRequest,
     }
     if (!debitAccount || !creditAccount) {
       throw new HttpsError('invalid-argument', 'Both debitAccount and creditAccount must be specified.');
+    }
+
+    // Runtime validation against the closed set of valid ledger accounts.
+    // Prevents arbitrary strings from becoming permanent immutable entries.
+    try {
+      assertValidLedgerAccount(debitAccount as string);
+      assertValidLedgerAccount(creditAccount as string);
+    } catch (err) {
+      throw new HttpsError('invalid-argument', (err as Error).message);
     }
 
     // 1. Verify original transaction exists (NEVER modify original)

@@ -14,13 +14,13 @@ if (!admin.apps.length) {
 const { RazorpayPaymentAdapter, computeGatewaySignature } = require('../lib/payments');
 
 /**
- * Phase 9 — Pillar 2: Real Razorpay Sandbox Chaos & Failure Harness
+ * Phase 9 — Pillar 2: Payment Logic, HMAC & Idempotency Unit Tests
  * 
  * Verifies gateway cryptographic validation, high-concurrency webhook flooding,
  * client-vs-webhook race conditions, parameter tampering defenses, and
  * compensating double-entry accounting on late/orphaned captures.
  */
-describe('Phase 9 Pillar 2: Real Razorpay Sandbox Chaos & Failure Harness', () => {
+describe('Phase 9 Pillar 2: Payment Logic, HMAC & Idempotency Unit Tests', () => {
 
   const MOCK_WEBHOOK_SECRET = 'dev_mock_razorpay_webhook_secret_12345678901234567890123456789012';
   const MOCK_KEY_SECRET = 'dev_mock_payment_gateway_secret_12345678901234567890123456789012';

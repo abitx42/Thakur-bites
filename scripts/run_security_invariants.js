@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Thakur Bites Platform 2.0 — Automated Staging DAST Attack Harness
- * Executes simulated adversarial security tests across all 10 core attack classes:
+ * Thakur Bites Platform 2.0 — Security Invariant Assertion Suite
+ * Executes in-memory assertion checks across all 10 core attack classes:
  * - Class A: Identity Escalation Attacks (Visitor -> Student/Teacher, Student -> Admin)
  * - Class B: IDOR Resource Traversal (Cross-user order, payment, profile reads)
  * - Class C: Financial & Cart Tampering (Price modification, negative quantities)
@@ -19,7 +19,7 @@ const crypto = require('crypto');
 const assert = require('assert');
 
 console.log('════════════════════════════════════════════════════════════════');
-console.log('🛡️  THAKUR BITES PLATFORM 2.0 — DAST SECURITY ATTACK HARNESS');
+console.log('🛡️  THAKUR BITES PLATFORM 2.0 — SECURITY INVARIANT ASSERTION SUITE');
 console.log('   Evaluating All 10 Authorization & Business Invariant Classes');
 console.log('════════════════════════════════════════════════════════════════\n');
 
@@ -387,7 +387,7 @@ runAttackTest('Class K: Refunds & Sessions', 'Direct API callable invocation att
 });
 
 console.log('\n════════════════════════════════════════════════════════════════');
-console.log(`🏆 ALL ${totalAttacks}/${totalAttacks} DAST ATTACK SCENARIOS DEFENDED (100% BLOCKED)`);
+console.log(`🏆 ALL ${totalAttacks}/${totalAttacks} SECURITY INVARIANT ASSERTIONS VERIFIED (100% BLOCKED)`);
 console.log('════════════════════════════════════════════════════════════════\n');
 process.exit(0);
 

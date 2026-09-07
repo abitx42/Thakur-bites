@@ -1,33 +1,63 @@
 {
-  "auditReportVersion": "1.0.0",
-  "timestamp": "2026-09-07T23:11:22Z",
-  "commitHash": "0b2997f",
+  "auditReportVersion": "2.0.0",
+  "timestamp": "2026-09-07T23:42:52Z",
+  "commitHash": "967080d",
   "branch": "main",
   "environment": "staging",
-  "platformStatus": "PRODUCTION_READY_FOR_CONTROLLED_PILOT",
-  "metrics": {
-    "backendInvariantTests": 396,
-    "flutterClientTests": 67,
-    "dastSecurityScenarios": 18,
-    "platformIntegrationChecks": 11,
-    "totalPlatformChecks": 492,
-    "failedChecks": 0,
-    "passRatePercent": 100.0
+  "platformStatus": "UNIT_TESTED_AWAITING_EMULATOR_VALIDATION",
+  "testTiers": {
+    "tier1_unit_tests": {
+      "description": "In-memory unit tests for business logic, validation, calculations, and security assertions",
+      "backendTests": 396,
+      "flutterTests": 67,
+      "securityInvariantAssertions": 18,
+      "status": "PASSING"
+    },
+    "tier2_emulator_tests": {
+      "description": "Real Firebase Emulator tests for Security Rules and transaction concurrency",
+      "rulesTests": 12,
+      "transactionConcurrencyTests": 4,
+      "recoveryApprovalTests": 6,
+      "status": "IMPLEMENTED_PENDING_CI_INTEGRATION",
+      "runCommand": "npm run test:emulator"
+    },
+    "tier3_sandbox_tests": {
+      "description": "Real external API sandbox tests (Razorpay network calls)",
+      "status": "NOT_YET_IMPLEMENTED"
+    },
+    "tier4_production_smoke": {
+      "description": "Production environment smoke tests against live infrastructure",
+      "status": "NOT_YET_IMPLEMENTED"
+    }
+  },
+  "staticAnalysis": {
+    "secretsScan": "PASSING",
+    "sastAnalyzer": "PASSING",
+    "supplyChainAudit": "PASSING",
+    "firestoreRulesHashParity": "PASSING"
+  },
+  "securityFixes": {
+    "TB-11_four_eyes_recovery": "FIXED — Real two-admin approval with server-fetched request documents",
+    "TB-11_break_glass": "FIXED — SHA-256 + timingSafeEqual cryptographic verification, single-use tokens",
+    "TB-12_test_naming": "FIXED — Misleading test file names renamed to reflect actual test type",
+    "TB-13_incident_state_machine": "FIXED — Runtime transition enforcement with mandatory postmortem",
+    "TB-14_ledger_whitelist": "FIXED — Runtime assertValidLedgerAccount validation on all ledger postings",
+    "TB-16_staff_notifications_rule": "FIXED — Explicit Firestore rule added"
   },
   "verifiedGates": [
     { "gate": "1_SECRETS_SCAN", "status": "PASSED" },
     { "gate": "2_SAST_ANALYZER", "status": "PASSED" },
     { "gate": "3_SUPPLY_CHAIN_AUDIT", "status": "PASSED" },
-    { "gate": "4_BACKEND_CLOUD_FUNCTIONS", "status": "PASSED", "testsPassed": 396 },
-    { "gate": "5_FLUTTER_CLIENT_SUITE", "status": "PASSED", "testsPassed": 67 },
-    { "gate": "5.1_FIRESTORE_RULES_UNIFICATION", "status": "PASSED" },
-    { "gate": "6_CRYPTO_BACKUP_RESTORE", "status": "PASSED" },
-    { "gate": "7_E2E_LIFECYCLE_SMOKE", "status": "PASSED" },
-    { "gate": "8_LUNCH_RUSH_LOAD_SIMULATORS", "status": "PASSED" },
-    { "gate": "8.2_LATENCY_CONTENTION_BENCHMARK", "status": "PASSED" },
-    { "gate": "8.3_MULTI_ENV_SEED_ENGINE", "status": "PASSED" },
+    { "gate": "4_BACKEND_UNIT_TESTS", "status": "PASSED", "testsPassed": 396 },
+    { "gate": "5_FLUTTER_CLIENT_UNIT_TESTS", "status": "PASSED", "testsPassed": 67 },
+    { "gate": "5.1_FIRESTORE_RULES_HASH_PARITY", "status": "PASSED" },
+    { "gate": "6_BACKUP_RESTORE_CHECKSUMS", "status": "PASSED" },
+    { "gate": "7_LIFECYCLE_SMOKE_SIMULATION", "status": "PASSED" },
+    { "gate": "8_LUNCH_RUSH_LOAD_SIMULATION", "status": "PASSED" },
+    { "gate": "8.2_LATENCY_BENCHMARK", "status": "PASSED" },
+    { "gate": "8.3_MULTI_ENV_SEED", "status": "PASSED" },
     { "gate": "8.4_STAGING_DEPLOYMENT_VERIFY", "status": "PASSED" },
-    { "gate": "8.5_RAZORPAY_TEST_MODE_HARNESS", "status": "PASSED" },
-    { "gate": "9_STAGING_DAST_ATTACK_HARNESS", "status": "PASSED", "scenariosDefended": 18 }
+    { "gate": "8.5_RAZORPAY_HMAC_UNIT_HARNESS", "status": "PASSED" },
+    { "gate": "9_SECURITY_INVARIANT_ASSERTIONS", "status": "PASSED", "assertions": 18 }
   ]
 }

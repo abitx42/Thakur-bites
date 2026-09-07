@@ -3,11 +3,11 @@ const assert = require('node:assert');
 const crypto = require('node:crypto');
 
 /**
- * Phase 8 — End-to-End Real-World User Journey Integration Test Suite
+ * Phase 8 — Order Lifecycle Simulation Unit Tests
  * Validates complete TCET campus workflows across student app, payment gateway,
  * kitchen display system, and counter pickup dispatch.
  */
-describe('Phase 8: Real-World Campus User Journeys', () => {
+describe('Phase 8: Order Lifecycle Simulation Unit Tests', () => {
 
   // ──────────────────────────────────────────────────────────────────────────
   // JOURNEY 1: The Complete Student Feast (Happy Path Lifecycle)
