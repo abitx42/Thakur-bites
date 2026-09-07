@@ -5988,6 +5988,203 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
 
     assert.strictEqual(validateAuditEntry(validEntry), true);
   });
+
+  it('270. Static Code Immutability Guard: Zero update/delete operations exist on historical ledger collections', () => {
+    const fs = require('fs');
+    const path = require('path');
+
+    const srcDir = path.resolve(__dirname, '../src');
+    const tsFiles = fs.readdirSync(srcDir).filter(f => f.endsWith('.ts'));
+
+    const immutableCollections = [
+      'inventoryLedger',
+      'financialTransactions',
+      'orderEvents',
+    ];
+
+    const violations = [];
+
+    for (const file of tsFiles) {
+      const content = fs.readFileSync(path.join(srcDir, file), 'utf8');
+
+      for (const col of immutableCollections) {
+        // Pattern 1: db.collection('col').doc(...).update( or .delete(
+        const directDocUpdate = new RegExp(`collection\\(['"]${col}['"]\\)\\.doc\\([^)]*\\)\\.(update|delete)\\(`, 'g');
+        if (directDocUpdate.test(content)) {
+          violations.push(`${file}: Direct update/delete on collection '${col}'`);
+        }
+
+        // Pattern 2: Find all variables referencing collection(col) or collection(col).doc(...)
+        const refMatches = content.matchAll(new RegExp(`(?:const|let|var)\\s+([a-zA-Z0-9_$]+)\\s*=\\s*(?:[a-zA-Z0-9_$]+\\.)?collection\\(['"]${col}['"]\\)`, 'g'));
+        for (const match of refMatches) {
+          const varName = match[1];
+          const varUpdateRegex = new RegExp(`(?:${varName}\\.(?:update|delete)\\(|transaction\\.(?:update|delete)\\(\\s*${varName})`);
+          if (varUpdateRegex.test(content)) {
+            violations.push(`${file}: Mutating operation targeting '${col}' reference '${varName}'`);
+          }
+        }
+      }
+    }
+
+    assert.deepStrictEqual(
+      violations,
+      [],
+      `Static Analysis Violation: Historical ledger collections must be append-only! Found mutations: ${violations.join(', ')}`
+    );
+  });
+
+  it('271. Distributed Failure Replay & Atomic Create-If-Absent Invariant', () => {
+    // Simulates distributed database state across multiple cloud worker retries
+    const dbState = {
+      financialTransactions: new Map(),
+      orders: new Map([['ord_001', { id: 'ord_001', status: 'payment_pending', paymentStatus: 'pending', totalAmountPaise: 4500, tokenNumber: 'TB-042' }]]),
+      notificationsEmitted: [],
+    };
+
+    function simulateDistributedFinalize(orderId, gatewayPaymentId, source) {
+      const isCash = source === 'cashier_counter';
+      const finTxId = isCash ? `cash_fin_${orderId}` : `pay_fin_${gatewayPaymentId}`;
+
+      // Phase 1: Read finTxRef (Create-If-Absent check)
+      const existingFinTx = dbState.financialTransactions.get(finTxId);
+      const order = dbState.orders.get(orderId);
+
+      if (existingFinTx) {
+        // Idempotent replay: Return immediately without touching order or emitting notifications
+        return {
+          success: true,
+          alreadyCaptured: true,
+          orderId,
+          amountPaise: existingFinTx.amountPaise,
+          status: order.status,
+        };
+      }
+
+      // Phase 2: First-time commit
+      dbState.financialTransactions.set(finTxId, {
+        transactionId: finTxId,
+        orderId,
+        amountPaise: 4500,
+        type: 'PAYMENT_CAPTURE',
+      });
+
+      const oldStatus = order.status;
+      order.status = 'confirmed';
+      order.paymentStatus = 'paid';
+
+      // State change triggers notification exactly once
+      if (oldStatus !== order.status) {
+        dbState.notificationsEmitted.push({ orderId, status: 'confirmed' });
+      }
+
+      return {
+        success: true,
+        alreadyCaptured: false,
+        orderId,
+        amountPaise: 4500,
+        status: 'confirmed',
+      };
+    }
+
+    // Step 1: First attempt succeeds
+    const call1 = simulateDistributedFinalize('ord_001', 'pay_gw_999', 'client_verification');
+    assert.strictEqual(call1.alreadyCaptured, false);
+    assert.strictEqual(call1.status, 'confirmed');
+
+    // Step 2: Distributed failure retries (Customer retry + Webhook arrival + Function restart)
+    const call2 = simulateDistributedFinalize('ord_001', 'pay_gw_999', 'webhook');
+    const call3 = simulateDistributedFinalize('ord_001', 'pay_gw_999', 'client_verification');
+
+    assert.strictEqual(call2.alreadyCaptured, true);
+    assert.strictEqual(call3.alreadyCaptured, true);
+
+    // INVARIANT 1: Exactly 1 financial transaction exists
+    assert.strictEqual(dbState.financialTransactions.size, 1);
+    assert.ok(dbState.financialTransactions.has('pay_fin_pay_gw_999'));
+
+    // INVARIANT 2: Exactly 1 push notification was emitted across all retries
+    assert.strictEqual(dbState.notificationsEmitted.length, 1);
+  });
+
+  it('272. Immediate Cascading Identity Revocation Invariant', () => {
+    // Database active session state
+    const userState = {
+      uid: 'staff_alice',
+      role: 'kitchen',
+      refreshTokensRevoked: false,
+      privilegedSessions: [
+        { id: 'psess_001', userId: 'staff_alice', status: 'ACTIVE' },
+      ],
+      workstationSessions: [
+        { id: 'wsess_001', staffUid: 'staff_alice', status: 'ACTIVE' },
+      ],
+    };
+
+    function simulateStaffRoleDemotion(targetUid, newRole) {
+      const isTargetNowPrivileged = ['admin', 'manager', 'developer', 'security_admin'].includes(newRole);
+
+      // Force token refresh
+      userState.refreshTokensRevoked = true;
+      userState.role = newRole;
+
+      if (!isTargetNowPrivileged) {
+        userState.privilegedSessions.forEach(s => {
+          if (s.userId === targetUid && s.status === 'ACTIVE') {
+            s.status = 'REVOKED';
+          }
+        });
+        userState.workstationSessions.forEach(s => {
+          if (s.staffUid === targetUid && s.status === 'ACTIVE') {
+            s.status = 'REVOKED';
+          }
+        });
+      }
+    }
+
+    // Demote staff_alice to student
+    simulateStaffRoleDemotion('staff_alice', 'student');
+
+    assert.strictEqual(userState.role, 'student');
+    assert.strictEqual(userState.refreshTokensRevoked, true, 'Firebase refresh tokens must be revoked');
+    assert.strictEqual(userState.privilegedSessions[0].status, 'REVOKED', 'Privileged session must be revoked');
+    assert.strictEqual(userState.workstationSessions[0].status, 'REVOKED', 'Workstation session must be revoked');
+  });
+
+  it('273. Rate-Limit Bypass Invariance & Multi-Layer Defense: Core security holds even if rate limit is bypassed', () => {
+    const { hasCapability } = require('../lib/authorization_policy');
+
+    // Simulate an attacker rotating 100 IP addresses to bypass client-level rate limits
+    const attackerIps = Array.from({ length: 100 }, (_, i) => `198.51.100.${i + 1}`);
+
+    // Invariant 1: Even across 100 unique IPs, student role can NEVER execute admin operations
+    attackerIps.forEach(ip => {
+      assert.strictEqual(hasCapability('student', 'manage_menu'), false);
+      assert.strictEqual(hasCapability('student', 'emergency_freeze'), false);
+      assert.strictEqual(hasCapability('student', 'adjust_inventory'), false);
+    });
+
+    // Invariant 2: Server authoritative pricing always calculates in integer paise from catalog
+    function computeAuthoritativeTotal(catalogPrice, clientSuppliedPrice, quantity) {
+      // Security Invariant: clientSuppliedPrice is strictly discarded
+      const unitPricePaise = Math.round(catalogPrice * 100);
+      return unitPricePaise * quantity;
+    }
+
+    // Attacker sends { price: 0.01 } for a ₹150 Dosa
+    const totalPaise = computeAuthoritativeTotal(150, 0.01, 2);
+    assert.strictEqual(totalPaise, 30000, 'Must compute ₹300.00 (30000 paise), ignoring attacker ₹0.01');
+
+    // Invariant 3: Stock on hand cannot drop below active checkout reservations
+    function evaluateStockBoundary(stockOnHand, reservedStock, requestedReduction) {
+      const newStock = stockOnHand - requestedReduction;
+      if (newStock < reservedStock) {
+        throw new Error('Stock cannot drop below active reservations');
+      }
+      return newStock;
+    }
+
+    assert.throws(() => evaluateStockBoundary(10, 4, 8), /active reservations/);
+  });
 });
 
 

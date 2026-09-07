@@ -51,14 +51,42 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
 
   const now = Timestamp.now();
   const orderRef = db.collection('orders').doc(orderId);
+  const isCash = source === 'cashier_counter';
+  const finTxId = isCash ? `cash_fin_${orderId}` : `pay_fin_${gatewayPaymentId}`;
+  const finTxRef = db.collection('financialTransactions').doc(finTxId);
 
   return await db.runTransaction(async (transaction) => {
-    const orderSnap = await transaction.get(orderRef);
+    // ═════════════════════════════════════════════════════════════
+    // PHASE 1: ALL READS FIRST (Strict Firestore Transaction Invariant)
+    // ═════════════════════════════════════════════════════════════
+    const [orderSnap, finTxSnap] = await Promise.all([
+      transaction.get(orderRef),
+      transaction.get(finTxRef),
+    ]);
+
     if (!orderSnap.exists) {
       throw new Error(`Order ${orderId} not found.`);
     }
 
     const orderData = orderSnap.data()!;
+
+    // ATOMIC CREATE-IF-ABSENT: If financial transaction already exists in the ledger,
+    // this capture was already committed. Return idempotent success immediately.
+    if (finTxSnap.exists) {
+      const expectedPaise = orderData.totalAmountPaise !== undefined
+        ? Number(orderData.totalAmountPaise)
+        : Math.round(Number(orderData.totalAmount || 0) * 100);
+
+      return {
+        success: true,
+        alreadyCaptured: true,
+        orderId,
+        tokenNumber: orderData.tokenNumber || '',
+        amountPaise: expectedPaise,
+        status: orderData.status === 'cancelled' ? 'cancelled' : 'confirmed',
+        orphaned: orderData.status === 'cancelled',
+      };
+    }
 
     // 1. Strict Payment Method Cross-Validation (Phase 1 Fix: Cash cannot settle online orders)
     if (source === 'cashier_counter' && orderData.paymentMethod !== 'counter_cash') {
@@ -220,9 +248,6 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     transaction.set(paymentRef, paymentRecord);
 
     // 7. Create immutable double-entry financial transaction record (Deterministic ID prevents duplicate postings)
-    const isCash = source === 'cashier_counter';
-    const finTxId = isCash ? `cash_fin_${orderId}` : `pay_fin_${gatewayPaymentId}`;
-    const finTxRef = db.collection('financialTransactions').doc(finTxId);
     const finRecord: FinancialTransactionRecord = {
       transactionId: finTxId,
       orderId,

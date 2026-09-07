@@ -91,6 +91,26 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
   // 4. Force token refresh by revoking existing sessions
   await admin.auth().revokeRefreshTokens(targetUid);
 
+  // 4b. Immediate Cascading Invalidation of Privileged and Workstation Sessions (Priority 6)
+  const isTargetNowPrivileged = ['admin', 'manager', 'developer', 'security_admin'].includes(newRole);
+  if (!isTargetNowPrivileged) {
+    const privSessionsSnap = await db.collection('privilegedSessions')
+      .where('userId', '==', targetUid)
+      .where('status', '==', 'ACTIVE')
+      .get();
+    for (const doc of privSessionsSnap.docs) {
+      await doc.ref.update({ status: 'REVOKED', revokedAt: now, reason: 'STAFF_ROLE_DEMOTION' }).catch(() => {});
+    }
+
+    const workSessionsSnap = await db.collection('workstationSessions')
+      .where('staffUid', '==', targetUid)
+      .where('status', '==', 'ACTIVE')
+      .get();
+    for (const doc of workSessionsSnap.docs) {
+      await doc.ref.update({ status: 'REVOKED', revokedAt: now, reason: 'STAFF_ROLE_DEMOTION' }).catch(() => {});
+    }
+  }
+
   // 5. Update staff user record
   await db.collection('staffUsers').doc(targetUid).set({
     uid: targetUid,
