@@ -359,13 +359,77 @@ export interface ReconcilePaymentResponse {
 
 export type CircuitBreakerLevel = 'WARNING' | 'RESTRICTED' | 'EMERGENCY_FREEZE';
 
+export type AnomalyResolutionStatus = 'ACTIVE' | 'INVESTIGATING' | 'RESOLVED';
+
 export interface IntegrityAnomalyDoc {
   anomalyId: string;
   scanId: string;
   category: 'FINANCIAL' | 'INVENTORY' | 'ORDER_LIFECYCLE' | 'RATE_LIMIT';
   severity: 'WARN' | 'RESTRICTED' | 'CRITICAL';
+  status?: AnomalyResolutionStatus;
   details: string;
   relatedEntityId?: string;
   detectedAt: Timestamp;
+  resolvedAt?: Timestamp;
+  resolvedBy?: string;
+  resolutionNotes?: string;
+}
+
+export interface DisasterRecoveryLogDoc {
+  logId: string;
+  previousMode: string;
+  newMode: string;
+  restoredBy: string;
+  restoredRole: string;
+  justification: string;
+  resolvedAnomalyIds: string[];
+  postRepairScanId?: string;
+  timestamp: Timestamp;
+}
+
+export interface IntegrityRepairRequest {
+  repairType: 'EXPIRED_RESERVATION_LEAKS' | 'RESOLVE_ANOMALIES';
+  anomalyIds?: string[];
+  resolutionNotes?: string;
+}
+
+export interface IntegrityRepairResponse {
+  success: boolean;
+  repairType: string;
+  repairedCount: number;
+  details: string[];
+  timestamp: string;
+}
+
+export interface AdminOperationsDashboardResponse {
+  summaryTimestamp: string;
+  operationalMode: string;
+  circuitBreakerLevel: string;
+  orderingAvailable: boolean;
+  liveOperations: {
+    activeOrdersTotal: number;
+    kitchenLoad: number;
+    readyForPickup: number;
+    pendingCashOrders: number;
+  };
+  healthMetrics: {
+    activeAnomaliesCount: number;
+    financialAnomalies: number;
+    inventoryAnomalies: number;
+    lifecycleAnomalies: number;
+    lastScanTimestamp: string | null;
+  };
+  financialMetrics: {
+    todayGrossPaise: number;
+    todayCashPaise: number;
+    todayDigitalPaise: number;
+    todayRefundedPaise: number;
+    ledgerBalanced: boolean;
+  };
+  inventoryHealth: {
+    lowStockInstantCount: number;
+    stockoutWarningCount: number;
+    expiredReservationsCount: number;
+  };
 }
 

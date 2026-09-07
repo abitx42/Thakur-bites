@@ -235,6 +235,7 @@ export async function executeIntegrityScan(): Promise<IntegrityScanResult> {
       scanId,
       category: anom.category,
       severity: anom.severity,
+      status: 'ACTIVE',
       details: anom.details,
       relatedEntityId: anom.relatedEntityId,
       detectedAt: now,

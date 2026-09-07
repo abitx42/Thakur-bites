@@ -46,7 +46,13 @@ export {
 export {
   getOwnerBusinessMetrics,
   updateOwnerFeatureFlags,
+  getAdminOperationsDashboard,
 } from './owner_console';
+export {
+  getIntegrityAnomalies,
+  executeIntegrityRepair,
+  adminRestoreOperationalMode,
+} from './disaster_recovery';
 export {
   getDeveloperTelemetry,
   simulatePermissionCheck,

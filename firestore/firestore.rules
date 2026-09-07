@@ -327,6 +327,18 @@ service cloud.firestore {
       allow read, write: if false; // Server Admin SDK only
     }
 
+    // ─── Integrity Anomalies (Server Admin SDK Only) ──────────────
+    match /integrityAnomalies/{anomalyId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Server Admin SDK Only (Client create/update/delete strictly denied)
+    }
+
+    // ─── Disaster Recovery & Repair Audit Trail (Server Admin SDK Only) ───
+    match /disasterRecoveryLogs/{logId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Server Admin SDK Only (Client create/update/delete strictly denied)
+    }
+
     // ─── Default Deny ────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

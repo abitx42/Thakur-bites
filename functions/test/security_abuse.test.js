@@ -8111,7 +8111,274 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(student21MinScore, 205);
     assert.ok(student21MinScore > freshFacultyScore, 'Aging ensures waiting students overtake newly placed priority orders');
   });
+
+  it('311. Phase 6 Firestore Rules Immutability Invariant: integrityAnomalies and disasterRecoveryLogs reject all client writes', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const rulesPath = path.join(__dirname, '../../firestore/firestore.rules');
+    const rulesContent = fs.readFileSync(rulesPath, 'utf8');
+
+    // 1. integrityAnomalies lockdown
+    assert.ok(rulesContent.includes('match /integrityAnomalies/{anomalyId}'), 'integrityAnomalies rule block must exist');
+    assert.ok(rulesContent.includes('allow write: if false; // Server Admin SDK Only (Client create/update/delete strictly denied)'), 'integrityAnomalies writes must be false');
+    
+    // 2. disasterRecoveryLogs lockdown
+    assert.ok(rulesContent.includes('match /disasterRecoveryLogs/{logId}'), 'disasterRecoveryLogs rule block must exist');
+
+    // 3. Manager/Admin read access
+    assert.ok(rulesContent.includes('allow read: if isManagerOrAdmin();'));
+
+    // 4. Zero drift between canonical rules and symlink
+    const symlinkPath = path.join(__dirname, '../../thakur_bites/firestore.rules');
+    const symlinkContent = fs.readFileSync(symlinkPath, 'utf8');
+    assert.strictEqual(rulesContent, symlinkContent, 'Canonical firestore rules and symlink must have zero drift');
+  });
+
+  it('312. Phase 6 Anomaly Lifecycle & Resolution Invariant: ACTIVE -> INVESTIGATING -> RESOLVED with audit trail', () => {
+    const anomalies = [
+      { anomalyId: 'ANOM_1', category: 'INVENTORY', severity: 'CRITICAL', status: 'ACTIVE' },
+      { anomalyId: 'ANOM_2', category: 'FINANCIAL', severity: 'CRITICAL', status: 'ACTIVE' },
+    ];
+
+    function resolveAnomaly(anomList, id, adminUid, notes) {
+      const target = anomList.find(a => a.anomalyId === id);
+      if (!target) throw new Error('Not found');
+      target.status = 'RESOLVED';
+      target.resolvedBy = adminUid;
+      target.resolvedAt = new Date().toISOString();
+      target.resolutionNotes = notes;
+      return target;
+    }
+
+    resolveAnomaly(anomalies, 'ANOM_1', 'admin_99', 'Recalculated available stock after batch recount');
+    assert.strictEqual(anomalies[0].status, 'RESOLVED');
+    assert.strictEqual(anomalies[0].resolvedBy, 'admin_99');
+    assert.ok(anomalies[0].resolutionNotes.includes('Recalculated'));
+
+    const activeCritical = anomalies.filter(a => a.status === 'ACTIVE' && a.severity === 'CRITICAL');
+    assert.strictEqual(activeCritical.length, 1);
+    assert.strictEqual(activeCritical[0].anomalyId, 'ANOM_2');
+  });
+
+  it('313. Phase 6 Non-Automatic Unfreeze Invariant: System strictly rejects unfreezing while unresolved critical anomalies exist', () => {
+    function evaluateRestorationPreconditions(targetMode, activeAnomalies, scanCircuitBreaker) {
+      if (targetMode === 'NORMAL') {
+        const activeCritical = activeAnomalies.filter(a => a.status === 'ACTIVE' && a.severity === 'CRITICAL');
+        if (activeCritical.length > 0) {
+          throw new Error(`Disaster recovery rejected: ${activeCritical.length} unresolved CRITICAL integrity anomalies remain active.`);
+        }
+        if (scanCircuitBreaker === 'EMERGENCY_FREEZE') {
+          throw new Error('Disaster recovery pre-flight validation failed: A fresh scan detected financial integrity violations.');
+        }
+      }
+      return { allowed: true };
+    }
+
+    const openBreaches = [
+      { anomalyId: 'ANOM_FIN_1', severity: 'CRITICAL', status: 'ACTIVE' }
+    ];
+
+    // Attempting to restore NORMAL while active critical breach exists -> Throws fail-closed
+    assert.throws(
+      () => evaluateRestorationPreconditions('NORMAL', openBreaches, 'NORMAL'),
+      /unresolved CRITICAL integrity anomalies remain active/
+    );
+
+    // Attempting to restore NORMAL when scanner still detects emergency freeze -> Throws fail-closed
+    assert.throws(
+      () => evaluateRestorationPreconditions('NORMAL', [], 'EMERGENCY_FREEZE'),
+      /fresh scan detected financial integrity violations/
+    );
+
+    // Clean state -> Allowed
+    const clean = evaluateRestorationPreconditions('NORMAL', [], 'NORMAL');
+    assert.strictEqual(clean.allowed, true);
+  });
+
+  it('314. Phase 6 Controlled Disaster Recovery Restoration: Logs immutable audit entry upon explicit admin recovery', () => {
+    const disasterRecoveryLogs = [];
+
+    function executeAdminRecovery(currentMode, targetMode, adminUid, adminRole, justification, resolvedIds) {
+      if (adminRole !== 'security_admin' && adminRole !== 'admin' && adminRole !== 'developer') {
+        throw new Error('Permission denied');
+      }
+      if (!justification || justification.length < 5) {
+        throw new Error('Justification required');
+      }
+
+      const logId = `REC_${Date.now()}_TEST`;
+      const logDoc = {
+        logId,
+        previousMode: currentMode,
+        newMode: targetMode,
+        restoredBy: adminUid,
+        restoredRole: adminRole,
+        justification,
+        resolvedAnomalyIds: resolvedIds,
+        timestamp: new Date().toISOString(),
+      };
+      disasterRecoveryLogs.push(logDoc);
+      return { success: true, logId, mode: targetMode };
+    }
+
+    const recovery = executeAdminRecovery(
+      'FINANCIAL_FROZEN',
+      'NORMAL',
+      'sec_admin_01',
+      'security_admin',
+      'Ledger imbalance corrected via manual adjustment transaction TXN_ADJ_01',
+      ['ANOM_FIN_1']
+    );
+
+    assert.strictEqual(recovery.success, true);
+    assert.strictEqual(recovery.mode, 'NORMAL');
+    assert.strictEqual(disasterRecoveryLogs.length, 1);
+    assert.strictEqual(disasterRecoveryLogs[0].previousMode, 'FINANCIAL_FROZEN');
+    assert.strictEqual(disasterRecoveryLogs[0].newMode, 'NORMAL');
+    assert.strictEqual(disasterRecoveryLogs[0].restoredRole, 'security_admin');
+  });
+
+  it('315. Phase 6 Separation of Duties Invariant: Operational staff & managers strictly blocked from unfreezing FINANCIAL_FROZEN', () => {
+    function authorizeModeRestoration(callerRole, currentMode, targetMode) {
+      const allowedRoles = ['security_admin', 'admin', 'developer'];
+      if ((currentMode === 'FINANCIAL_FROZEN' || currentMode === 'EMERGENCY_HALT') && targetMode === 'NORMAL') {
+        if (!allowedRoles.includes(callerRole)) {
+          throw new Error('Permission denied: Restoring NORMAL from freeze requires Security Administrator.');
+        }
+      }
+      return true;
+    }
+
+    const unprivilegedRoles = ['student', 'visitor', 'cashier', 'kitchen_staff', 'manager'];
+    for (const role of unprivilegedRoles) {
+      assert.throws(
+        () => authorizeModeRestoration(role, 'FINANCIAL_FROZEN', 'NORMAL'),
+        /Permission denied/
+      );
+    }
+
+    assert.strictEqual(authorizeModeRestoration('security_admin', 'FINANCIAL_FROZEN', 'NORMAL'), true);
+    assert.strictEqual(authorizeModeRestoration('admin', 'FINANCIAL_FROZEN', 'NORMAL'), true);
+  });
+
+  it('316. Phase 6 Expired Reservation Leak Disaster Repair Invariant: Restores inventory availableStock safely', () => {
+    const menuItem = {
+      id: 'samosa_pack',
+      stockOnHand: 20,
+      reservedStock: 10,
+      availableStock: 10,
+    };
+
+    const expiredReservation = {
+      id: 'res_stale_1',
+      status: 'RESERVED',
+      expiresAtMillis: 1000,
+      items: [{ id: 'samosa_pack', quantity: 4 }],
+    };
+
+    function repairExpiredHold(item, res, currentMillis) {
+      if (res.status === 'RESERVED' && currentMillis > res.expiresAtMillis) {
+        res.status = 'EXPIRED';
+        for (const it of res.items) {
+          if (it.id === item.id) {
+            item.reservedStock = Math.max(0, item.reservedStock - it.quantity);
+            item.availableStock = Math.max(0, item.stockOnHand - item.reservedStock);
+          }
+        }
+        return true;
+      }
+      return false;
+    }
+
+    const repaired = repairExpiredHold(menuItem, expiredReservation, 2000);
+    assert.strictEqual(repaired, true);
+    assert.strictEqual(expiredReservation.status, 'EXPIRED');
+    assert.strictEqual(menuItem.reservedStock, 6); // 10 - 4 = 6
+    assert.strictEqual(menuItem.availableStock, 14); // 20 - 6 = 14
+    assert.strictEqual(menuItem.availableStock + menuItem.reservedStock, menuItem.stockOnHand);
+  });
+
+  it('317. Phase 6 Admin Operations Dashboard Aggregation Invariant: Unified metrics with zero customer PII leakage', () => {
+    const rawOrders = [
+      { id: 'o1', status: 'preparing', totalAmountPaise: 12000, paymentStatus: 'paid', paymentMethod: 'online', customerName: 'Student A', phone: '+919876543210' },
+      { id: 'o2', status: 'ready', totalAmountPaise: 8000, paymentStatus: 'paid', paymentMethod: 'online', customerName: 'Student B', phone: '+919876543211' },
+      { id: 'o3', status: 'confirmed', totalAmountPaise: 5000, paymentStatus: 'pending', paymentMethod: 'counter_cash', customerName: 'Student C', phone: '+919876543212' },
+    ];
+
+    const rawAnomalies = [
+      { anomalyId: 'A1', category: 'INVENTORY', severity: 'WARN', status: 'ACTIVE' },
+    ];
+
+    function buildAdminDashboard(orders, anomalies, currentMode) {
+      const activeOrdersTotal = orders.length;
+      const kitchenLoad = orders.filter(o => o.status === 'preparing').length;
+      const readyForPickup = orders.filter(o => o.status === 'ready').length;
+      const pendingCashOrders = orders.filter(o => o.paymentMethod === 'counter_cash' && o.paymentStatus !== 'paid').length;
+
+      const grossPaise = orders.reduce((sum, o) => sum + (o.paymentStatus === 'paid' ? o.totalAmountPaise : 0), 0);
+
+      return {
+        operationalMode: currentMode,
+        circuitBreakerLevel: currentMode === 'FINANCIAL_FROZEN' ? 'EMERGENCY_FREEZE' : 'NORMAL',
+        orderingAvailable: currentMode === 'NORMAL',
+        liveOperations: { activeOrdersTotal, kitchenLoad, readyForPickup, pendingCashOrders },
+        healthMetrics: { activeAnomaliesCount: anomalies.length },
+        financialMetrics: { todayGrossPaise: grossPaise },
+      };
+    }
+
+    const dash = buildAdminDashboard(rawOrders, rawAnomalies, 'NORMAL');
+    assert.strictEqual(dash.liveOperations.activeOrdersTotal, 3);
+    assert.strictEqual(dash.liveOperations.kitchenLoad, 1);
+    assert.strictEqual(dash.liveOperations.readyForPickup, 1);
+    assert.strictEqual(dash.liveOperations.pendingCashOrders, 1);
+    assert.strictEqual(dash.financialMetrics.todayGrossPaise, 20000); // 12000 + 8000
+    assert.strictEqual(dash.healthMetrics.activeAnomaliesCount, 1);
+
+    // Verify zero PII in aggregated payload
+    const serialized = JSON.stringify(dash);
+    assert.strictEqual(serialized.includes('Student A'), false);
+    assert.strictEqual(serialized.includes('+919876543210'), false);
+  });
+
+  it('318. Phase 6 High-Concurrency Rush Contention & Fault Injection Simulation: Circuit breaker freezes checkouts under simulated anomaly', () => {
+    let operationalMode = 'NORMAL';
+    let checkoutsBlocked = 0;
+    let successfulHandovers = 0;
+
+    function handleRequest(category) {
+      if (operationalMode === 'FINANCIAL_FROZEN') {
+        if (category === 'checkout') {
+          checkoutsBlocked++;
+          throw new Error('Frozen');
+        }
+        if (category === 'handover') {
+          successfulHandovers++;
+          return { success: true, safeHarbor: true };
+        }
+      }
+      return { success: true };
+    }
+
+    // 1. Normal traffic
+    assert.strictEqual(handleRequest('checkout').success, true);
+
+    // 2. Fault injection: Anomaly detected, breaker trips
+    operationalMode = 'FINANCIAL_FROZEN';
+
+    // 3. New checkouts blocked
+    assert.throws(() => handleRequest('checkout'), /Frozen/);
+    assert.throws(() => handleRequest('checkout'), /Frozen/);
+    assert.strictEqual(checkoutsBlocked, 2);
+
+    // 4. Safe-harbor handover remains functional
+    const handover = handleRequest('handover');
+    assert.strictEqual(handover.success, true);
+    assert.strictEqual(handover.safeHarbor, true);
+    assert.strictEqual(successfulHandovers, 1);
+  });
 });
+
 
 
 

@@ -4,6 +4,7 @@ import * as admin from 'firebase-admin';
 import { enforceAppCheck } from './app_check';
 import { logSecurityEvent } from './security_logger';
 import { assertCapability } from './authorization_policy';
+import { AdminOperationsDashboardResponse } from './types';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -284,3 +285,178 @@ export const updateOwnerFeatureFlags = onCall<Partial<OwnerFeatureFlags>>(async 
     updatedFlags: updates,
   };
 });
+
+/**
+ * Platform 2.0 — Phase 6: Unified Admin Operations & Intelligence Dashboard
+ * 
+ * Aggregates Live Queue Load, Autonomous Circuit Breaker Telemetry, Active Anomalies,
+ * Financial Performance, and Inventory Stockout Warnings.
+ */
+export const getAdminOperationsDashboard = onCall<void, Promise<AdminOperationsDashboardResponse>>(async (request) => {
+  enforceAppCheck(request);
+
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'Staff authentication is required.');
+  }
+
+  const callerRole = (request.auth.token.role as string | undefined) || '';
+  assertCapability(callerRole, 'view_business_analytics', 'Only managers or administrators can access the operations dashboard.');
+
+  const now = new Date();
+  const todayStart = getTodayStartTimestamp();
+
+  // 1. Operational Mode & Circuit Breaker Status
+  const sysConfigSnap = await db.collection('systemConfig').doc('global').get();
+  const sysConfigData = sysConfigSnap.data() || {};
+  const operationalMode = sysConfigData.mode || 'NORMAL';
+  const orderingAvailable = operationalMode === 'NORMAL';
+
+  let circuitBreakerLevel = 'NORMAL';
+  if (operationalMode === 'FINANCIAL_FROZEN') {
+    circuitBreakerLevel = 'EMERGENCY_FREEZE';
+  } else if (operationalMode === 'DEGRADED') {
+    circuitBreakerLevel = 'RESTRICTED';
+  }
+
+  // 2. Query Open Anomalies
+  const anomSnap = await db
+    .collection('integrityAnomalies')
+    .where('status', '==', 'ACTIVE')
+    .get();
+
+  let financialAnomalies = 0;
+  let inventoryAnomalies = 0;
+  let lifecycleAnomalies = 0;
+  let lastScanTimestamp: string | null = null;
+
+  anomSnap.forEach((doc) => {
+    const data = doc.data();
+    if (data.category === 'FINANCIAL') financialAnomalies++;
+    else if (data.category === 'INVENTORY') inventoryAnomalies++;
+    else if (data.category === 'ORDER_LIFECYCLE') lifecycleAnomalies++;
+
+    if (data.detectedAt && typeof data.detectedAt.toDate === 'function') {
+      const tsStr = data.detectedAt.toDate().toISOString();
+      if (!lastScanTimestamp || tsStr > lastScanTimestamp) {
+        lastScanTimestamp = tsStr;
+      }
+    }
+  });
+
+  // 3. Live Orders & Station Workload
+  const activeOrdersSnap = await db
+    .collection('orders')
+    .where('status', 'in', ['confirmed', 'preparing', 'ready'])
+    .get();
+
+  let activeOrdersTotal = 0;
+  let kitchenLoad = 0;
+  let readyForPickup = 0;
+  let pendingCashOrders = 0;
+
+  activeOrdersSnap.forEach((doc) => {
+    activeOrdersTotal++;
+    const data = doc.data();
+    if (data.status === 'preparing') kitchenLoad++;
+    if (data.status === 'ready') readyForPickup++;
+    if (data.paymentMethod === 'counter_cash' && data.paymentStatus !== 'paid' && data.paymentStatus !== 'captured') {
+      pendingCashOrders++;
+    }
+  });
+
+  // 4. Today's Financial Ledger Aggregation
+  const todayOrdersSnap = await db
+    .collection('orders')
+    .where('createdAt', '>=', todayStart)
+    .get();
+
+  let todayGrossPaise = 0;
+  let todayCashPaise = 0;
+  let todayDigitalPaise = 0;
+  let todayRefundedPaise = 0;
+
+  todayOrdersSnap.forEach((doc) => {
+    const data = doc.data();
+    const amount = Number(data.totalAmountPaise || (data.totalAmount ? Math.round(data.totalAmount * 100) : 0));
+    const isPaid = data.paymentStatus === 'paid' || data.paymentStatus === 'captured';
+
+    if (data.status !== 'cancelled' && isPaid) {
+      todayGrossPaise += amount;
+      if (data.paymentMethod === 'counter_cash' || data.paymentMethod === 'cash') {
+        todayCashPaise += amount;
+      } else {
+        todayDigitalPaise += amount;
+      }
+    } else if (data.status === 'cancelled' && (data.refundedAmountPaise || isPaid)) {
+      todayRefundedPaise += Number(data.refundedAmountPaise || amount);
+    }
+  });
+
+  // 5. Catalog Inventory Health & Expired Holds
+  const menuSnap = await db.collection('menuItems').get();
+  let lowStockInstantCount = 0;
+  let stockoutWarningCount = 0;
+
+  menuSnap.forEach((doc) => {
+    const item = doc.data();
+    if (item.type === 'instant') {
+      const stockOnHand = Number(item.stockOnHand || item.stockCount || 0);
+      const reserved = Number(item.reservedStock || 0);
+      const available = Math.max(0, stockOnHand - reserved);
+
+      if (available <= 5 && available >= 0) {
+        lowStockInstantCount++;
+      }
+      if (available === 0) {
+        stockoutWarningCount++;
+      }
+    }
+  });
+
+  const expiredResSnap = await db
+    .collection('inventoryReservations')
+    .where('status', '==', 'RESERVED')
+    .get();
+
+  const nowMillis = now.getTime();
+  let expiredReservationsCount = 0;
+  expiredResSnap.forEach((doc) => {
+    const resData = doc.data();
+    if (typeof resData.expiresAtMillis === 'number' && resData.expiresAtMillis < nowMillis) {
+      expiredReservationsCount++;
+    }
+  });
+
+  return {
+    summaryTimestamp: now.toISOString(),
+    operationalMode,
+    circuitBreakerLevel,
+    orderingAvailable,
+    liveOperations: {
+      activeOrdersTotal,
+      kitchenLoad,
+      readyForPickup,
+      pendingCashOrders,
+    },
+    healthMetrics: {
+      activeAnomaliesCount: anomSnap.size,
+      financialAnomalies,
+      inventoryAnomalies,
+      lifecycleAnomalies,
+      lastScanTimestamp,
+    },
+    financialMetrics: {
+      todayGrossPaise,
+      todayCashPaise,
+      todayDigitalPaise,
+      todayRefundedPaise,
+      ledgerBalanced: financialAnomalies === 0,
+    },
+    inventoryHealth: {
+      lowStockInstantCount,
+      stockoutWarningCount,
+      expiredReservationsCount,
+    },
+  };
+});
+
