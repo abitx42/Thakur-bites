@@ -80,6 +80,14 @@ echo "▶ Step 8.3: Verifying Multi-Environment Seed Engine Guardrails (Producti
 node scripts/seed_environment.js --env=production --dry-run
 
 echo ""
+echo "▶ Step 8.4: Verifying Live Staging Cloud Deployment & Rules Readiness..."
+node scripts/verify_staging_deployment.js
+
+echo ""
+echo "▶ Step 8.5: Verifying Real Razorpay Gateway Test Mode & Webhook Harness..."
+node scripts/verify_razorpay_live_test.js
+
+echo ""
 echo "▶ Step 9: Executing Automated Staging DAST Security Attack Harness (10 Attack Classes)..."
 node scripts/run_dast_suite.js
 

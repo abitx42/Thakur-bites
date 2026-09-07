@@ -458,6 +458,32 @@ export interface AdminOperationsDashboardResponse {
     stockoutWarningCount: number;
     expiredReservationsCount: number;
   };
+  productionKpis?: {
+    studentExperience: {
+      averageOrderCompletionMinutes: number;
+      paymentSuccessRate: number;
+      averagePreparationMinutes: number;
+      pickupWaitMinutes: number;
+      cancellationRate: number;
+      averageRatingStars: number;
+    };
+    canteenOperations: {
+      ordersPer15Min: number;
+      kitchenBacklog: number;
+      topOrderedDishes: Array<{ name: string; quantity: number }>;
+      stockoutFrequencyCount: number;
+      staffHandoverThroughputPerHour: number;
+    };
+    systemReliability: {
+      functionLatencyP50Ms: number;
+      functionLatencyP95Ms: number;
+      firestoreContentionRetries: number;
+      webhookFailures: number;
+      paymentReconciliationDelaySeconds: number;
+      errorRate: number;
+      crashRate: number;
+    };
+  };
 }
 
 // ─── Phase 7: Production Infrastructure, Observability & Incident Management ───

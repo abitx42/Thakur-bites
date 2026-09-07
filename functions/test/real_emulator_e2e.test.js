@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 // Import actual compiled production modules from lib/
 const { evaluateOperationalSLOs } = require('../lib/alert_thresholds');
 const { validateEnvironmentCredentials, detectEnvironment } = require('../lib/env_config');
+const { evaluateCampusSchedule, calculateSmartCanteenForecast } = require('../lib/smart_canteen');
 
 /**
  * Phase 9 — Real Production Function & Emulator Integration Test Suite
@@ -171,5 +172,56 @@ describe('Phase 9: Real Cloud Function & Emulator Integration Suite', () => {
     assert.strictEqual(evalResult.level, 'EMERGENCY');
     assert.strictEqual(evalResult.recommendedAction, 'SWITCH_TO_FINANCIAL_FROZEN');
     assert.ok(evalResult.reasons.some(r => r.includes('FORENSIC ESCALATION')));
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 6. Phase 10: Smart Canteen Predictive Lunch Rush Intelligence
+  // ──────────────────────────────────────────────────────────────────────────
+  it('9. Smart Canteen: Campus schedule evaluator detects Primary Lunch Rush & applies 3.5x multiplier', () => {
+    // 12:45 PM test date
+    const lunchDate = new Date('2026-09-08T12:45:00');
+    const { period, nextRecess } = evaluateCampusSchedule(lunchDate);
+
+    assert.strictEqual(period, 'PEAK_LUNCH_RUSH');
+    assert.ok(nextRecess.name.includes('Evening Snacks'));
+    assert.strictEqual(nextRecess.historicalDemandMultiplier, 1.5);
+
+    // 11:30 AM test date (prior to lunch rush)
+    const midDayDate = new Date('2026-09-08T11:30:00');
+    const midDayRes = evaluateCampusSchedule(midDayDate);
+    assert.strictEqual(midDayRes.period, 'MID_DAY_LECTURES');
+    assert.strictEqual(midDayRes.nextRecess.startTime, '12:30 PM');
+    assert.strictEqual(midDayRes.nextRecess.historicalDemandMultiplier, 3.5);
+  });
+
+  it('10. Smart Canteen: Predictive stockout intelligence flags Masala Dosa deficit before recess bell', () => {
+    const mockMenuItems = [
+      { id: 'tb_dosa', name: 'Special Masala Dosa', category: 'South Indian', stockOnHand: 15, reservedStock: 3, type: 'instant' },
+      { id: 'tb_vadapav', name: 'Mumbai Vada Pav', category: 'Snacks', stockOnHand: 50, reservedStock: 5, type: 'instant' },
+    ];
+
+    // Simulating orders with 20 Dosas and 10 Vada Pavs sold in the first 4 hours of operation
+    const mockOrders = [
+      { status: 'confirmed', items: [{ id: 'tb_dosa', quantity: 20 }, { id: 'tb_vadapav', quantity: 10 }] },
+      { status: 'preparing', items: [{ id: 'tb_dosa', quantity: 5 }] },
+    ];
+
+    // 11:45 AM (45 mins before lunch rush)
+    const testDate = new Date('2026-09-08T11:45:00');
+    const forecast = calculateSmartCanteenForecast(mockMenuItems, mockOrders, testDate);
+
+    assert.ok(forecast.currentCampusPeriod === 'MID_DAY_LECTURES');
+    assert.ok(forecast.predictedKitchenLoad.activeQueueOrders === 2);
+    
+    // Check stockout prediction for Special Masala Dosa
+    const dosaRisk = forecast.stockoutRiskPredictions.find(p => p.name === 'Special Masala Dosa');
+    assert.ok(dosaRisk, 'Masala Dosa risk predicted');
+    assert.strictEqual(dosaRisk.riskLevel, 'HIGH');
+    assert.ok(dosaRisk.projectedDeficit > 0, 'Projected deficit flagged');
+    assert.ok(dosaRisk.recommendation.includes('Prepare/restock'));
+
+    // Verify proactive prep recommendations exist
+    assert.ok(forecast.proactivePrepRecommendations.length > 0);
+    assert.ok(forecast.proactivePrepRecommendations.some(r => r.title.includes('Masala Dosa')));
   });
 });

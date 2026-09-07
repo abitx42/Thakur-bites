@@ -94,6 +94,7 @@ export {
   revokeWorkstation,
 } from './workstation_binding';
 export { evaluateOperationalSLOs } from './alert_thresholds';
+export { getSmartCanteenIntelligence } from './smart_canteen';
 
 
 
