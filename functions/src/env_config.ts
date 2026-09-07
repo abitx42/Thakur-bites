@@ -49,3 +49,34 @@ export function assertNotProduction(operation: string): void {
     throw new Error(`SECURITY VIOLATION: Operation "${operation}" is strictly forbidden in production environment.`);
   }
 }
+
+/**
+ * Validates that credentials and simulation flags conform strictly to environment boundaries.
+ * Invariant:
+ * - Production strictly requires live credentials and prohibits simulation.
+ * - Non-production strictly prohibits live credentials.
+ */
+export function validateEnvironmentCredentials(config: {
+  razorpayKeyId?: string;
+  razorpayKeySecret?: string;
+  allowSimulation?: boolean;
+}): { valid: boolean; environment: RuntimeEnvironment } {
+  const env = detectEnvironment();
+
+  if (env === 'production') {
+    if (config.allowSimulation === true) {
+      throw new Error('SECURITY VIOLATION: Simulation flags are strictly prohibited in production environment.');
+    }
+    if (config.razorpayKeyId && !config.razorpayKeyId.startsWith('rzp_live_')) {
+      throw new Error('SECURITY VIOLATION: Production must strictly use live Razorpay credentials (rzp_live_*). Test keys rejected.');
+    }
+  } else {
+    // Development, test, staging
+    if (config.razorpayKeyId && config.razorpayKeyId.startsWith('rzp_live_')) {
+      throw new Error('SECURITY VIOLATION: Live Razorpay credentials (rzp_live_*) are strictly forbidden in non-production environments.');
+    }
+  }
+
+  return { valid: true, environment: env };
+}
+

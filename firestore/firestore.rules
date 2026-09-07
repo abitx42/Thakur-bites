@@ -339,6 +339,18 @@ service cloud.firestore {
       allow write: if false; // Server Admin SDK Only (Client create/update/delete strictly denied)
     }
 
+    // ─── Production Incidents & Postmortems (Server Admin SDK Only) ────────
+    match /incidents/{incidentId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Server Admin SDK Only
+    }
+
+    // ─── Automated Disaster Drill Reports (Server Admin SDK Only) ──────────
+    match /disasterDrillReports/{drillId} {
+      allow read: if isManagerOrAdmin();
+      allow write: if false; // Server Admin SDK Only
+    }
+
     // ─── Default Deny ────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

@@ -54,6 +54,14 @@ export {
   adminRestoreOperationalMode,
   recordCompensatingFinancialEntry,
 } from './disaster_recovery';
+export { getSystemTelemetryOverview } from './telemetry';
+export { getStaffAlertsFeed } from './alerting';
+export { executeDisasterRecoveryDrill } from './disaster_recovery_drill';
+export {
+  createProductionIncident,
+  updateIncidentStatus,
+  recordPostmortemReview,
+} from './incidents';
 export {
   getDeveloperTelemetry,
   simulatePermissionCheck,

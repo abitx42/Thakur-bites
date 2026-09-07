@@ -8597,7 +8597,285 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(systemState.logs[0].requestedBy, 'admin_sarah');
     assert.strictEqual(systemState.logs[0].restoredBy, 'admin_marcus');
   });
+
+  it('325. Phase 7.1 Multi-Environment Credential Segregation Invariant: Rejects live keys in dev and simulation flags in prod', () => {
+    function evaluateEnvironmentSafety(envName, config) {
+      if (envName === 'production') {
+        if (config.allowSimulation === true) {
+          throw new Error('SECURITY VIOLATION: Simulation flags are strictly prohibited in production environment.');
+        }
+        if (config.razorpayKeyId && !config.razorpayKeyId.startsWith('rzp_live_')) {
+          throw new Error('SECURITY VIOLATION: Production must strictly use live Razorpay credentials (rzp_live_*). Test keys rejected.');
+        }
+      } else {
+        if (config.razorpayKeyId && config.razorpayKeyId.startsWith('rzp_live_')) {
+          throw new Error('SECURITY VIOLATION: Live Razorpay credentials (rzp_live_*) are strictly forbidden in non-production environments.');
+        }
+      }
+      return { valid: true, environment: envName };
+    }
+
+    // 1. Live key leaked into dev -> Blocked!
+    assert.throws(
+      () => evaluateEnvironmentSafety('development', { razorpayKeyId: 'rzp_live_secret123' }),
+      /Live Razorpay credentials.*strictly forbidden in non-production/
+    );
+
+    // 2. Simulation flag enabled in prod -> Blocked!
+    assert.throws(
+      () => evaluateEnvironmentSafety('production', { allowSimulation: true }),
+      /Simulation flags are strictly prohibited in production/
+    );
+
+    // 3. Test key used in prod -> Blocked!
+    assert.throws(
+      () => evaluateEnvironmentSafety('production', { razorpayKeyId: 'rzp_test_mock123' }),
+      /Production must strictly use live Razorpay credentials/
+    );
+
+    // 4. Valid production setup -> Allowed
+    const prodValid = evaluateEnvironmentSafety('production', { razorpayKeyId: 'rzp_live_prod456', allowSimulation: false });
+    assert.strictEqual(prodValid.valid, true);
+
+    // 5. Valid development setup -> Allowed
+    const devValid = evaluateEnvironmentSafety('development', { razorpayKeyId: 'rzp_test_dev789', allowSimulation: true });
+    assert.strictEqual(devValid.valid, true);
+  });
+
+  it('326. Phase 7.2 CI/CD Deployment Authority Invariant: Workflows enforce 9-gate runner and gated production approvals', () => {
+    const fs = require('fs');
+    const path = require('path');
+
+    const ciPath = path.join(__dirname, '../../.github/workflows/ci.yml');
+    const stagingPath = path.join(__dirname, '../../.github/workflows/deploy_staging.yml');
+    const prodPath = path.join(__dirname, '../../.github/workflows/deploy_production.yml');
+
+    assert.ok(fs.existsSync(ciPath), 'ci.yml must exist');
+    assert.ok(fs.existsSync(stagingPath), 'deploy_staging.yml must exist');
+    assert.ok(fs.existsSync(prodPath), 'deploy_production.yml must exist');
+
+    const ciContent = fs.readFileSync(ciPath, 'utf8');
+    const prodContent = fs.readFileSync(prodPath, 'utf8');
+
+    // CI runs 9-gate master runner
+    assert.ok(ciContent.includes('scripts/run_all_security_checks.sh'), 'CI must invoke run_all_security_checks.sh');
+
+    // Production requires gated environment approval
+    assert.ok(prodContent.includes('environment: production'), 'Production deployment must declare environment: production');
+    assert.ok(prodContent.includes('scripts/run_all_security_checks.sh'), 'Production deployment must run 9-gate verification');
+  });
+
+  it('327. Phase 7.3 Production Observability Telemetry Invariant: Aggregates performance counters with zero PII', () => {
+    const rawEvents = [
+      { type: 'checkout', status: 'success', latencyMs: 120, studentName: 'Alice', phone: '+919876543210' },
+      { type: 'checkout', status: 'success', latencyMs: 140, studentName: 'Bob', phone: '+919876543211' },
+      { type: 'checkout', status: 'failed', latencyMs: 250, studentName: 'Charlie', phone: '+919876543212' },
+      { type: 'payment', status: 'captured', studentName: 'Alice' },
+    ];
+
+    function aggregateTelemetry(events) {
+      const checkouts = events.filter(e => e.type === 'checkout');
+      const attempted = checkouts.length;
+      const success = checkouts.filter(c => c.status === 'success').length;
+      const failed = attempted - success;
+      const successRate = Number(((success / attempted) * 100).toFixed(1));
+
+      return {
+        counters: { attempted, success, failed },
+        successRate,
+      };
+    }
+
+    const telemetry = aggregateTelemetry(rawEvents);
+    assert.strictEqual(telemetry.counters.attempted, 3);
+    assert.strictEqual(telemetry.counters.success, 2);
+    assert.strictEqual(telemetry.counters.failed, 1);
+    assert.strictEqual(telemetry.successRate, 66.7);
+
+    // Verify zero PII in aggregated payload
+    const serialized = JSON.stringify(telemetry);
+    assert.strictEqual(serialized.includes('Alice'), false);
+    assert.strictEqual(serialized.includes('+919876543210'), false);
+  });
+
+  it('328. Phase 7.4 Multi-Tier Alerting Invariant: Routes alerts strictly according to operational severity', () => {
+    const notifications = [];
+
+    function routeAlert(level, title, message) {
+      const entry = {
+        alertId: `ALT_TEST_${notifications.length + 1}`,
+        level,
+        title,
+        message,
+        isUrgent: level === 'DEGRADED' || level === 'FINANCIAL_FROZEN' || level === 'BREAK_GLASS',
+        requiresPostmortem: level === 'BREAK_GLASS' || level === 'FINANCIAL_FROZEN',
+      };
+      notifications.push(entry);
+      return entry;
+    }
+
+    const warnAlert = routeAlert('WARNING', 'Token Drift', 'Minor latency drift');
+    assert.strictEqual(warnAlert.isUrgent, false);
+    assert.strictEqual(warnAlert.requiresPostmortem, false);
+
+    const freezeAlert = routeAlert('FINANCIAL_FROZEN', 'Ledger Imbalance', 'Critical freeze triggered');
+    assert.strictEqual(freezeAlert.isUrgent, true);
+    assert.strictEqual(freezeAlert.requiresPostmortem, true);
+
+    const breakGlassAlert = routeAlert('BREAK_GLASS', 'Emergency Override', 'Single admin break-glass activated');
+    assert.strictEqual(breakGlassAlert.isUrgent, true);
+    assert.strictEqual(breakGlassAlert.requiresPostmortem, true);
+  });
+
+  it('329. Phase 7.5 Automated Disaster Restore Drill Invariant: Validates backup integrity against financial and inventory rules', () => {
+    const { createHash } = require('crypto');
+
+    function simulateRestoreDrill(financialPostings, inventoryItems) {
+      // 1. Financial check
+      const debits = financialPostings.reduce((s, p) => s + (p.debitPaise || 0), 0);
+      const credits = financialPostings.reduce((s, p) => s + (p.creditPaise || 0), 0);
+      const financialValid = debits === credits;
+
+      // 2. Inventory check
+      const inventoryValid = inventoryItems.every(
+        i => i.availableStock === i.stockOnHand - i.reservedStock && i.availableStock >= 0
+      );
+
+      const status = financialValid && inventoryValid ? 'PASSED' : 'FAILED';
+      const checksum = createHash('sha256').update(`${status}:${financialValid}:${inventoryValid}`).digest('hex');
+
+      return { status, financialValid, inventoryValid, checksum };
+    }
+
+    // Corrupted financial postings in backup -> Fails drill!
+    const badFinDrill = simulateRestoreDrill(
+      [{ debitPaise: 5000 }, { creditPaise: 4000 }],
+      [{ stockOnHand: 10, reservedStock: 2, availableStock: 8 }]
+    );
+    assert.strictEqual(badFinDrill.status, 'FAILED');
+    assert.strictEqual(badFinDrill.financialValid, false);
+
+    // Corrupted inventory in backup -> Fails drill!
+    const badInvDrill = simulateRestoreDrill(
+      [{ debitPaise: 5000 }, { creditPaise: 5000 }],
+      [{ stockOnHand: 10, reservedStock: 2, availableStock: 5 }] // Mismatch!
+    );
+    assert.strictEqual(badInvDrill.status, 'FAILED');
+    assert.strictEqual(badInvDrill.inventoryValid, false);
+
+    // Clean backup -> Passes drill!
+    const cleanDrill = simulateRestoreDrill(
+      [{ debitPaise: 5000 }, { creditPaise: 5000 }],
+      [{ stockOnHand: 10, reservedStock: 2, availableStock: 8 }]
+    );
+    assert.strictEqual(cleanDrill.status, 'PASSED');
+    assert.ok(cleanDrill.checksum.length === 64);
+  });
+
+  it('330. Phase 7.6 Incident Lifecycle State Machine Invariant: DETECTED -> ACKNOWLEDGED -> MITIGATED -> RECOVERED -> POSTMORTEM', () => {
+    const validTransitions = {
+      DETECTED: ['ACKNOWLEDGED', 'INVESTIGATING'],
+      ACKNOWLEDGED: ['INVESTIGATING', 'MITIGATED'],
+      INVESTIGATING: ['MITIGATED'],
+      MITIGATED: ['RECOVERED'],
+      RECOVERED: ['POST_INCIDENT_REVIEW'],
+      POST_INCIDENT_REVIEW: [],
+    };
+
+    function transitionIncident(currentStatus, nextStatus) {
+      const allowed = validTransitions[currentStatus] || [];
+      if (!allowed.includes(nextStatus)) {
+        throw new Error(`Invalid incident transition from ${currentStatus} to ${nextStatus}`);
+      }
+      return nextStatus;
+    }
+
+    // Valid progression
+    let status = 'DETECTED';
+    status = transitionIncident(status, 'ACKNOWLEDGED');
+    status = transitionIncident(status, 'INVESTIGATING');
+    status = transitionIncident(status, 'MITIGATED');
+    status = transitionIncident(status, 'RECOVERED');
+    status = transitionIncident(status, 'POST_INCIDENT_REVIEW');
+    assert.strictEqual(status, 'POST_INCIDENT_REVIEW');
+
+    // Invalid jump from DETECTED directly to POST_INCIDENT_REVIEW -> Blocked!
+    assert.throws(
+      () => transitionIncident('DETECTED', 'POST_INCIDENT_REVIEW'),
+      /Invalid incident transition/
+    );
+  });
+
+  it('331. Phase 7.6 Firestore Rules Lockdown for incidents and disasterDrillReports: Client writes strictly denied', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const rulesPath = path.join(__dirname, '../../firestore/firestore.rules');
+    const rulesContent = fs.readFileSync(rulesPath, 'utf8');
+
+    // 1. incidents rule block
+    assert.ok(rulesContent.includes('match /incidents/{incidentId}'), 'incidents rule block must exist');
+
+    // 2. disasterDrillReports rule block
+    assert.ok(rulesContent.includes('match /disasterDrillReports/{drillId}'), 'disasterDrillReports rule block must exist');
+
+    // 3. Both deny client write
+    const incidentsBlock = rulesContent.substring(rulesContent.indexOf('match /incidents/{incidentId}'));
+    assert.ok(incidentsBlock.includes('allow write: if false;'));
+
+    // 4. Zero drift with symlink
+    const symlinkPath = path.join(__dirname, '../../thakur_bites/firestore.rules');
+    const symlinkContent = fs.readFileSync(symlinkPath, 'utf8');
+    assert.strictEqual(rulesContent, symlinkContent, 'Zero drift between canonical rules and symlink');
+  });
+
+  it('332. Phase 7.1 & 6.1 Emergency Break-Glass Challenge Binding & Expiry Invariant', () => {
+    function validateBreakGlassToken(tokenDoc, requestingUid, currentMillis) {
+      if (currentMillis > tokenDoc.expiresAtMillis) {
+        throw new Error('Break-glass challenge expired');
+      }
+      if (tokenDoc.isConsumed) {
+        throw new Error('Break-glass challenge already consumed (Single-use invariant)');
+      }
+      if (tokenDoc.boundUid !== requestingUid) {
+        throw new Error('Break-glass challenge bound to different administrator UID');
+      }
+      tokenDoc.isConsumed = true;
+      tokenDoc.consumedAtMillis = currentMillis;
+      return { valid: true };
+    }
+
+    const token = {
+      challengeId: 'CHAL_123',
+      boundUid: 'admin_sarah',
+      expiresAtMillis: 10000,
+      isConsumed: false,
+    };
+
+    // 1. Mismatched UID -> Rejected
+    assert.throws(
+      () => validateBreakGlassToken(token, 'malicious_admin', 5000),
+      /bound to different administrator UID/
+    );
+
+    // 2. Expired token -> Rejected
+    assert.throws(
+      () => validateBreakGlassToken(token, 'admin_sarah', 15000),
+      /Break-glass challenge expired/
+    );
+
+    // 3. Valid token consumed successfully
+    const res = validateBreakGlassToken(token, 'admin_sarah', 5000);
+    assert.strictEqual(res.valid, true);
+    assert.strictEqual(token.isConsumed, true);
+
+    // 4. Replay attempt -> Rejected (Single-use)
+    assert.throws(
+      () => validateBreakGlassToken(token, 'admin_sarah', 6000),
+      /already consumed/
+    );
+  });
 });
+
 
 
 

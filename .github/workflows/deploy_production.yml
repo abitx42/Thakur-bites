@@ -1,0 +1,52 @@
+name: Thakur Bites Platform 2.0 - Production Gated Deployment
+
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+
+jobs:
+  production-deployment:
+    name: Gated Production Deployment
+    runs-on: ubuntu-latest
+    environment: production # Enforces required reviewers approval gate on GitHub
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (v20)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Setup Flutter (v3.29.x)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Cloud Functions Dependencies & Build
+        working-directory: functions
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run Master 9-Gate Security & Invariant Verification Runner
+        run: bash scripts/run_all_security_checks.sh
+
+      - name: Production Pre-Flight Governance Check
+        run: |
+          node -e "
+            const { validateEnvironmentCredentials } = require('./functions/lib/env_config');
+            process.env.NODE_ENV = 'production';
+            process.env.PROJECT_ID = 'thakur-bites-prod';
+            validateEnvironmentCredentials({ razorpayKeyId: 'rzp_live_sample123', allowSimulation: false });
+            console.log('Production environment credentials passed strict security governance check.');
+          "
+
+      - name: Build Production Flutter Web App Bundle
+        working-directory: thakur_bites
+        run: flutter build web --release

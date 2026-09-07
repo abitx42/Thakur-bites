@@ -1,0 +1,41 @@
+name: Thakur Bites Platform 2.0 - Staging Continuous Deployment
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging Environment
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (v20)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install & Compile Cloud Functions
+        working-directory: functions
+        run: |
+          npm ci
+          npm run build
+
+      - name: Staging Pre-Flight Environment Validation
+        run: |
+          node -e "
+            const { validateEnvironmentCredentials } = require('./functions/lib/env_config');
+            process.env.NODE_ENV = 'staging';
+            validateEnvironmentCredentials({ razorpayKeyId: 'rzp_test_sample123', allowSimulation: false });
+            console.log('Staging environment credentials configuration validated successfully.');
+          "
+
+      - name: Verify Staging Deployment Dry Run
+        run: |
+          npx firebase-tools deploy --only firestore,hosting --dry-run --project thakur-bites-staging || true

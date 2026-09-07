@@ -460,3 +460,88 @@ export interface AdminOperationsDashboardResponse {
   };
 }
 
+// ─── Phase 7: Production Infrastructure, Observability & Incident Management ───
+
+export type IncidentSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export type IncidentStatus =
+  | 'DETECTED'
+  | 'ACKNOWLEDGED'
+  | 'INVESTIGATING'
+  | 'MITIGATED'
+  | 'RECOVERED'
+  | 'POST_INCIDENT_REVIEW';
+
+export interface IncidentTimelineEntry {
+  timestamp: Timestamp;
+  actor: string;
+  action: string;
+  notes?: string;
+}
+
+export interface IncidentPostmortem {
+  rootCause: string;
+  preventiveActions: string[];
+  reviewedBy: string;
+  reviewedAt: Timestamp;
+}
+
+export interface IncidentDoc {
+  incidentId: string;
+  title: string;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
+  detectedAt: Timestamp;
+  detectedBy: string;
+  circuitBreakerMode: string;
+  relatedAnomalyIds: string[];
+  timeline: IncidentTimelineEntry[];
+  actionsTaken: string[];
+  postmortem?: IncidentPostmortem;
+  closedAt?: Timestamp;
+}
+
+export interface DisasterDrillReportDoc {
+  drillId: string;
+  backupManifestId: string;
+  executedAt: Timestamp;
+  executedBy: string;
+  status: 'PASSED' | 'FAILED';
+  financialInvariantsBalanced: boolean;
+  inventoryEquationsValid: boolean;
+  lifecycleStatesValid: boolean;
+  restoredCollectionsCount: number;
+  cryptographicChecksum: string;
+  details: string[];
+}
+
+export interface TelemetryOverviewResponse {
+  timestamp: string;
+  environment: string;
+  counters: {
+    checkoutAttempted: number;
+    checkoutSuccess: number;
+    checkoutFailed: number;
+    paymentsInitiated: number;
+    paymentsCaptured: number;
+    paymentsFailed: number;
+    reservationsCreated: number;
+    reservationsExpired: number;
+    reservationsReleased: number;
+    stockoutEvents: number;
+    circuitBreakerActivations: number;
+    breakGlassActivations: number;
+  };
+  latencies: {
+    avgCheckoutMs: number;
+    avgPaymentReconciliationMs: number;
+    avgPrepTimeMs: number;
+  };
+  healthIndicators: {
+    checkoutSuccessRate: number;
+    reconciliationSuccessRate: number;
+    isHealthy: boolean;
+  };
+}
+
+
