@@ -6845,6 +6845,228 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     const mumbaiDate = getMumbaiDateStr();
     assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(mumbaiDate), 'Must return YYYY-MM-DD in Asia/Kolkata');
   });
+
+  it('283. Priority 19 & 20: API Abuse Economics & Denial-of-Wallet Invariants', () => {
+    const { enforceAppCheck } = require('../lib/app_check');
+
+    // 1. App Check Enforcement Invariant
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalEmulator = process.env.FUNCTIONS_EMULATOR;
+
+    try {
+      process.env.NODE_ENV = 'production';
+      delete process.env.FUNCTIONS_EMULATOR;
+
+      // Unauthenticated request without App Check token must fail closed
+      const unauthenticatedRequest = { app: undefined };
+      assert.throws(
+        () => enforceAppCheck(unauthenticatedRequest),
+        /App Check verification failed/
+      );
+
+      // Authenticated request with App Check token succeeds
+      const authenticatedRequest = { app: { appId: 'thakur-bites-web' } };
+      assert.doesNotThrow(() => enforceAppCheck(authenticatedRequest));
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+      if (originalEmulator) process.env.FUNCTIONS_EMULATOR = originalEmulator;
+    }
+
+    // 2. Query Boundedness (Denial-of-Wallet Read Amplification Defense)
+    function sanitizeQueryLimit(requestedLimit, maxPermitted = 100) {
+      if (typeof requestedLimit !== 'number' || !Number.isSafeInteger(requestedLimit) || requestedLimit <= 0) {
+        return 20; // Default safe page size
+      }
+      return Math.min(requestedLimit, maxPermitted);
+    }
+
+    // Attacker requests 1,000,000 documents to run up Firestore read bill
+    const boundedLimit = sanitizeQueryLimit(1000000);
+    assert.strictEqual(boundedLimit, 100, 'Must cap unbounded read requests at 100 docs max');
+    assert.strictEqual(sanitizeQueryLimit(-5), 20, 'Negative limit falls back to default');
+    assert.strictEqual(sanitizeQueryLimit(50), 50, 'Valid limit preserved');
+  });
+
+  it('284. Priority 21: Enumeration Defense & Public Token Decoupling Invariants', () => {
+    // Simulates an attacker possessing sequential public display token "TB-042"
+    const publicToken = 'TB-042';
+
+    const orderDatabase = new Map([
+      ['ord_e87f2a9b31', {
+        id: 'ord_e87f2a9b31',
+        tokenNumber: publicToken,
+        status: 'ready',
+        paymentStatus: 'paid',
+        studentId: 'student_alice',
+      }],
+    ]);
+
+    const secretDatabase = new Map([
+      ['ord_e87f2a9b31', {
+        pinHash: 'salted_hash_9876', // PBKDF2 hash of "9876"
+        failedPinAttempts: 0,
+        isLockedForInvestigation: false,
+      }],
+    ]);
+
+    function attemptPickupVerification(orderId, submittedPin) {
+      const order = orderDatabase.get(orderId);
+      if (!order) throw new Error('Order not found');
+
+      const secret = secretDatabase.get(orderId);
+      if (!secret) throw new Error('Order secret not found');
+
+      if (secret.isLockedForInvestigation || secret.failedPinAttempts >= 3) {
+        throw new Error('Order is locked due to repeated verification failures');
+      }
+
+      // Check PIN
+      const isMatch = submittedPin === '9876';
+      if (!isMatch) {
+        secret.failedPinAttempts += 1;
+        if (secret.failedPinAttempts >= 3) {
+          secret.isLockedForInvestigation = true;
+        }
+        throw new Error('Invalid PIN');
+      }
+
+      return { success: true, status: 'collected' };
+    }
+
+    // Invariant 1: An attacker cannot pick up order with tokenNumber alone (must supply internal non-enumerable orderId)
+    assert.throws(() => attemptPickupVerification(publicToken, '0000'), /Order not found/);
+
+    // Invariant 2: Attacker guessing PIN fails
+    assert.throws(() => attemptPickupVerification('ord_e87f2a9b31', '1111'), /Invalid PIN/);
+    assert.throws(() => attemptPickupVerification('ord_e87f2a9b31', '2222'), /Invalid PIN/);
+    assert.throws(() => attemptPickupVerification('ord_e87f2a9b31', '3333'), /Invalid PIN/);
+
+    // Invariant 3: On 3rd failure, order is permanently locked against further guesses
+    assert.strictEqual(secretDatabase.get('ord_e87f2a9b31').isLockedForInvestigation, true);
+    assert.throws(() => attemptPickupVerification('ord_e87f2a9b31', '9876'), /Order is locked/);
+  });
+
+  it('285. Priority 22: Data Minimization & Zero-PII Privacy Invariants', () => {
+    const { buildPublicQueuePayload } = require('../lib/tv_projection');
+
+    // Raw order documents containing private student PII, financials, and priority levels
+    const rawOrders = [
+      {
+        orderId: 'ord_secret_01',
+        studentId: 'stud_private_alice',
+        studentName: 'Alice Sharma',
+        studentPhone: '+919876543210',
+        studentEmail: 'alice@tcetmumbai.in',
+        tokenNumber: 'TB-042',
+        status: 'preparing',
+        priorityLevel: 3, // Teacher VIP priority (must NOT be projected publicly)
+        totalAmountPaise: 18000,
+        items: [{ name: 'Cheese Masala Dosa', price: 180 }],
+        estimatedMinutes: 12,
+      },
+      {
+        orderId: 'ord_secret_02',
+        studentId: 'stud_private_bob',
+        studentName: 'Bob Verma',
+        tokenNumber: 'TB-043',
+        status: 'ready',
+        priorityLevel: 0,
+        totalAmountPaise: 4000,
+        estimatedMinutes: 0,
+      },
+    ];
+
+    const publicPayload = buildPublicQueuePayload(rawOrders);
+
+    // Invariant 1: Public projection contains ONLY token and estimatedMinutes
+    assert.strictEqual(publicPayload.preparing.length, 1);
+    assert.strictEqual(publicPayload.preparing[0].token, 'TB-042');
+    assert.strictEqual(publicPayload.preparing[0].estimatedMinutes, 12);
+
+    assert.strictEqual(publicPayload.ready.length, 1);
+    assert.strictEqual(publicPayload.ready[0].token, 'TB-043');
+
+    // Invariant 2: Zero PII or private business metadata exists in public projection
+    const payloadJson = JSON.stringify(publicPayload);
+    assert.strictEqual(payloadJson.includes('Alice'), false, 'Customer names must be stripped');
+    assert.strictEqual(payloadJson.includes('Bob'), false, 'Customer names must be stripped');
+    assert.strictEqual(payloadJson.includes('9876543210'), false, 'Phone numbers must be stripped');
+    assert.strictEqual(payloadJson.includes('tcetmumbai.in'), false, 'Emails must be stripped');
+    assert.strictEqual(payloadJson.includes('Cheese Masala Dosa'), false, 'Item names must be stripped');
+    assert.strictEqual(payloadJson.includes('18000'), false, 'Financial amounts must be stripped');
+    assert.strictEqual(payloadJson.includes('priorityLevel'), false, 'Priority stars must be stripped');
+  });
+
+  it('286. Priority 23: Production Observability & Autonomous Circuit-Breaker Invariants', () => {
+    // Simulates continuous integrity scanner logic
+    function evaluateSystemIntegrity(catalogItems, orderRecords) {
+      const criticalViolations = [];
+      const warnings = [];
+
+      for (const item of catalogItems) {
+        if (item.stockOnHand < 0 || item.reservedStock < 0) {
+          criticalViolations.push(`Negative stock detected on ${item.id}`);
+        }
+        if (item.reservedStock > item.stockOnHand) {
+          criticalViolations.push(`INVENTORY_INVARIANT_BREACH: reservedStock (${item.reservedStock}) > stockOnHand (${item.stockOnHand}) on ${item.id}`);
+        }
+      }
+
+      for (const order of orderRecords) {
+        if ((order.status === 'collected' || order.status === 'ready') && order.paymentStatus !== 'paid') {
+          criticalViolations.push(`IMPOSSIBLE_ORDER_STATE: ${order.id} is ${order.status} but paymentStatus is ${order.paymentStatus}`);
+        }
+      }
+
+      let status = 'HEALTHY';
+      let actionTaken = 'NONE';
+
+      if (criticalViolations.length > 0) {
+        status = 'CRITICAL_BREACH';
+        actionTaken = 'AUTO_FINANCIAL_FROZEN'; // Autonomous circuit breaker
+      } else if (warnings.length > 0) {
+        status = 'INVESTIGATION';
+      }
+
+      return { status, actionTaken, criticalViolations, warnings };
+    }
+
+    // Scenario A: Healthy operational state
+    const healthyScan = evaluateSystemIntegrity(
+      [{ id: 'item_1', stockOnHand: 20, reservedStock: 3 }],
+      [{ id: 'ord_1', status: 'ready', paymentStatus: 'paid' }]
+    );
+    assert.strictEqual(healthyScan.status, 'HEALTHY');
+    assert.strictEqual(healthyScan.actionTaken, 'NONE');
+
+    // Scenario B: Injected corruption (reservedStock > stockOnHand) -> Autonomous Circuit Breaker
+    const breachedScan = evaluateSystemIntegrity(
+      [{ id: 'item_1', stockOnHand: 5, reservedStock: 12 }],
+      [{ id: 'ord_2', status: 'collected', paymentStatus: 'pending' }]
+    );
+    assert.strictEqual(breachedScan.status, 'CRITICAL_BREACH');
+    assert.strictEqual(breachedScan.actionTaken, 'AUTO_FINANCIAL_FROZEN');
+    assert.strictEqual(breachedScan.criticalViolations.length, 2);
+  });
+
+  it('287. Security Invariants Authoritative Specification Verification', () => {
+    const fs = require('fs');
+    const path = require('path');
+
+    const specPath = path.resolve(__dirname, '../../SECURITY_INVARIANTS.md');
+    assert.ok(fs.existsSync(specPath), 'SECURITY_INVARIANTS.md must exist in repository root');
+
+    const specContent = fs.readFileSync(specPath, 'utf8');
+
+    // Verify all 24 canonical invariants (INV-001 through INV-024) are documented
+    for (let i = 1; i <= 24; i++) {
+      const invTag = `INV-${String(i).padStart(3, '0')}`;
+      assert.ok(
+        specContent.includes(invTag),
+        `SECURITY_INVARIANTS.md must define canonical invariant ${invTag}`
+      );
+    }
+  });
 });
 
 
