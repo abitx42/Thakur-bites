@@ -52,13 +52,11 @@ export const storage = getStorage(app);
 export { ref, uploadBytes, getDownloadURL };
 
 if (typeof window !== 'undefined') {
-  const host = window.location.hostname;
-  const port = window.location.port ? Number(window.location.port) : (window.location.protocol === 'https:' ? 443 : 80);
-  try {
-    connectFunctionsEmulator(functions, host, port);
-  } catch (e) {
-    console.warn("connectFunctionsEmulator notice:", e);
-  }
+  // Directly point emulatorOrigin to window.location.origin so that both http://localhost:8080
+  // and https://*.trycloudflare.com (Cloudflare tunnel) route callable requests via reverse proxy
+  // (/adi-thakur-bite/us-central1/*) with exact protocol/port alignment, completely eliminating
+  // mixed-content blocks, plain-HTTP-to-SSL mismatches, and connection errors.
+  functions.emulatorOrigin = window.location.origin;
 }
 
 // ─── Staff Authentication & Role Management ─────────────────────────
@@ -155,7 +153,7 @@ export function subscribeOrders(callback) {
  */
 export async function updateOrderStatusInDb(orderId, newStatus) {
   const updateStatusFn = httpsCallable(functions, 'updateOrderStatus');
-  await updateStatusFn({ orderId, status: newStatus });
+  await updateStatusFn({ orderId, nextStatus: newStatus, status: newStatus });
 }
 
 export const updateOrderStatus = updateOrderStatusInDb;
@@ -173,14 +171,22 @@ export function subscribeMenuItems(callback) {
   return onSnapshot(menuRef, (snapshot) => {
     const items = snapshot.docs.map(doc => {
       const data = doc.data();
-      const isAvail = data.available !== false;
       const isInstant = data.type === 'instant';
-      const rawStock = data.stockCount !== undefined ? Number(data.stockCount) : (isInstant ? 0 : 100);
-      const stock = Math.max(0, isNaN(rawStock) ? 0 : rawStock);
+      const isExplicitlyAvail = data.available !== false && data.availabilityStatus !== 'OUT_OF_STOCK' && data.isOrderable !== false;
+      
+      const rawStockOnHand = data.stockOnHand !== undefined 
+        ? Number(data.stockOnHand) 
+        : (data.stockCount !== undefined ? Number(data.stockCount) : (isInstant ? 0 : 100));
+      const reserved = Number(data.reservedStock || 0);
+      const netAvailable = isInstant ? Math.max(0, rawStockOnHand - reserved) : (isExplicitlyAvail ? 100 : 0);
 
-      // Self-heal negative stock in database if found
+      // Invariant: An item is sold out if explicitly marked unavailable OR if net available units are <= 0
+      const isSoldOut = !isExplicitlyAvail || (isInstant && netAvailable <= 0);
+      const effectiveStock = isSoldOut ? 0 : (isInstant ? netAvailable : 100);
+
+      // Self-heal negative or inconsistent stock in database if found
       if (data.stockCount !== undefined && data.stockCount < 0) {
-        updateDoc(doc.ref, { stockCount: 0, available: false }).catch(console.error);
+        updateDoc(doc.ref, { stockCount: 0, stockOnHand: 0, available: false, isOrderable: false, availabilityStatus: 'OUT_OF_STOCK' }).catch(console.error);
       }
 
       return {
@@ -188,9 +194,13 @@ export function subscribeMenuItems(callback) {
         ...data,
         price: Number(data.price || 0),
         prepMinutes: Number(data.prepMinutes || 0),
-        stockCount: stock,
+        stockOnHand: isSoldOut ? (isInstant && reserved > 0 ? reserved : 0) : rawStockOnHand,
+        reservedStock: reserved,
+        stockCount: effectiveStock,
         batchDate: data.batchDate || '',
-        available: isAvail && (!isInstant || stock > 0)
+        available: !isSoldOut,
+        isOrderable: !isSoldOut,
+        availabilityStatus: isSoldOut ? 'OUT_OF_STOCK' : 'AVAILABLE'
       };
     });
     callback(items);
@@ -232,21 +242,28 @@ export async function fetchCashierOrders() {
 export async function toggleItemAvailability(itemId, isAvailable) {
   const available = Boolean(isAvailable);
   try {
-    const itemRef = doc(db, 'menuItems', itemId);
-    await updateDoc(itemRef, {
-      available,
-      isOrderable: available,
-      updatedAt: Timestamp.now()
-    });
-  } catch (fsErr) {
-    console.warn("Direct Firestore toggle notice:", fsErr);
-  }
-
-  try {
     const toggleFn = httpsCallable(functions, 'toggleMenuItemAvailability');
     await toggleFn({ itemId, available });
   } catch (fnErr) {
     console.warn("Cloud function toggleMenuItemAvailability notice:", fnErr);
+    try {
+      const itemRef = doc(db, 'menuItems', itemId);
+      const updatePayload = {
+        available,
+        isOrderable: available,
+        availabilityStatus: available ? 'AVAILABLE' : 'OUT_OF_STOCK',
+        updatedAt: Timestamp.now()
+      };
+      if (!available) {
+        updatePayload.stockCount = 0;
+        updatePayload.stockOnHand = 0;
+        updatePayload.availableStock = 0;
+      }
+      await updateDoc(itemRef, updatePayload);
+    } catch (fsErr) {
+      console.error("Direct toggleItemAvailability failed:", fsErr);
+      throw fnErr;
+    }
   }
 }
 
@@ -257,32 +274,35 @@ export async function updateItemStockCount(itemId, count) {
   const newCount = Math.max(0, Math.round(Number(count) || 0));
   const reason = 'Staff dashboard stock count update';
 
-  // 1. Authoritative Firestore update directly (permitted for managers/admins)
-  try {
-    const itemRef = doc(db, 'menuItems', itemId);
-    await updateDoc(itemRef, {
-      stockOnHand: newCount,
-      stockCount: newCount,
-      isOrderable: newCount > 0,
-      available: newCount > 0,
-      updatedAt: Timestamp.now()
-    });
-  } catch (fsErr) {
-    console.warn("Direct Firestore stock update notice:", fsErr);
-  }
-
-  // 2. Also invoke Cloud Function for ledger logging if available
+  // 1. Authoritative Cloud Function update (preserves reservedStock & appends to inventoryLedger)
   try {
     const adjustFn = httpsCallable(functions, 'adjustInventoryStock');
-    await adjustFn({
+    const res = await adjustFn({
       itemId,
       newStock: newCount,
-      changeType: 'MANUAL_CORRECTION',
+      changeType: newCount === 0 ? 'MANUAL_CORRECTION' : 'RESTOCK',
       deltaUnits: 1,
       reason
     });
+    return res.data;
   } catch (fnErr) {
     console.warn("Cloud function adjustInventoryStock notice:", fnErr);
+    // 2. Direct Firestore update fallback for managers/admins only
+    try {
+      const isAvailable = newCount > 0;
+      const itemRef = doc(db, 'menuItems', itemId);
+      await updateDoc(itemRef, {
+        stockOnHand: newCount,
+        stockCount: newCount,
+        isOrderable: isAvailable,
+        available: isAvailable,
+        availabilityStatus: isAvailable ? 'AVAILABLE' : 'OUT_OF_STOCK',
+        updatedAt: Timestamp.now()
+      });
+    } catch (fsErr) {
+      console.error("Direct stock update failed:", fsErr);
+      throw fnErr;
+    }
   }
 }
 
@@ -291,22 +311,23 @@ export async function updateItemStockCount(itemId, count) {
  */
 export async function updateItemDetails(itemId, details) {
   try {
-    const itemRef = doc(db, 'menuItems', itemId);
-    await updateDoc(itemRef, {
-      ...details,
-      updatedAt: Timestamp.now()
-    });
-  } catch (fsErr) {
-    console.warn("Direct Firestore update details notice:", fsErr);
-  }
-
-  try {
     const updateFn = httpsCallable(functions, 'updateMenuItemDetails');
     await updateFn({ itemId, details });
   } catch (fnErr) {
     console.warn("Cloud function updateMenuItemDetails notice:", fnErr);
+    try {
+      const itemRef = doc(db, 'menuItems', itemId);
+      await updateDoc(itemRef, {
+        ...details,
+        updatedAt: Timestamp.now()
+      });
+    } catch (fsErr) {
+      console.error("Direct updateItemDetails failed:", fsErr);
+      throw fnErr;
+    }
   }
 }
+
 
 /**
  * Add or overwrite a menu item via authoritative Cloud Function with Firestore fallback

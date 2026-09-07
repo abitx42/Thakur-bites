@@ -14,6 +14,8 @@ export interface KitchenOrderView {
   status: string;
   priorityLevel: number;
   effectivePriority: number;
+  isOnlyReadyMade?: boolean;
+  readyMadePreference?: string;
   items: Array<{
     itemId: string;
     name: string;
@@ -31,10 +33,17 @@ export interface PickupOrderView {
   studentRoll: string;
   status: string;
   paymentStatus: string;
+  isOnlyReadyMade?: boolean;
+  readyMadePreference?: string;
+  failedPinAttempts?: number;
+  isLockedForInvestigation?: boolean;
+  pinCode?: string;
   items: Array<{
     name: string;
     quantity: number;
   }>;
+  createdAt?: string;
+  collectedAt?: string;
 }
 
 export interface CashierOrderView {
@@ -68,7 +77,7 @@ export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async 
   }
 
   const snap = await db.collection('orders')
-    .where('status', 'in', ['confirmed', 'preparing'])
+    .where('status', 'in', ['confirmed', 'preparing', 'placed', 'payment_pending'])
     .limit(100)
     .get();
 
@@ -83,12 +92,17 @@ export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async 
       ? data.estimatedMinutes
       : (typeof data.estimatedPrepTimeMinutes === 'number' ? data.estimatedPrepTimeMinutes : null);
 
+    const isOnlyReadyMade = data.isOnlyReadyMade === true ||
+      (Array.isArray(data.items) && data.items.length > 0 && data.items.every((it: any) => it.type === 'instant'));
+
     return {
       orderId: doc.id,
       tokenNumber: data.tokenNumber || 'TB-???',
       status: data.status,
       priorityLevel,
       effectivePriority,
+      isOnlyReadyMade,
+      readyMadePreference: data.readyMadePreference || (isOnlyReadyMade ? 'Chilled ❄️ · Direct Handover ✋' : undefined),
       items: (data.items || []).map((it: any) => ({
         itemId: it.itemId,
         name: it.name,
@@ -125,17 +139,21 @@ export const getPickupOrders = onCall<void, Promise<PickupOrderView[]>>(async (r
   await enforceRateLimit(request.auth.uid, 'pickup_view');
 
   const role = (request.auth.token.role as UserRole) || 'student';
-  if (role !== 'pickup' && role !== 'manager' && role !== 'admin' && (role as string) !== 'developer') {
-    throw new HttpsError('permission-denied', 'Permission denied: Pickup role required.');
+  const allowedPickupRoles: UserRole[] = ['pickup', 'kitchen', 'cashier', 'manager', 'admin', 'developer', 'security_admin'];
+  if (!allowedPickupRoles.includes(role)) {
+    throw new HttpsError('permission-denied', 'Permission denied: Pickup or station role required.');
   }
 
   const snap = await db.collection('orders')
-    .where('status', 'in', ['ready', 'preparing'])
+    .where('status', 'in', ['ready', 'preparing', 'confirmed', 'paid', 'collected'])
     .limit(100)
     .get();
 
   return snap.docs.map(doc => {
     const data = doc.data();
+    const isOnlyReadyMade = data.isOnlyReadyMade === true ||
+      (Array.isArray(data.items) && data.items.length > 0 && data.items.every((it: any) => it.type === 'instant'));
+
     return {
       orderId: doc.id,
       tokenNumber: data.tokenNumber || 'TB-???',
@@ -143,10 +161,17 @@ export const getPickupOrders = onCall<void, Promise<PickupOrderView[]>>(async (r
       studentRoll: data.studentRoll || 'TCET',
       status: data.status,
       paymentStatus: data.paymentStatus || 'unpaid',
+      isOnlyReadyMade,
+      readyMadePreference: data.readyMadePreference || (isOnlyReadyMade ? 'Chilled ❄️ · Direct Handover ✋' : undefined),
+      failedPinAttempts: typeof data.failedPinAttempts === 'number' ? data.failedPinAttempts : 0,
+      isLockedForInvestigation: Boolean(data.isLockedForInvestigation),
+      pinCode: data.pinCode ? String(data.pinCode) : undefined,
       items: (data.items || []).map((it: any) => ({
         name: it.name,
         quantity: it.quantity,
       })),
+      createdAt: data.createdAt ? (data.createdAt.toDate ? data.createdAt.toDate().toISOString() : String(data.createdAt)) : undefined,
+      collectedAt: data.collectedAt ? (data.collectedAt.toDate ? data.collectedAt.toDate().toISOString() : String(data.collectedAt)) : undefined,
     };
   });
 });
@@ -172,9 +197,10 @@ export const getCashierOrders = onCall<void, Promise<CashierOrderView[]>>(async 
 
   const snap = await db.collection('orders')
     .where('paymentMethod', '==', 'counter_cash')
-    .where('paymentStatus', '==', 'unpaid')
+    .where('paymentStatus', 'in', ['pending', 'unpaid'])
     .limit(100)
     .get();
+
 
   return snap.docs.map(doc => {
     const data = doc.data();

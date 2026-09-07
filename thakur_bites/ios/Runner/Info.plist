@@ -66,5 +66,38 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- Google Sign-In OAuth Callback URL Schemes -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.391012293021-l3n6hjp9s0r9mcvns7jlq47ibfq4iov7</string>
+				<string>thakurbites</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Razorpay & UPI Application Schemes for Seamless Payment App Handoff -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>upi</string>
+		<string>gpay</string>
+		<string>phonepe</string>
+		<string>paytmmp</string>
+		<string>bhim</string>
+		<string>cred</string>
+		<string>payzapp</string>
+		<string>mobikwik</string>
+	</array>
+	<!-- Purpose strings for Faculty / Staff ID Proof Verification Uploads -->
+	<key>NSCameraUsageDescription</key>
+	<string>Thakur Bites requires camera access to photograph institutional ID proof for faculty/staff verification.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Thakur Bites requires photo library access to upload institutional ID proof for verification.</string>
+	<!-- App Store Export Compliance -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>

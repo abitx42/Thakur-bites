@@ -35,6 +35,7 @@ class CheckoutService {
     required String idempotencyKey,
     required List<CartEntry> entries,
     String paymentMethod = 'online',
+    String? readyMadePreference,
     dynamic student,
   }) async {
     final user = _auth.currentUser;
@@ -53,6 +54,7 @@ class CheckoutService {
         idempotencyKey: idempotencyKey,
         items: items,
         paymentMethod: paymentMethod,
+        readyMadePreference: readyMadePreference,
       );
 
       // Convert server response to local Order model
@@ -73,7 +75,22 @@ class CheckoutService {
           final available = details?['available'] as int? ?? 0;
           throw InsufficientStockException(itemId, itemName, available);
         case 'unavailable':
-          throw CheckoutException('Service temporarily unavailable. Please try again in a moment.');
+          final rawMsg = e.message ?? '';
+          if (rawMsg.isNotEmpty) {
+            throw CanteenPausedException(rawMsg);
+          }
+          throw const CanteenPausedException(
+            'Sorry for the inconvenience! The canteen has temporarily paused accepting online orders. Please visit the counter.',
+          );
+        case 'failed-precondition':
+          final rawMsg = e.message ?? '';
+          if (rawMsg.toLowerCase().contains('paused') ||
+              rawMsg.toLowerCase().contains('degraded') ||
+              rawMsg.toLowerCase().contains('halt') ||
+              rawMsg.toLowerCase().contains('counter')) {
+            throw CanteenPausedException(rawMsg);
+          }
+          throw CheckoutException(rawMsg.isNotEmpty ? rawMsg : 'Order could not be processed at this time.');
         case 'unauthenticated':
           throw CheckoutException('Your session has expired. Please sign in again.');
         case 'permission-denied':
@@ -98,6 +115,7 @@ class CheckoutService {
         name: m['name'] as String? ?? '',
         quantity: (m['quantity'] as num?)?.toInt() ?? 1,
         price: (m['unitPrice'] as num?)?.toDouble() ?? (m['priceRs'] as num?)?.toDouble() ?? 0.0,
+        type: m['type'] as String?,
       );
     }).toList();
 
@@ -121,6 +139,10 @@ class CheckoutService {
     final studentRoll = orderMap['studentRoll'] as String? ?? data['studentRoll'] as String? ?? '';
     final status = orderMap['status'] as String? ?? data['status'] as String? ?? 'confirmed';
     final totalAmount = (orderMap['totalAmount'] as num?)?.toDouble() ?? (orderMap['totalAmountRs'] as num?)?.toDouble() ?? 0.0;
+    final bool isOnlyReadyMade = orderMap['isOnlyReadyMade'] == true ||
+        (items.isNotEmpty && items.every((i) => i.isInstant));
+    final String? readyMadePref = orderMap['readyMadePreference'] as String? ??
+        data['readyMadePreference'] as String?;
 
     return Order(
       id: id,
@@ -135,6 +157,8 @@ class CheckoutService {
       estimatedMinutes: estimatedMinutes,
       totalAmount: totalAmount,
       items: items,
+      isOnlyReadyMade: isOnlyReadyMade,
+      readyMadePreference: readyMadePref,
     );
   }
 }
@@ -153,6 +177,17 @@ class InsufficientStockException implements Exception {
   String toString() => available > 0
       ? 'Only $available units of "$itemName" remaining.'
       : 'Sorry, you got late! Someone already grabbed "$itemName".';
+}
+
+/// Thrown when the canteen has paused online ordering (DEGRADED), is halted, or in financial freeze.
+class CanteenPausedException implements Exception {
+  final String message;
+  final String? mode;
+
+  const CanteenPausedException(this.message, {this.mode});
+
+  @override
+  String toString() => message;
 }
 
 /// General checkout error with a user-facing message.

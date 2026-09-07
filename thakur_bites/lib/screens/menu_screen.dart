@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../models/canteen_operational_status.dart';
 import '../models/menu_item.dart';
 import '../models/order.dart' as app;
 import '../models/user_profile.dart';
@@ -14,6 +15,7 @@ import '../screens/preferences_screen.dart';
 import '../screens/verification_screen.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/canteen_status_banner.dart';
 import '../widgets/category_tabs.dart';
 import '../widgets/menu_item_card.dart';
 import '../widgets/menu_shimmer.dart';
@@ -120,6 +122,17 @@ class _MenuScreenState extends State<MenuScreen> {
     return Column(
       children: [
         _buildHeader(),
+        StreamBuilder<CanteenOperationalStatus>(
+          stream: _firestore.operationalStatusStream(),
+          builder: (context, snapshot) {
+            final status = snapshot.data;
+            if (status == null || status.isNormal) return const SizedBox.shrink();
+            return CanteenStatusBanner(
+              status: status,
+              margin: const EdgeInsets.fromLTRB(18, 4, 18, 8),
+            );
+          },
+        ),
         Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 18),

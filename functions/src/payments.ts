@@ -514,6 +514,60 @@ export const recordCashPayment = onCall<{ orderId: string; idempotencyKey?: stri
 });
 
 /**
+ * Simulated Payment Finalization Endpoint.
+ * Strictly forbidden in production (TB-001 & TB-018 Fail-Closed Invariants).
+ * Only accessible in test/staging/development when isSimulationAllowed() is true.
+ */
+export const simulateOnlinePaymentFinalization = onCall<{ orderId: string }>(async (request) => {
+  enforceAppCheck(request);
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  if (!isSimulationAllowed()) {
+    throw new HttpsError(
+      'permission-denied',
+      'SIMULATION_DISABLED: Payment simulation is strictly prohibited in production environment.'
+    );
+  }
+
+  const { orderId } = request.data || {};
+  if (!orderId || typeof orderId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid orderId is required.');
+  }
+
+  const orderDoc = await db.collection('orders').doc(orderId).get();
+  if (!orderDoc.exists) {
+    throw new HttpsError('not-found', 'Order not found.');
+  }
+
+  const orderData = orderDoc.data()!;
+  if (orderData.studentId !== request.auth.uid && (request.auth.token.role as string) !== 'admin') {
+    throw new HttpsError('permission-denied', 'Cannot simulate payment for another user’s order.');
+  }
+
+  if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
+    return { success: true, alreadyCaptured: true, orderId, tokenNumber: orderData.tokenNumber };
+  }
+
+  const amountPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
+  const gatewayOrderId = orderData.gatewayOrderId || `sim_ord_${orderId}`;
+  const gatewayPaymentId = `sim_pay_${crypto.randomBytes(6).toString('hex')}`;
+
+  return await finalizeSuccessfulPayment({
+    orderId,
+    gatewayOrderId,
+    gatewayPaymentId,
+    amountPaise,
+    currency: orderData.currency || 'INR',
+    source: 'client_verification',
+    actorId: request.auth.uid,
+    signatureOrRef: `SIMULATED_TEST_PAYMENT_${request.auth.uid}`,
+  });
+});
+
+
+/**
  * 5. Authoritative Daily Financial Reconciliation Engine (Asia/Kolkata Timezone)
  */
 export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconciliationRecord> {

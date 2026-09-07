@@ -34,8 +34,9 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
   await enforceRateLimit(request.auth.uid, 'pickup_verify');
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  if (actorRole !== 'pickup' && actorRole !== 'manager' && actorRole !== 'admin' && actorRole !== 'security_admin' && (actorRole as string) !== 'developer') {
-    throw new HttpsError('permission-denied', 'Only pickup counter staff can verify and collect orders.');
+  const allowedPickupRoles: UserRole[] = ['pickup', 'kitchen', 'cashier', 'manager', 'admin', 'developer', 'security_admin'];
+  if (!allowedPickupRoles.includes(actorRole)) {
+    throw new HttpsError('permission-denied', 'Only pickup counter or station staff can verify and collect orders.');
   }
 
   const { orderId, qrToken } = request.data || {};
@@ -87,11 +88,34 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
       throw new HttpsError('permission-denied', 'Order is locked due to repeated verification failures. Physical student ID verification required.');
     }
 
-    // Order must be in 'ready' status before collection is permitted
-    if (orderData.status !== 'ready') {
+    // Strict Payment Barrier (SEC-02): Unpaid orders cannot be handed over
+    const isPaid = orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured';
+    if (!isPaid) {
+      logSecurityEvent({
+        eventType: 'UNPAID_ORDER_PICKUP_ATTEMPTED',
+        orderId,
+        actorUid: request.auth!.uid,
+        severity: 'HIGH',
+        details: { paymentStatus: orderData.paymentStatus, paymentMethod: orderData.paymentMethod },
+      }).catch(() => {});
+
       throw new HttpsError(
         'failed-precondition',
-        `Cannot hand over order. Order is currently in '${orderData.status}' status (must be 'ready').`
+        `Cannot release order. Payment status is '${orderData.paymentStatus || 'pending'}'. Customer must complete payment at the cashier counter first.`
+      );
+    }
+
+
+    // Order must be in 'ready' status or express ready-made before collection is permitted
+    const isReadyOrInstant = orderData.status === 'ready' ||
+      orderData.isOnlyReadyMade === true ||
+      orderData.status === 'confirmed' ||
+      orderData.status === 'preparing';
+
+    if (!isReadyOrInstant) {
+      throw new HttpsError(
+        'failed-precondition',
+        `Cannot hand over order. Order is currently in '${orderData.status}' status (must be 'ready' or ready-made).`
       );
     }
 
@@ -213,6 +237,10 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
       isLockedForInvestigation: false,
     };
 
+    if (!orderData.readyAt) {
+      updates.readyAt = now;
+    }
+
     if (verificationMethod === 'QR') {
       updates.qrConsumedAt = now;
       updates.qrConsumedBy = request.auth!.uid;
@@ -238,7 +266,7 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
     const eventRef = db.collection('orderEvents').doc();
     transaction.set(eventRef, {
       orderId,
-      fromStatus: 'ready',
+      fromStatus: orderData.status || 'ready',
       toStatus: 'collected',
       actorId: request.auth!.uid,
       actorRole,

@@ -126,6 +126,7 @@ export const enrollWorkstation = onCall<EnrollWorkstationRequest>(async (request
 
     const stationType: WorkstationRole = inviteData.stationType;
     const stationName: string = inviteData.stationName;
+    const cleanDeviceName = String(deviceName || (request.data as any)?.label || stationName || 'Canteen Terminal').trim().slice(0, 60);
 
     // Generate authoritative workstation identity
     const randomHex = crypto.randomBytes(4).toString('hex').toUpperCase();
@@ -139,7 +140,7 @@ export const enrollWorkstation = onCall<EnrollWorkstationRequest>(async (request
       stationType,
       stationName,
       tokenHash,
-      deviceName: String(deviceName || 'Canteen Terminal').trim().slice(0, 60),
+      deviceName: cleanDeviceName,
       status: 'ACTIVE',
       enrolledAt: Timestamp.fromMillis(now),
       lastSeenAt: Timestamp.fromMillis(now),
@@ -151,6 +152,9 @@ export const enrollWorkstation = onCall<EnrollWorkstationRequest>(async (request
       workstationToken: rawToken,
       stationType,
       stationName,
+      workstationRole: stationType,
+      label: cleanDeviceName,
+      deviceName: cleanDeviceName,
     };
   });
 

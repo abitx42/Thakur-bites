@@ -109,6 +109,54 @@ class CartProvider extends ChangeNotifier {
 
   bool isAvailable(String itemId) => _entries[itemId]?.isAvailable ?? true;
 
+  /// True if ALL available items in the cart are ready-made (instant items like cold drinks, chips, snacks with 0 min cooking time).
+  bool get isOnlyReadyMade =>
+      availableEntries.isNotEmpty && availableEntries.every((e) => e.item.isInstant);
+
+  /// True if any available item in the cart is a beverage (soda, water, juice, cold drinks).
+  bool get hasBeverage => availableEntries.any((e) {
+    final name = e.item.name.toLowerCase();
+    final cat = e.item.category.toLowerCase();
+    final parent = e.item.parentCategory.toLowerCase();
+    return cat.contains('drink') ||
+        cat.contains('beverage') ||
+        parent.contains('beverage') ||
+        name.contains('coke') ||
+        name.contains('water') ||
+        name.contains('sprite') ||
+        name.contains('juice') ||
+        name.contains('frooti') ||
+        name.contains('coffee') ||
+        name.contains('soda');
+  });
+
+  // ─── Ready-Made Preferences ──────────────────────────────────
+  String _temperaturePreference = 'Chilled ❄️';
+  String _packagingPreference = 'Direct Handover ✋';
+
+  String get temperaturePreference => _temperaturePreference;
+  String get packagingPreference => _packagingPreference;
+
+  /// Consolidated summary of student's preferences for ready-made items.
+  String get readyMadePreferenceSummary {
+    if (!isOnlyReadyMade) return '';
+    return '$_temperaturePreference · $_packagingPreference';
+  }
+
+  void setTemperaturePreference(String pref) {
+    if (_temperaturePreference != pref) {
+      _temperaturePreference = pref;
+      notifyListeners();
+    }
+  }
+
+  void setPackagingPreference(String pref) {
+    if (_packagingPreference != pref) {
+      _packagingPreference = pref;
+      notifyListeners();
+    }
+  }
+
   // ─── Mutations ────────────────────────────────────────────────
 
   /// Add one of this item to cart. Cart is a wishlist — bounded to 99 items per entry.
@@ -216,6 +264,8 @@ class CartProvider extends ChangeNotifier {
   /// Clear entire cart
   void clear() {
     _entries.clear();
+    _temperaturePreference = 'Chilled ❄️';
+    _packagingPreference = 'Direct Handover ✋';
     notifyListeners();
   }
 }

@@ -28,12 +28,15 @@ class FunctionsService {
     required String idempotencyKey,
     required List<Map<String, dynamic>> items,
     required String paymentMethod, // 'online' | 'counter_cash'
+    String? readyMadePreference,
   }) async {
     final callable = _getCallable('createCheckout');
     final result = await callable.call({
       'idempotencyKey': idempotencyKey,
       'items': items,
       'paymentMethod': paymentMethod,
+      if (readyMadePreference != null && readyMadePreference.isNotEmpty)
+        'readyMadePreference': readyMadePreference,
       'appVersion': _appVersion,
     });
     return Map<String, dynamic>.from(result.data as Map);

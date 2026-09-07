@@ -18,6 +18,8 @@ export interface InventoryAdjustmentRequest {
   deltaUnits?: number;
   newStock?: number;
   reason: string;
+  requestId?: string;
+  workstationSessionId?: string;
 }
 
 export interface InventoryAdjustmentResponse {
@@ -154,13 +156,15 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
       stockOnHand: newStockOnHand,
       stockCount: newStockOnHand,
       reservedStock,
+      availableStock: newAvailable,
       isOrderable: newAvailable > 0,
       available: newAvailable > 0,
+      availabilityStatus: newAvailable > 0 ? 'AVAILABLE' : 'OUT_OF_STOCK',
       lastRestockedAt: effectiveDelta! > 0 ? now : itemData.lastRestockedAt || now,
       updatedAt: now,
     });
 
-    // 2. Append to immutable inventoryLedger
+    // 2. Append to immutable inventoryLedger (Append-only guarantee with forensic metadata)
     const ledgerRef = db.collection('inventoryLedger').doc();
     transaction.set(ledgerRef, {
       ledgerId: ledgerRef.id,
@@ -175,6 +179,10 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
       actorId: request.auth!.uid,
       actorRole,
       reason: String(reason).trim(),
+      requestId: request.data?.requestId ? String(request.data.requestId).slice(0, 64) : null,
+      workstationSessionId: request.data?.workstationSessionId ? String(request.data.workstationSessionId).slice(0, 64) : null,
+      clientIp: request.rawRequest ? (request.rawRequest.ip || null) : null,
+      userAgent: request.rawRequest?.headers?.['user-agent'] ? String(request.rawRequest.headers['user-agent']).slice(0, 150) : null,
       timestamp: now,
     });
 

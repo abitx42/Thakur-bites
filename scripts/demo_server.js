@@ -113,6 +113,15 @@ const server = http.createServer((req, res) => {
     'Access-Control-Allow-Origin': '*',
   };
 
+  if (ext === '.html') {
+    headers['X-Content-Type-Options'] = 'nosniff';
+    headers['X-Frame-Options'] = 'SAMEORIGIN';
+    headers['Referrer-Policy'] = 'strict-origin-when-cross-origin';
+    headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()';
+    headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains; preload';
+    headers['Content-Security-Policy'] = "default-src 'self' https://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com; img-src 'self' data: https: blob:; script-src 'self' 'wasm-unsafe-eval' https://www.gstatic.com https://*.firebaseapp.com; connect-src 'self' https://*.googleapis.com https://*.cloudfunctions.net https://*.firebaseio.com https://www.gstatic.com wss://*.firebaseio.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; worker-src 'self' blob:; frame-src 'none';";
+  }
+
   if (compressible && acceptEncoding.includes('gzip')) {
     headers['Content-Encoding'] = 'gzip';
     res.writeHead(200, headers);

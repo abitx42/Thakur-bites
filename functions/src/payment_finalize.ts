@@ -23,7 +23,8 @@ export interface FinalizePaymentResult {
   orderId: string;
   tokenNumber: string;
   amountPaise: number;
-  status: 'confirmed';
+  status: 'confirmed' | 'cancelled';
+  orphaned?: boolean;
 }
 
 /**
@@ -179,7 +180,8 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
         orderId,
         tokenNumber: orderData.tokenNumber || '',
         amountPaise: expectedPaise,
-        status: 'confirmed' as const,
+        status: 'cancelled' as const,
+        orphaned: true,
       };
     }
 
@@ -217,11 +219,12 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     };
     transaction.set(paymentRef, paymentRecord);
 
-    // 7. Create immutable double-entry financial transaction record (Phase 5 Invariant)
+    // 7. Create immutable double-entry financial transaction record (Deterministic ID prevents duplicate postings)
     const isCash = source === 'cashier_counter';
-    const finTxRef = db.collection('financialTransactions').doc();
+    const finTxId = isCash ? `cash_fin_${orderId}` : `pay_fin_${gatewayPaymentId}`;
+    const finTxRef = db.collection('financialTransactions').doc(finTxId);
     const finRecord: FinancialTransactionRecord = {
-      transactionId: finTxRef.id,
+      transactionId: finTxId,
       orderId,
       type: 'PAYMENT_CAPTURE',
       amount: expectedPaise / 100,

@@ -98,11 +98,14 @@ export const generateShiftPin = onCall<GenerateShiftPinRequest>(async (request) 
 
   // Check if active PIN already exists to prevent accidental override
   const existingDoc = await pinRef.get();
+  const forceRegenerate = Boolean((request.data as any)?.forceRegenerate);
   if (existingDoc.exists && existingDoc.data()?.status === 'ACTIVE') {
-    throw new HttpsError(
-      'already-exists',
-      `An active shift PIN for ${role.toUpperCase()} on ${shiftDate} (${shiftWindow}) already exists. Revoke it before generating a new PIN.`
-    );
+    if (!forceRegenerate) {
+      throw new HttpsError(
+        'already-exists',
+        `An active shift PIN for ${role.toUpperCase()} on ${shiftDate} (${shiftWindow}) already exists. Revoke it before generating a new PIN.`
+      );
+    }
   }
 
   // Generate 6-digit CSPRNG PIN

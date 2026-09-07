@@ -1,6 +1,6 @@
 // Phase 10 & Platform 2.0 — Counter Pickup & Dispatch View with Hardware Barcode/QR Scanner Engine
-import { fetchPickupOrders, updateOrderStatus, unlockOrder } from '../firebase.js?v=4';
-import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
+import { fetchPickupOrders, updateOrderStatus, unlockOrder, functions } from '../firebase.js?v=5';
+import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
 
 let pollInterval = null;
@@ -69,7 +69,6 @@ export function renderPickupView(container) {
       const orderId = parts[0];
 
       try {
-        const functions = getFunctions();
         const verifyFn = httpsCallable(functions, 'verifyPickup');
         const res = await verifyFn({ orderId, qrToken: cleanPayload });
 
@@ -137,9 +136,9 @@ export function renderPickupView(container) {
     const activeOrders = currentOrders.filter(o => o.status !== 'collected');
     const collectedOrders = currentOrders.filter(o => o.status === 'collected');
 
-    // Split active into Ready (top priority) and In-Kitchen/Placed
-    const readyOrders = activeOrders.filter(o => o.status === 'ready');
-    const kitchenOrders = activeOrders.filter(o => o.status === 'preparing' || o.status === 'placed' || o.status === 'confirmed');
+    // Split active into Ready (top priority, including ready-made) and In-Kitchen/Placed
+    const readyOrders = activeOrders.filter(o => o.status === 'ready' || o.isOnlyReadyMade);
+    const kitchenOrders = activeOrders.filter(o => !o.isOnlyReadyMade && (o.status === 'preparing' || o.status === 'placed' || o.status === 'confirmed' || o.status === 'paid'));
 
     const filterFn = (order) => {
       if (!cleanSearch) return true;
@@ -314,12 +313,70 @@ export function renderPickupView(container) {
     container.querySelectorAll('.collect-action-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const orderId = btn.getAttribute('data-order-id');
+        const tokenNumber = btn.getAttribute('data-token') || 'Order';
+        const origContent = btn.innerHTML;
         btn.textContent = 'Updating...';
         btn.disabled = true;
 
-        await updateOrderStatus(orderId, 'collected');
-        playScanSound(true);
-        await loadPickupData();
+        try {
+          await updateOrderStatus(orderId, 'collected');
+          playScanSound(true);
+          scannerFeedbackMessage = `✅ ${tokenNumber} Marked as Collected!`;
+          scannerFeedbackType = 'success';
+          await loadPickupData();
+          setTimeout(() => {
+            if (scannerFeedbackMessage && scannerFeedbackMessage.includes(tokenNumber)) {
+              scannerFeedbackMessage = null;
+              render();
+            }
+          }, 4000);
+        } catch (err) {
+          console.error("Pickup collect error:", err);
+          playScanSound(false);
+          alert("Handover Error: " + (err.message || err));
+          btn.disabled = false;
+          btn.innerHTML = origContent;
+        }
+      });
+    });
+
+    container.querySelectorAll('.verify-pin-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const orderId = btn.getAttribute('data-order-id');
+        const tokenNumber = btn.getAttribute('data-token') || 'Order';
+        const enteredPin = prompt(`Enter 4-digit Student Pickup PIN for ${tokenNumber}:`);
+        if (!enteredPin) return;
+
+        const cleanPin = enteredPin.trim();
+        if (!/^\d{4,8}$/.test(cleanPin)) {
+          alert('Invalid PIN format: PIN must be 4 to 8 numeric digits.');
+          return;
+        }
+
+        const origContent = btn.innerHTML;
+        btn.textContent = 'Verifying...';
+        btn.disabled = true;
+
+        try {
+          const verifyFn = httpsCallable(functions, 'verifyPickup');
+          await verifyFn({ orderId, pinCode: cleanPin });
+          playScanSound(true);
+          scannerFeedbackMessage = `✅ ${tokenNumber} Verified with PIN & Collected!`;
+          scannerFeedbackType = 'success';
+          await loadPickupData();
+          setTimeout(() => {
+            if (scannerFeedbackMessage && scannerFeedbackMessage.includes(tokenNumber)) {
+              scannerFeedbackMessage = null;
+              render();
+            }
+          }, 4000);
+        } catch (err) {
+          console.error("PIN verification error:", err);
+          playScanSound(false);
+          alert("PIN Verification Failed: " + (err.message || err));
+          btn.disabled = false;
+          btn.innerHTML = origContent;
+        }
       });
     });
 
@@ -376,11 +433,17 @@ function renderOrderCard(order, isReady) {
             <div style="font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; color: var(--ink-secondary); margin-top: 2px;">
               ${escapeHtml(order.studentName || 'Student')}
             </div>
+            ${order.isOnlyReadyMade ? `
+              <div style="margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; background: #DCFCE7; border: 1px solid #86EFAC; border-radius: 6px; padding: 2px 6px;">
+                <span style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 800; color: #15803D;">⚡ READY-MADE</span>
+                ${order.readyMadePreference ? `<span style="font-family: var(--font-sans); font-size: 0.72rem; font-weight: 700; color: #166534;">(${escapeHtml(order.readyMadePreference)})</span>` : ''}
+              </div>
+            ` : ''}
           </div>
 
           <div style="text-align: right;">
-            <div style="background: ${isReady ? '#DCFCE7' : '#FEF3C7'}; color: ${isReady ? '#15803D' : '#B45309'}; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 3px 8px; border-radius: 6px; text-transform: uppercase;">
-              ${escapeHtml(order.status)}
+            <div style="background: ${isReady ? '#DCFCE7' : (order.isOnlyReadyMade ? '#DCFCE7' : '#FEF3C7')}; color: ${isReady ? '#15803D' : (order.isOnlyReadyMade ? '#15803D' : '#B45309')}; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 3px 8px; border-radius: 6px; text-transform: uppercase;">
+              ${order.isOnlyReadyMade && !isReady ? 'EXPRESS READY' : escapeHtml(order.status)}
             </div>
             ${order.pinCode ? `
               <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #2563EB; margin-top: 4px;">
@@ -410,10 +473,15 @@ function renderOrderCard(order, isReady) {
           <button class="unlock-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" style="width: 100%; background: #DC2626; color: #FFF; border: none; border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;">
             Manager Override Unlock
           </button>
-        ` : (isReady ? `
-          <button class="collect-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" style="width: 100%; background: #16A34A; color: #FFF; border: none; border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
-            <span>✓ Mark Collected</span>
-          </button>
+        ` : ((isReady || order.isOnlyReadyMade) ? `
+          <div style="display: flex; gap: 8px;">
+            <button class="verify-pin-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" style="flex: 1; background: #2563EB; color: #FFF; border: none; border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+              <span>🔑 PIN</span>
+            </button>
+            <button class="collect-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" style="flex: 1.5; background: ${isReady ? '#16A34A' : '#059669'}; color: #FFF; border: none; border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
+              <span>${isReady ? '✓ Mark Collected' : '⚡ Express Handover'}</span>
+            </button>
+          </div>
         ` : `
           <div style="text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 0.8rem; padding: 6px;">
             Waiting on Kitchen prep

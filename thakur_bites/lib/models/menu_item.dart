@@ -87,8 +87,10 @@ class MenuItem {
   int get effectivePricePaise => pricePaise;
 
   /// Effective stock units available for new orders (stockOnHand - reservedStock)
-  int get availableStock =>
-      type == 'cooked' ? 100 : (stockOnHand - reservedStock).clamp(0, 999999);
+  /// Invariant: An item that is sold out or unavailable has strictly 0 available stock.
+  int get availableStock => (!available || isArchived)
+      ? 0
+      : (type == 'cooked' ? 100 : (stockOnHand - reservedStock).clamp(0, 999999));
 
   /// Backwards compatibility alias for code expecting `stockCount`
   int get stockCount => availableStock;
@@ -96,8 +98,8 @@ class MenuItem {
   bool get isCooked => type == 'cooked';
   bool get isInstant => type == 'instant';
 
-  /// An item is truly in-stock if available == true AND (if instant) availableStock > 0
-  bool get isInStock => available && (!isInstant || availableStock > 0);
+  /// An item is truly in-stock if available == true AND !isArchived AND (if instant) availableStock > 0
+  bool get isInStock => available && !isArchived && (!isInstant || availableStock > 0);
 
   /// Availability level for student-facing UI (never shows exact counts)
   AvailabilityLevel get availabilityLevel {
@@ -125,7 +127,10 @@ class MenuItem {
 
   factory MenuItem.fromFirestore(String docId, Map<String, dynamic> data) {
     final isAvail = data['available'] ?? true;
+    final availabilityStatus = data['availabilityStatus'] as String?;
+    final isExplicitlySoldOut = availabilityStatus == 'OUT_OF_STOCK' || data['isOrderable'] == false;
     final type = data['type'] ?? 'instant';
+    final isArchived = data['isArchived'] == true;
     
     // Canonical backend fields: stockOnHand and reservedStock
     // Fallback: legacy stockCount field
@@ -136,7 +141,8 @@ class MenuItem {
     final reservedStock = rawReserved.toInt().clamp(0, 999999);
     final effectiveAvailable = type == 'cooked' ? 100 : (stockOnHand - reservedStock).clamp(0, 999999);
 
-    final isArchived = data['isArchived'] == true;
+    final finalAvailable = !isArchived && isAvail && !isExplicitlySoldOut && (type != 'instant' || effectiveAvailable > 0);
+
     final category = data['category'] ?? '';
     final parentCategory = data['parentCategory'] as String?;
     final subCategory = data['subCategory'] as String?;
@@ -162,9 +168,9 @@ class MenuItem {
       type: type,
       inventoryMode: inventoryMode,
       prepMinutes: data['prepMinutes'] ?? 0,
-      available: !isArchived && isAvail && (type != 'instant' || effectiveAvailable > 0),
+      available: finalAvailable,
       isArchived: isArchived,
-      stockOnHand: stockOnHand,
+      stockOnHand: finalAvailable ? stockOnHand : 0,
       reservedStock: reservedStock,
       batchDate: data['batchDate'],
       imageUrl: data['imageUrl'] ?? '',

@@ -125,6 +125,10 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                     child: Column(
                       children: [
                         _buildTokenCard(order),
+                        if (order.isOnlyReadyMade) ...[
+                          const SizedBox(height: 14),
+                          _buildReadyMadePreferenceCard(order),
+                        ],
                         const SizedBox(height: 24),
                         _buildTracker(order),
                         if (order.isCollected) ...[
@@ -143,9 +147,95 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     );
   }
 
+  /// Express ready-made preference card
+  Widget _buildReadyMadePreferenceCard(app.Order order) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0FDF4),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFDCFCE7),
+                  shape: BoxShape.circle,
+                ),
+                child: const Text('⚡', style: TextStyle(fontSize: 16)),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'Ready-Made Order',
+                          style: AppFonts.display(fontSize: 15),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF16A34A),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'EXPRESS',
+                            style: AppFonts.mono(fontSize: 9, fontWeight: FontWeight.w800, color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Direct counter pickup · No kitchen wait',
+                      style: AppFonts.body(fontSize: 11.5, color: const Color(0xFF166534)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (order.readyMadePreference != null && order.readyMadePreference!.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFDCFCE7),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded, size: 14, color: Color(0xFF15803D)),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Preference: ${order.readyMadePreference}',
+                      style: AppFonts.mono(fontSize: 11, fontWeight: FontWeight.w700, color: const Color(0xFF15803D)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   /// Token + ready time card at the top
   Widget _buildTokenCard(app.Order order) {
-    final waitLabel = EtaService.getWaitTimeLabel(order.estimatedMinutes);
+    final waitLabel = order.isOnlyReadyMade
+        ? '⚡ Express Counter'
+        : EtaService.getWaitTimeLabel(order.estimatedMinutes);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -174,12 +264,12 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(waitLabel,
-                  style: AppFonts.body(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.inkSoft)),
+                  style: AppFonts.body(fontSize: 11, fontWeight: FontWeight.w600, color: order.isOnlyReadyMade ? const Color(0xFF16A34A) : AppColors.inkSoft)),
               const SizedBox(height: 2),
               Text(
-                order.readyAt != null ? _formatTime(order.readyAt!) : 'Ready Now',
+                order.isOnlyReadyMade ? 'Ready Now' : (order.readyAt != null ? _formatTime(order.readyAt!) : 'Ready Now'),
                 style: AppFonts.mono(
-                    fontSize: 14, fontWeight: FontWeight.w700),
+                    fontSize: 14, fontWeight: FontWeight.w700, color: order.isOnlyReadyMade ? const Color(0xFF16A34A) : AppColors.ink),
               ),
             ],
           ),
@@ -198,8 +288,10 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
         subtitle: 'Payment verified, token issued',
       ),
       _StepData(
-        title: 'Preparing in Kitchen',
-        subtitle: 'Your dishes are cooking at the station',
+        title: order.isOnlyReadyMade ? '⚡ Express Packaging' : 'Preparing in Kitchen',
+        subtitle: order.isOnlyReadyMade
+            ? 'Items packaged at counter — no kitchen cooking needed!'
+            : 'Your dishes are cooking at the station',
       ),
       _StepData(
         title: 'Ready for pickup',

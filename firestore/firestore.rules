@@ -56,29 +56,33 @@ service cloud.firestore {
     }
 
     // ─── Menu Items (Server Authority Architecture) ───────────────
-    // Public read for live canteen catalog. Audited Cloud Functions or Staff/Admin writes.
+    // Public read for live canteen catalog. Modifications restricted to Managers/Admins or audited Cloud Functions.
     match /menuItems/{itemId} {
       allow read: if true;
-      allow write: if isOperationalStaff();
+      allow write: if isManagerOrAdmin()
+        && (!('price' in request.resource.data) || (request.resource.data.price is number && request.resource.data.price > 0 && request.resource.data.price <= 10000))
+        && (!('stockOnHand' in request.resource.data) || (request.resource.data.stockOnHand is int && request.resource.data.stockOnHand >= 0))
+        && (!('reservedStock' in request.resource.data) || (request.resource.data.reservedStock is int && request.resource.data.reservedStock >= 0));
     }
 
     // ─── Categories & Subcategories Taxonomy ──────────────────────
     match /categories/{categoryId} {
       allow read: if true;
-      allow write: if isOperationalStaff();
+      allow write: if isManagerOrAdmin();
 
       match /subcategories/{subId} {
         allow read: if true;
-        allow write: if isOperationalStaff();
+        allow write: if isManagerOrAdmin();
       }
     }
+
 
     // ─── Orders (Least-Privilege Isolation) ───────────────────────
     // Students read their own orders. Managers/Admins can inspect raw records.
     // Kitchen & Pickup MUST read station-filtered data through getKitchenOrders/getPickupOrders.
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (
-        resource.data.studentId == request.auth.uid || isManagerOrAdmin()
+        resource.data.studentId == request.auth.uid || isOperationalStaff()
       );
       allow write: if false; // All mutations strictly through Cloud Functions
     }
@@ -262,9 +266,13 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         resource.data.userId == request.auth.uid || isManagerOrAdmin()
       );
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'SUBMITTED'
+        && request.resource.data.keys().hasOnly(['applicationId', 'userId', 'applicationType', 'employeeId', 'department', 'designation', 'officialEmail', 'claimedEmployeeId', 'claimedDepartment', 'claimedDesignation', 'claimedOfficialEmail', 'idProofStoragePath', 'status', 'submittedAt']);
       allow update, delete: if isManagerOrAdmin();
     }
+
 
     // ─── Priority Configuration ──────────────────────────────────
     match /priorityConfig/{configId} {
@@ -316,6 +324,11 @@ service cloud.firestore {
 
     match /publicLiveQueue/{otherDoc} {
       allow read, write: if false;
+    }
+
+    // ─── Authoritative Claims (Isolated Server State) ────────────
+    match /authoritativeClaims/{uid} {
+      allow read, write: if false; // Server Admin SDK only
     }
 
     // ─── Default Deny ────────────────────────────────────────────

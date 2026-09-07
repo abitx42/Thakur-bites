@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>391012293021-l3n6hjp9s0r9mcvns7jlq47ibfq4iov7.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.391012293021-l3n6hjp9s0r9mcvns7jlq47ibfq4iov7</string>
+	<key>API_KEY</key>
+	<string>AIzaSyAL9xLB6NqD8QoEt5fhcAhLZryY-tUs-M8</string>
+	<key>GCM_SENDER_ID</key>
+	<string>391012293021</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.thakurbites.thakurBites</string>
+	<key>PROJECT_ID</key>
+	<string>adi-thakur-bite</string>
+	<key>STORAGE_BUCKET</key>
+	<string>adi-thakur-bite.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:391012293021:ios:8df854cb214c126fc97774</string>
+</dict>
+</plist>

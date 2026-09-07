@@ -51,6 +51,7 @@ export interface CheckoutRequest {
   idempotencyKey: string;
   items: CheckoutRequestItem[];
   paymentMethod?: PaymentMethod;
+  readyMadePreference?: string;
   appVersion?: string;
 }
 
@@ -81,6 +82,8 @@ export interface OrderDocument {
   currency: 'INR';
   items: OrderItemSnapshot[];
   estimatedMinutes: number;
+  isOnlyReadyMade?: boolean;
+  readyMadePreference?: string;
   gatewayOrderId?: string;
   gatewayPaymentId?: string;
   createdAt: Timestamp;

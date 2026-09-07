@@ -86,6 +86,45 @@ void main() {
       expect(item.isInStock, isFalse);
       expect(item.badgeText, 'Sold out');
       expect(item.availabilityLevel, AvailabilityLevel.soldOut);
+      expect(item.availableStock, 0);
+      expect(item.stockCount, 0);
+    });
+
+    test('Sold out item with available=false strictly has 0 quantity and Sold out status', () {
+      final item = MenuItem(
+        id: 'bisleri_water',
+        name: 'Bisleri Mineral Water (500ml)',
+        price: 10,
+        category: 'Cold Drinks',
+        type: 'instant',
+        prepMinutes: 0,
+        stockOnHand: 2,
+        reservedStock: 2,
+        available: false,
+      );
+
+      expect(item.availableStock, 0);
+      expect(item.stockCount, 0);
+      expect(item.isInStock, isFalse);
+      expect(item.badgeText, 'Sold out');
+      expect(item.availabilityLevel, AvailabilityLevel.soldOut);
+    });
+
+    test('Cooked item when unavailable strictly has 0 availableStock', () {
+      final item = MenuItem(
+        id: 'special_dosa',
+        name: 'Special Dosa',
+        price: 80,
+        category: 'dosa',
+        type: 'cooked',
+        prepMinutes: 5,
+        available: false,
+      );
+
+      expect(item.availableStock, 0);
+      expect(item.stockCount, 0);
+      expect(item.isInStock, isFalse);
+      expect(item.badgeText, 'Sold out');
     });
 
     test('Price in paise and effectivePricePaise calculate accurately', () {

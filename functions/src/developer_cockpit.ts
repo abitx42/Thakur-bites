@@ -6,6 +6,7 @@ import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
 import { assertCapability, hasCapability, ROLE_CAPABILITY_MATRIX, SystemCapability } from './authorization_policy';
+import { assertPrivilegedSession } from './privileged_guard';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -113,6 +114,10 @@ export const getDeveloperTelemetry = onCall(async (request) => {
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'view_telemetry', 'Only developers or administrators can access developer telemetry.');
 
+  if ((request.data as any)?.privilegedSessionId) {
+    await assertPrivilegedSession(request.auth.uid, (request.data as any).privilegedSessionId, 'view_telemetry');
+  }
+
   // 1. Fetch recent security incidents
   const incidentsSnap = await db
     .collection('securityIncidents')
@@ -193,6 +198,7 @@ export type EmergencyActionType = 'FREEZE_FINANCIALS' | 'KILL_SWITCH' | 'UNFREEZ
 export interface RequestStepUpChallengeData {
   action: EmergencyActionType;
   reason: string;
+  privilegedSessionId?: string;
 }
 
 export interface RequestStepUpChallengeResponse {
@@ -207,6 +213,7 @@ export interface EmergencyActionRequest {
   challengeId: string;
   challengeNonce: string;
   reason: string;
+  privilegedSessionId?: string;
 }
 
 /**
@@ -237,6 +244,10 @@ export const requestEmergencyStepUpChallenge = onCall<RequestStepUpChallengeData
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'emergency_freeze', 'Separation of Duties: Step-up challenges restricted strictly to authorized engineering administrators (developer / security_admin).');
+
+  if (request.data?.privilegedSessionId) {
+    await assertPrivilegedSession(request.auth.uid, request.data.privilegedSessionId, 'request_emergency_step_up');
+  }
 
   const { action, reason } = request.data || {};
   if (!action || !reason || typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 200 || !['FREEZE_FINANCIALS', 'KILL_SWITCH', 'UNFREEZE_PLATFORM'].includes(action)) {
@@ -293,6 +304,10 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
   const authUid = request.auth.uid;
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'emergency_freeze', 'Separation of Duties: Emergency actions restricted strictly to authorized engineering administrators (developer / security_admin).');
+
+  if (request.data?.privilegedSessionId) {
+    await assertPrivilegedSession(request.auth.uid, request.data.privilegedSessionId, 'execute_emergency_action');
+  }
 
   const { action, challengeId, challengeNonce, reason } = request.data || {};
   if (!action || !challengeId || !challengeNonce || !reason) {

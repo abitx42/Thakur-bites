@@ -208,7 +208,9 @@ class _TicketScreenState extends State<TicketScreen>
             ? const Color(0xFFD97706)
             : order.isCollected
                 ? const Color(0xFF6B7280)
-                : AppColors.red;
+                : order.isPaymentPending
+                    ? const Color(0xFFD97706)
+                    : AppColors.red;
 
     final statusText = order.isReady
         ? 'READY FOR PICKUP 🟢'
@@ -216,7 +218,10 @@ class _TicketScreenState extends State<TicketScreen>
             ? 'PREPARING IN KITCHEN 🟡'
             : order.isCollected
                 ? 'COLLECTED AT COUNTER ⚪️'
-                : 'ORDER CONFIRMED 🔴';
+                : order.isPaymentPending
+                    ? 'PAY AT CASHIER DESK 🟠'
+                    : 'ORDER CONFIRMED 🔴';
+
 
     return Container(
       width: double.infinity,
@@ -294,6 +299,56 @@ class _TicketScreenState extends State<TicketScreen>
                   ),
                 ),
 
+                if (order.isOnlyReadyMade) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFF86EFAC), width: 1.2),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('⚡', style: TextStyle(fontSize: 14)),
+                            const SizedBox(width: 6),
+                            Text(
+                              'EXPRESS READY-MADE ORDER',
+                              style: AppFonts.mono(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF15803D),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (order.readyMadePreference != null && order.readyMadePreference!.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Preference: ${order.readyMadePreference}',
+                            style: AppFonts.body(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF166534),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 2),
+                        Text(
+                          'Collect immediately at Express Counter (0 min wait)',
+                          style: AppFonts.body(
+                            fontSize: 10.5,
+                            color: const Color(0xFF166534),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
                 const SizedBox(height: 14),
 
                 // Dashed divider
@@ -367,13 +422,15 @@ class _TicketScreenState extends State<TicketScreen>
 
                 // Ready time & timestamp
                 Text(
-                  order.estimatedMinutes > 0
-                      ? 'Ready in ~${order.estimatedMinutes} min'
-                      : 'Ready now',
+                  order.isOnlyReadyMade
+                      ? '⚡ Ready now at Express Counter'
+                      : (order.estimatedMinutes > 0
+                          ? 'Ready in ~${order.estimatedMinutes} min'
+                          : 'Ready now'),
                   style: AppFonts.body(
                     fontSize: 13.5,
                     fontWeight: FontWeight.w600,
-                    color: AppColors.ink,
+                    color: order.isOnlyReadyMade ? const Color(0xFF16A34A) : AppColors.ink,
                   ),
                 ),
                 const SizedBox(height: 2),

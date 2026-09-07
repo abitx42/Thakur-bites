@@ -123,8 +123,11 @@ export async function reserveInventoryInTransaction(
     transaction.update(upd.itemRef, {
       stockOnHand: upd.stockOnHand,
       reservedStock: upd.newReservedStock,
+      availableStock: upd.newAvailableStock,
+      stockCount: upd.newAvailableStock,
       isOrderable: upd.newAvailableStock > 0,
       available: upd.newAvailableStock > 0,
+      availabilityStatus: upd.newAvailableStock > 0 ? 'AVAILABLE' : 'OUT_OF_STOCK',
       updatedAt: now,
     });
 
@@ -232,8 +235,11 @@ export async function commitInventoryInTransaction(
     transaction.update(upd.itemRef, {
       stockOnHand: upd.newStockOnHand,
       reservedStock: upd.newReservedStock,
+      availableStock: upd.newAvailableStock,
+      stockCount: upd.newAvailableStock,
       isOrderable: upd.newAvailableStock > 0,
       available: upd.newAvailableStock > 0,
+      availabilityStatus: upd.newAvailableStock > 0 ? 'AVAILABLE' : 'OUT_OF_STOCK',
       updatedAt: now,
     });
 
@@ -333,8 +339,11 @@ export async function releaseInventoryInTransaction(
     transaction.update(upd.itemRef, {
       stockOnHand: upd.stockOnHand,
       reservedStock: upd.newReservedStock,
+      availableStock: upd.newAvailableStock,
+      stockCount: upd.newAvailableStock,
       isOrderable: upd.newAvailableStock > 0,
       available: upd.newAvailableStock > 0,
+      availabilityStatus: upd.newAvailableStock > 0 ? 'AVAILABLE' : 'OUT_OF_STOCK',
       updatedAt: now,
     });
 

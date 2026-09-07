@@ -1,6 +1,6 @@
 // Staff Firebase Authentication & Role-Based Access Control (RBAC) with Shift PINs & Device Binding
-import { auth, staffLogin, staffLogout, subscribeStaffAuth } from './firebase.js?v=4';
-import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
+import { auth, staffLogin, staffLogout, subscribeStaffAuth, functions } from './firebase.js?v=5';
+import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
 // Clear any stale demo localStorage keys
@@ -75,6 +75,19 @@ let currentStaffState = {
   deviceId: getOrCreateDeviceId(),
 };
 
+const authSubscribers = [];
+
+export function onStaffAuthStateChanged(callback) {
+  authSubscribers.push(callback);
+  if (currentStaffState.isAuthenticated) {
+    try { callback(currentStaffState); } catch (_) {}
+  }
+  return () => {
+    const idx = authSubscribers.indexOf(callback);
+    if (idx !== -1) authSubscribers.splice(idx, 1);
+  };
+}
+
 // Listen to authoritative Firebase Auth state
 subscribeStaffAuth((state) => {
   if (state.isAuthenticated && auth.currentUser) {
@@ -87,6 +100,9 @@ subscribeStaffAuth((state) => {
       deviceId: getOrCreateDeviceId(),
     };
   }
+  authSubscribers.forEach(cb => {
+    try { cb(currentStaffState); } catch (_) {}
+  });
 });
 
 export const staffAuth = {
@@ -127,7 +143,6 @@ export const staffAuth = {
     }
 
     try {
-      const functions = getFunctions();
       const verifyFn = httpsCallable(functions, 'verifyShiftPin');
 
       const res = await verifyFn({
@@ -153,7 +168,6 @@ export const staffAuth = {
 
   async authenticatePrivilegedSession(totpCode, recoveryCode) {
     try {
-      const functions = getFunctions();
       const createSessionFn = httpsCallable(functions, 'createPrivilegedSession');
       const res = await createSessionFn({ totpCode, recoveryCode });
       if (res.data?.sessionId) {
@@ -164,6 +178,28 @@ export const staffAuth = {
     } catch (err) {
       return { success: false, error: err.message || 'MFA TOTP verification failed.' };
     }
+  },
+
+  getRole() {
+    return currentStaffState.role;
+  },
+
+  getDeviceId() {
+    return currentStaffState.deviceId;
+  },
+
+  async refreshTokenClaims() {
+    if (auth.currentUser) {
+      try {
+        const tokenResult = await auth.currentUser.getIdTokenResult(true);
+        if (tokenResult.claims && tokenResult.claims.role) {
+          currentStaffState.role = tokenResult.claims.role;
+        }
+      } catch (e) {
+        console.warn("Token refresh warning:", e);
+      }
+    }
+    return currentStaffState.role;
   },
 
   async quickAuth() {
@@ -178,20 +214,6 @@ export const staffAuth = {
     } catch (_) {}
     await staffLogout().catch(() => {});
     currentStaffState = { user: null, role: null, isAuthenticated: false, deviceId: getOrCreateDeviceId() };
-  },
-
-  async refreshToken() {
-    if (currentStaffState.user) {
-      try {
-        const tokenResult = await currentStaffState.user.getIdTokenResult?.(true);
-        const role = tokenResult?.claims?.role || currentStaffState.role || 'staff';
-        currentStaffState.role = role;
-        return role;
-      } catch (e) {
-        console.warn("Token refresh warning:", e);
-      }
-    }
-    return currentStaffState.role;
   }
 };
 
@@ -200,11 +222,20 @@ export const staffAuth = {
  */
 export async function enrollWorkstationClient(inviteCode, label = 'Terminal', stationRole = 'kitchen') {
   try {
-    const functions = getFunctions();
     const fn = httpsCallable(functions, 'enrollWorkstation');
-    const res = await fn({ inviteCode: inviteCode.trim().toUpperCase(), label: label.trim(), stationRole });
+    const res = await fn({
+      inviteCode: inviteCode.trim().toUpperCase(),
+      deviceName: label.trim(),
+      label: label.trim(),
+      stationRole,
+    });
     if (res.data?.success) {
-      saveRegisteredWorkstation(res.data.workstationId, res.data.workstationToken, res.data.workstationRole, res.data.label);
+      saveRegisteredWorkstation(
+        res.data.workstationId,
+        res.data.workstationToken,
+        res.data.stationType || res.data.workstationRole || stationRole,
+        res.data.stationName || res.data.label || res.data.deviceName || label
+      );
       return { success: true, data: res.data };
     }
     return { success: false, error: 'Registration failed.' };
@@ -429,6 +460,11 @@ export function renderPinPadModal(container, onUnlocked) {
         if (res.success) {
           activeTab = 'pin';
           render();
+          const succBox = container.querySelector('#auth-success-box');
+          if (succBox) {
+            succBox.textContent = `✅ Terminal successfully authorized and bound as ${res.data?.stationName || label} (${(res.data?.stationType || selectedPinRole).toUpperCase()})! Enter your 6-digit shift PIN below.`;
+            succBox.style.display = 'block';
+          }
         } else {
           submitEnrollBtn.disabled = false;
           submitEnrollBtn.textContent = 'Authorize & Bind Terminal →';

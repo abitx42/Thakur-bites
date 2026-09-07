@@ -1,6 +1,7 @@
 // Thakur Bites Platform 2.0 — Free-First RFC 6238 TOTP Authenticator MFA Modals
 import { staffAuth, savePrivilegedSession } from '../auth.js?v=8';
-import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
+import { functions } from '../firebase.js?v=5';
+import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 
 function escapeHtml(str) {
   if (typeof str !== 'string') str = String(str ?? '');
@@ -122,7 +123,6 @@ export function renderPrivilegedAuthModal(container, { onSuccess, onCancel }) {
       render();
 
       try {
-        const functions = getFunctions();
         const createSessionFn = httpsCallable(functions, 'createPrivilegedSession');
         const payload = isRecoveryMode ? { recoveryCode: enteredCode.trim() } : { totpCode: enteredCode.trim() };
         const res = await createSessionFn(payload);
@@ -166,7 +166,6 @@ export function renderMfaEnrollmentModal(container, { onEnrolled, onCancel }) {
 
   async function initEnrollment() {
     try {
-      const functions = getFunctions();
       const enrollFn = httpsCallable(functions, 'enrollMfaTotp');
       const res = await enrollFn();
       enrollmentData = res.data;
@@ -284,7 +283,6 @@ export function renderMfaEnrollmentModal(container, { onEnrolled, onCancel }) {
       render();
 
       try {
-        const functions = getFunctions();
         const verifyFn = httpsCallable(functions, 'verifyAndEnableMfaTotp');
         await verifyFn({ code: verifyCode.trim() });
         alert('MFA Protection Successfully Activated!');

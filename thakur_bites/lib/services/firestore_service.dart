@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
+import '../models/canteen_operational_status.dart';
 import '../models/menu_item.dart';
 import '../models/order.dart' as app;
 import '../models/student.dart';
@@ -142,5 +143,15 @@ class FirestoreService {
               .map((doc) => app.Order.fromFirestore(doc.id, doc.data()))
               .toList(),
         );
+  }
+
+  /// Real-time stream of public operational status (e.g. NORMAL, DEGRADED, FINANCIAL_FROZEN, EMERGENCY_HALT)
+  Stream<CanteenOperationalStatus> operationalStatusStream() {
+    return _db.collection('publicSystemStatus').doc('global').snapshots().map((doc) {
+      if (!doc.exists || doc.data() == null) {
+        return CanteenOperationalStatus.normal();
+      }
+      return CanteenOperationalStatus.fromMap(doc.data()!);
+    });
   }
 }

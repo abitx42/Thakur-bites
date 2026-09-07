@@ -1,5 +1,6 @@
 // Thakur Bites Platform 2.0 — Server-Authoritative Workstation Hardware Management
-import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
+import { functions } from '../firebase.js?v=5';
+import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 
 let activeInvites = [];
 let registeredWorkstations = [];
@@ -22,7 +23,6 @@ export function renderWorkstationView(container) {
     loading = true;
     render();
     try {
-      const functions = getFunctions();
       const listFn = httpsCallable(functions, 'listRegisteredWorkstations');
       const res = await listFn();
       registeredWorkstations = res.data?.workstations || [];
@@ -197,7 +197,6 @@ export function renderWorkstationView(container) {
       }
 
       try {
-        const functions = getFunctions();
         const createInviteFn = httpsCallable(functions, 'createWorkstationInvite');
         const res = await createInviteFn({ stationType: type, stationName: name });
         activeInvites.push(res.data);
@@ -217,7 +216,6 @@ export function renderWorkstationView(container) {
         }
 
         try {
-          const functions = getFunctions();
           const revokeFn = httpsCallable(functions, 'revokeWorkstation');
           await revokeFn({ workstationId: wsId, reason: 'Manual administrative revocation' });
           feedbackMessage = { type: 'success', text: `Workstation ${wsId} revoked successfully.` };

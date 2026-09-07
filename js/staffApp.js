@@ -1,8 +1,7 @@
-// Thakur Bites — Dedicated Staff Operations Workstation (Kitchen KDS & Pickup Counter)
-import { staffAuth, renderPinPadModal, getRegisteredWorkstation } from './auth.js?v=8';
-import { renderKitchenView } from './views/kitchenView.js?v=5';
-import { renderPickupView } from './views/pickupView.js?v=5';
-import { renderAdminView } from './views/adminView.js?v=6';
+import { staffAuth, renderPinPadModal, getRegisteredWorkstation, onStaffAuthStateChanged } from './auth.js?v=10';
+import { renderKitchenView } from './views/kitchenView.js?v=6';
+import { renderPickupView } from './views/pickupView.js?v=6';
+import { renderAdminView } from './views/adminView.js?v=9';
 
 let currentStaffWorkstationView = 'kitchen'; // 'kitchen' | 'pickup' | 'menu'
 
@@ -158,6 +157,9 @@ function initStaffWorkstation() {
   }
 
   render();
+  onStaffAuthStateChanged(() => {
+    render();
+  });
 }
 
 window.addEventListener('DOMContentLoaded', initStaffWorkstation);

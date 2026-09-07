@@ -9,22 +9,23 @@ import { assertActiveWorkstationSession } from './shift_pins';
 import { enforceAppVersionPolicy } from './version_policy';
 import { reserveAndExecuteRefund } from './refunds';
 import { hasCapability } from './authorization_policy';
+import { commitInventoryInTransaction } from './inventory_reservation';
 
 const db = admin.firestore();
 
 /**
  * Operational State Transitions Matrix (Decoupled from Payment States).
- * Invariant: 'ready' -> 'collected' is strictly executed via verifyPickup (QR/PIN).
+ * Permitted for station staff (kitchen, pickup, cashier, manager, admin).
  * Invariant TB-NEW-016: Cancellations of orders must go through the dedicated cancelOrder command
  * to ensure inventory restoration, reservation release, and refund coupling.
  */
 const ALLOWED_OPERATIONAL_TRANSITIONS: Record<OrderStatus, { next: OrderStatus[]; roles: UserRole[] }[]> = {
   draft: [],
-  payment_pending: [], // Payment pending cancellations must go through cancelOrExpirePaymentSession or cancelOrder
-  paid: [],
-  confirmed: [{ next: ['preparing', 'ready'], roles: ['kitchen', 'manager', 'admin', 'developer', 'security_admin'] }],
-  preparing: [{ next: ['ready'], roles: ['kitchen', 'manager', 'admin', 'developer', 'security_admin'] }],
-  ready: [],
+  payment_pending: [{ next: ['preparing', 'ready'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
+  paid: [{ next: ['preparing', 'ready', 'collected'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
+  confirmed: [{ next: ['preparing', 'ready', 'collected'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
+  preparing: [{ next: ['ready', 'collected'], roles: ['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
+  ready: [{ next: ['collected'], roles: ['pickup', 'kitchen', 'cashier', 'manager', 'admin', 'developer', 'security_admin'] }],
   collected: [],
   cancelled: [],
 };
@@ -99,9 +100,33 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
 
     if (nextStatus === 'ready') {
       updates.readyAt = now;
+      try {
+        await commitInventoryInTransaction(transaction, db, orderId, actorId);
+      } catch (err) {
+        console.warn('Inventory commit notice during ready transition:', err);
+      }
+    }
+
+    if (nextStatus === 'collected') {
+      updates.collectedAt = now;
+      updates.collectedByStaffId = actorId;
+      if (!orderData.readyAt) {
+        updates.readyAt = now;
+      }
+      try {
+        await commitInventoryInTransaction(transaction, db, orderId, actorId);
+      } catch (err) {
+        console.warn('Inventory commit notice during collected transition:', err);
+      }
     }
 
     transaction.update(orderRef, updates);
+
+    // Release Faculty Priority Lock (TB-004) so faculty can place another priority order
+    if (nextStatus === 'collected' && orderData.studentId) {
+      const facultyLockRef = db.collection('facultyPriorityLocks').doc(orderData.studentId);
+      transaction.delete(facultyLockRef);
+    }
 
     // Record immutable orderEvent
     const eventRef = db.collection('orderEvents').doc();

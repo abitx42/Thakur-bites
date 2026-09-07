@@ -1,6 +1,7 @@
 // Phase 11 — Live Menu & Stock Management View with Distinct Cooked vs Store Item Logic
 import { 
   db,
+  functions,
   subscribeMenuItems, 
   toggleItemAvailability, 
   updateItemStockCount, 
@@ -9,11 +10,11 @@ import {
   archiveMenuItem,
   deleteMenuItem,
   uploadMenuImage
-} from '../firebase.js?v=4';
+} from '../firebase.js?v=5';
 import { renderMenuVisualHtml, VISUAL_FAMILIES } from '../menuVisualResolver.js';
 import { staffAuth } from '../auth.js?v=8';
 import { doc, onSnapshot, collection, query, where } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
+import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
 
 let unsubscribeMenu = null;
@@ -25,10 +26,22 @@ let currentApplications = [];
 let currentShiftPins = [];
 let showAddModal = false;
 let editingItem = null; // Item object currently being edited in details modal
+let showCredModal = false; // Issue Shift PIN & Terminal Code Modal
+let credModalTab = 'pin'; // 'pin' | 'terminal'
+let credModalResult = null; // { type: 'pin' | 'terminal', ... }
+let credModalLoading = false;
+let credModalError = null;
 let currentMode = 'NORMAL';
 let modeLoading = false;
+let showOperationalModal = false;
+let targetOperationalMode = null;
+let operationalModeReason = '';
+let operationalModeError = null;
+let operationalModeLoading = false;
 let selectedParentFilter = 'ALL';
 let selectedSubFilter = 'ALL';
+let menuSearchQuery = '';
+let stockStatusFilter = 'ALL';
 
 export function renderAdminView(container, options = {}) {
   const isStaffMode = Boolean(options && options.staffMode);
@@ -40,15 +53,54 @@ export function renderAdminView(container, options = {}) {
 
   function render() {
     const nonArchivedItems = currentItems.filter(i => !i.isArchived);
+    const cleanSearch = (menuSearchQuery || '').trim().toLowerCase();
+
     const visibleItems = nonArchivedItems.filter(item => {
+      // 1. Text Search Filter across name, ID, category, subcategory, tags, type, price
+      if (cleanSearch) {
+        const nameMatch = (item.name || '').toLowerCase().includes(cleanSearch);
+        const idMatch = (item.id || '').toLowerCase().includes(cleanSearch);
+        const subCatMatch = (item.subCategory || '').toLowerCase().includes(cleanSearch);
+        const catMatch = (item.category || '').toLowerCase().includes(cleanSearch);
+        const parentMatch = (item.parentCategory || '').toLowerCase().includes(cleanSearch);
+        const batchMatch = (item.batchDate || '').toLowerCase().includes(cleanSearch);
+        const priceMatch = String(item.price || '').includes(cleanSearch);
+        const tagMatch = Array.isArray(item.tags) && item.tags.some(t => String(t).toLowerCase().includes(cleanSearch));
+        const typeMatch = item.type === 'instant'
+          ? (cleanSearch === 'packaged' || cleanSearch === 'store' || cleanSearch === 'instant' || cleanSearch === 'package' || cleanSearch === 'inventory')
+          : (cleanSearch === 'kitchen' || cleanSearch === 'cooked' || cleanSearch === 'cook');
+
+        if (!nameMatch && !idMatch && !subCatMatch && !catMatch && !parentMatch && !batchMatch && !priceMatch && !tagMatch && !typeMatch) {
+          return false;
+        }
+      }
+
+      // 2. Parent Category Filter
       if (selectedParentFilter !== 'ALL') {
         const p = (item.parentCategory || '').toUpperCase();
         if (p && p !== selectedParentFilter) return false;
       }
+
+      // 3. Subcategory Filter
       if (selectedSubFilter !== 'ALL') {
         const s = (item.subCategory || item.category || '').toLowerCase();
         if (s !== selectedSubFilter.toLowerCase()) return false;
       }
+
+      // 4. Stock Status Filter
+      if (stockStatusFilter !== 'ALL') {
+        const rawStock = item.stockOnHand !== undefined 
+          ? Number(item.stockOnHand) 
+          : (item.stockCount !== undefined ? Number(item.stockCount) : (item.type === 'instant' ? 0 : 100));
+        const reserved = Number(item.reservedStock || 0);
+        const netAvailable = item.type === 'instant' ? Math.max(0, rawStock - reserved) : (item.available !== false ? 100 : 0);
+        const isSoldOut = item.available === false || item.availabilityStatus === 'OUT_OF_STOCK' || item.isOrderable === false || (item.type === 'instant' && netAvailable <= 0);
+
+        if (stockStatusFilter === 'IN_STOCK' && isSoldOut) return false;
+        if (stockStatusFilter === 'OUT_OF_STOCK' && !isSoldOut) return false;
+        if (stockStatusFilter === 'LOW_STOCK' && (isSoldOut || (item.type === 'instant' && netAvailable > 5))) return false;
+      }
+
       return true;
     });
 
@@ -253,13 +305,22 @@ export function renderAdminView(container, options = {}) {
               </p>
             </div>
 
-            <button 
-              id="generate-shift-pins-btn"
-              style="padding: 8px 16px; border-radius: 8px; background: #3B82F6; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;"
-            >
-              <span>+</span>
-              <span>Generate Shift PIN</span>
-            </button>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button 
+                id="generate-shift-pins-btn"
+                style="padding: 8px 16px; border-radius: 8px; background: #3B82F6; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;"
+              >
+                <span>🔑</span>
+                <span>Generate Shift PIN</span>
+              </button>
+              <button 
+                id="generate-terminal-invite-btn"
+                style="padding: 8px 16px; border-radius: 8px; background: #0F172A; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;"
+              >
+                <span>🖥️</span>
+                <span>Enroll Terminal Code</span>
+              </button>
+            </div>
           </div>
 
           ${currentShiftPins.length === 0 ? `
@@ -307,40 +368,93 @@ export function renderAdminView(container, options = {}) {
         ` : ''}
 
         <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- MENU TAXONOMY & CATEGORY FILTER BAR                        -->
+        <!-- MENU SEARCH, TAXONOMY & STOCK FILTER BAR                   -->
         <!-- ═══════════════════════════════════════════════════════════ -->
-        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 1rem 1.2rem; margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
-          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-            <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary); margin-right: 4px;">FILTER CATEGORY:</span>
-            ${[
-              { id: 'ALL', label: 'All Items' },
-              { id: 'FOOD', label: '🍛 Food' },
-              { id: 'SNACKS', label: '🍟 Snacks' },
-              { id: 'BEVERAGES', label: '🥤 Drinks' }
-            ].map(cat => `
-              <button class="cat-filter-btn" data-category="${cat.id}" style="padding: 6px 14px; border-radius: 999px; border: 1.5px solid ${selectedParentFilter === cat.id ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedParentFilter === cat.id ? 'var(--brand-red)' : 'var(--bg-surface)'}; color: ${selectedParentFilter === cat.id ? '#FFF' : 'var(--ink-primary)'}; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; cursor: pointer;">
-                ${cat.label}
+        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 1.2rem; margin-bottom: 2rem; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
+          
+          <!-- Primary Search Bar -->
+          <div style="display: flex; align-items: center; gap: 12px; background: var(--bg-surface); border: 1.5px solid ${menuSearchQuery ? 'var(--brand-red)' : 'var(--border-light)'}; border-radius: 10px; padding: 0.7rem 1.2rem; margin-bottom: 1rem; box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);">
+            <span style="font-size: 1.2rem; color: var(--ink-secondary);">🔍</span>
+            <input 
+              type="text" 
+              id="menu-search-input" 
+              placeholder="Search dishes, snacks, drinks, or packaged items (e.g. Dosa, Chai, Chips, Water)..." 
+              value="${escapeHtml(menuSearchQuery)}"
+              style="flex: 1; border: none; outline: none; font-family: var(--font-sans); font-size: 1rem; font-weight: 600; color: var(--ink-primary); background: transparent;"
+            />
+            ${menuSearchQuery ? `
+              <button id="clear-menu-search-btn" style="background: transparent; border: none; font-size: 1.1rem; color: var(--ink-secondary); cursor: pointer; padding: 0 6px;" title="Clear Search">
+                ✕
               </button>
-            `).join('')}
+            ` : ''}
+            <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary); background: #FFF; border: 1px solid var(--border-light); padding: 3px 10px; border-radius: 6px; white-space: nowrap;">
+              ${visibleItems.length} / ${nonArchivedItems.length} Items
+            </span>
           </div>
 
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary);">SUBCATEGORY:</span>
-            <select id="subcat-filter-select" style="padding: 6px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.85rem; background: var(--bg-surface); cursor: pointer;">
-              <option value="ALL" ${selectedSubFilter === 'ALL' ? 'selected' : ''}>All Subcategories</option>
-              <option value="South Indian" ${selectedSubFilter === 'South Indian' ? 'selected' : ''}>🍛 South Indian</option>
-              <option value="Sandwiches" ${selectedSubFilter === 'Sandwiches' ? 'selected' : ''}>🥪 Sandwiches</option>
-              <option value="Chinese" ${selectedSubFilter === 'Chinese' ? 'selected' : ''}>🍜 Chinese</option>
-              <option value="Lunch & Meals" ${selectedSubFilter === 'Lunch & Meals' ? 'selected' : ''}>🍱 Lunch & Meals</option>
-              <option value="Pav Items" ${selectedSubFilter === 'Pav Items' ? 'selected' : ''}>🥖 Pav & Samosa</option>
-              <option value="Fries" ${selectedSubFilter === 'Fries' ? 'selected' : ''}>🍟 French Fries</option>
-              <option value="Tea & Coffee" ${selectedSubFilter === 'Tea & Coffee' ? 'selected' : ''}>☕ Tea & Coffee</option>
-              <option value="Cold Drinks" ${selectedSubFilter === 'Cold Drinks' ? 'selected' : ''}>🥤 Cold Drinks</option>
-              <option value="Milkshakes" ${selectedSubFilter === 'Milkshakes' ? 'selected' : ''}>🥛 Milkshakes</option>
-              <option value="Juices" ${selectedSubFilter === 'Juices' ? 'selected' : ''}>🧃 Juices</option>
-            </select>
+          <!-- Secondary Filters Row: Category Pills + Stock Status Filter + Subcategory -->
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary); margin-right: 4px;">CATEGORY:</span>
+              ${[
+                { id: 'ALL', label: 'All Items' },
+                { id: 'FOOD', label: '🍛 Food' },
+                { id: 'SNACKS', label: '🍟 Snacks' },
+                { id: 'BEVERAGES', label: '🥤 Drinks' }
+              ].map(cat => `
+                <button class="cat-filter-btn" data-category="${cat.id}" style="padding: 6px 14px; border-radius: 999px; border: 1.5px solid ${selectedParentFilter === cat.id ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedParentFilter === cat.id ? 'var(--brand-red)' : 'var(--bg-surface)'}; color: ${selectedParentFilter === cat.id ? '#FFF' : 'var(--ink-primary)'}; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; cursor: pointer;">
+                  ${cat.label}
+                </button>
+              `).join('')}
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <!-- Stock Status Filter -->
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary);">STOCK:</span>
+                <select id="stock-filter-select" style="padding: 6px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.85rem; background: var(--bg-surface); cursor: pointer;">
+                  <option value="ALL" ${stockStatusFilter === 'ALL' ? 'selected' : ''}>All Stock Status</option>
+                  <option value="IN_STOCK" ${stockStatusFilter === 'IN_STOCK' ? 'selected' : ''}>✅ In Stock Only</option>
+                  <option value="OUT_OF_STOCK" ${stockStatusFilter === 'OUT_OF_STOCK' ? 'selected' : ''}>❌ Sold Out (0 Qty)</option>
+                  <option value="LOW_STOCK" ${stockStatusFilter === 'LOW_STOCK' ? 'selected' : ''}>⚠️ Low Stock (≤ 5)</option>
+                </select>
+              </div>
+
+              <!-- Subcategory Filter -->
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary);">SUBCATEGORY:</span>
+                <select id="subcat-filter-select" style="padding: 6px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.85rem; background: var(--bg-surface); cursor: pointer;">
+                  <option value="ALL" ${selectedSubFilter === 'ALL' ? 'selected' : ''}>All Subcategories</option>
+                  <option value="South Indian" ${selectedSubFilter === 'South Indian' ? 'selected' : ''}>🍛 South Indian</option>
+                  <option value="Sandwiches" ${selectedSubFilter === 'Sandwiches' ? 'selected' : ''}>🥪 Sandwiches</option>
+                  <option value="Chinese" ${selectedSubFilter === 'Chinese' ? 'selected' : ''}>🍜 Chinese</option>
+                  <option value="Lunch & Meals" ${selectedSubFilter === 'Lunch & Meals' ? 'selected' : ''}>🍱 Lunch & Meals</option>
+                  <option value="Pav Items" ${selectedSubFilter === 'Pav Items' ? 'selected' : ''}>🥖 Pav & Samosa</option>
+                  <option value="Fries" ${selectedSubFilter === 'Fries' ? 'selected' : ''}>🍟 French Fries</option>
+                  <option value="Tea & Coffee" ${selectedSubFilter === 'Tea & Coffee' ? 'selected' : ''}>☕ Tea & Coffee</option>
+                  <option value="Cold Drinks" ${selectedSubFilter === 'Cold Drinks' ? 'selected' : ''}>🥤 Cold Drinks</option>
+                  <option value="Milkshakes" ${selectedSubFilter === 'Milkshakes' ? 'selected' : ''}>🥛 Milkshakes</option>
+                  <option value="Juices" ${selectedSubFilter === 'Juices' ? 'selected' : ''}>🧃 Juices</option>
+                </select>
+              </div>
+            </div>
           </div>
         </div>
+
+        ${visibleItems.length === 0 ? `
+          <div style="background: #FFF; border: 2px dashed var(--border-light); border-radius: 16px; padding: 3rem 1.5rem; text-align: center; margin-bottom: 2rem;">
+            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">🔍</div>
+            <h3 style="font-family: var(--font-display); font-size: 1.6rem; color: var(--ink-primary); margin: 0 0 0.5rem 0;">
+              NO MENU ITEMS MATCH YOUR SEARCH
+            </h3>
+            <p style="font-family: var(--font-sans); font-size: 0.9rem; color: var(--ink-secondary); margin-bottom: 1.2rem;">
+              No dishes or packaged items match "${escapeHtml(menuSearchQuery)}". Try another keyword or reset filters.
+            </p>
+            <button id="reset-all-filters-btn" style="padding: 8px 18px; border-radius: 8px; background: var(--brand-red); color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;">
+              Reset Search & Filters
+            </button>
+          </div>
+        ` : ''}
 
         <!-- ═══════════════════════════════════════════════════════════ -->
         <!-- SECTION 1: CANTEEN KITCHEN ITEMS (COOKED - TOGGLE ONLY)     -->
@@ -356,70 +470,76 @@ export function renderAdminView(container, options = {}) {
             </span>
           </div>
 
-          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.2rem;">
-            ${cookedItems.map(item => {
-              const isAvailable = item.available !== false;
+          ${cookedItems.length === 0 ? `
+            <div style="background: #FFF; border: 1.5px dashed var(--border-light); border-radius: 12px; padding: 1.5rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 0.85rem;">
+              No kitchen prepared dishes match "${escapeHtml(menuSearchQuery || 'current filters')}".
+            </div>
+          ` : `
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.2rem;">
+              ${cookedItems.map(item => {
+                const isAvailable = item.available !== false;
 
-              return `
-                <div class="menu-card-admin" style="background: #FFF; border: 2px solid ${isAvailable ? 'var(--border-light)' : '#FCA5A5'}; border-radius: 14px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
-                  <div>
-                    <div style="display: flex; gap: 12px; align-items: flex-start;">
-                      ${renderMenuVisualHtml(item, 56, 56)}
-                      <div style="flex: 1; min-width: 0;">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
-                          <div>
-                            <h4 style="font-family: var(--font-sans); font-size: 1.1rem; font-weight: 800; color: var(--ink-primary); margin: 0; word-break: break-word;">
-                              ${escapeHtml(item.name)}
-                            </h4>
-                            <div style="display: flex; gap: 6px; margin-top: 5px; flex-wrap: wrap; align-items: center;">
-                              ${item.isPopular ? `
-                                <span style="font-family: var(--font-mono); font-size: 0.7rem; background: #FEF3C7; color: #B45309; padding: 2px 6px; border-radius: 4px; font-weight: 800;">
-                                  🔥 POPULAR
+                return `
+                  <div class="menu-card-admin" style="background: #FFF; border: 2px solid ${isAvailable ? 'var(--border-light)' : '#FCA5A5'}; border-radius: 14px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
+                    <div>
+                      <div style="display: flex; gap: 12px; align-items: flex-start;">
+                        ${renderMenuVisualHtml(item, 56, 56)}
+                        <div style="flex: 1; min-width: 0;">
+                          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                            <div>
+                              <h4 style="font-family: var(--font-sans); font-size: 1.1rem; font-weight: 800; color: var(--ink-primary); margin: 0; word-break: break-word;">
+                                ${escapeHtml(item.name)}
+                              </h4>
+                              <div style="display: flex; gap: 6px; margin-top: 5px; flex-wrap: wrap; align-items: center;">
+                                ${item.isPopular ? `
+                                  <span style="font-family: var(--font-mono); font-size: 0.7rem; background: #FEF3C7; color: #B45309; padding: 2px 6px; border-radius: 4px; font-weight: 800;">
+                                    🔥 POPULAR
+                                  </span>
+                                ` : ''}
+                                <span style="font-family: var(--font-mono); font-size: 0.75rem; background: #FBE7BE; color: #6B4408; padding: 2px 8px; border-radius: 4px; font-weight: 700;">
+                                  ~${item.prepMinutes || 5} min
                                 </span>
-                              ` : ''}
-                              <span style="font-family: var(--font-mono); font-size: 0.75rem; background: #FBE7BE; color: #6B4408; padding: 2px 8px; border-radius: 4px; font-weight: 700;">
-                                ~${item.prepMinutes || 5} min
-                              </span>
-                              <span style="font-family: var(--font-mono); font-size: 0.75rem; background: var(--bg-surface); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-light);">
-                                ${escapeHtml(item.subCategory || item.category || '')}
-                              </span>
+                                <span style="font-family: var(--font-mono); font-size: 0.75rem; background: var(--bg-surface); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-light);">
+                                  ${escapeHtml(item.subCategory || item.category || '')}
+                                </span>
+                              </div>
                             </div>
-                          </div>
 
-                          <div style="text-align: right; flex-shrink: 0;">
-                            <div style="font-family: var(--font-mono); font-size: 1.25rem; font-weight: 800; color: var(--ink-primary);">
-                              ₹${item.price}
+                            <div style="text-align: right; flex-shrink: 0;">
+                              <div style="font-family: var(--font-mono); font-size: 1.25rem; font-weight: 800; color: var(--ink-primary);">
+                                ₹${item.price}
+                              </div>
                             </div>
                           </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  <!-- Kitchen Item Control: Big Stock Toggle & Edit -->
-                  <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 1rem; border-top: 1.5px solid var(--border-light); margin-top: 1rem;">
-                    <button 
-                      class="toggle-cooked-btn" 
-                      data-item-id="${item.id}" 
-                      data-available="${isAvailable}"
-                      style="padding: 8px 16px; border-radius: 999px; border: 1.5px solid ${isAvailable ? '#22C55E' : '#EF4444'}; background: ${isAvailable ? '#F0FDF4' : '#FEF2F2'}; color: ${isAvailable ? '#15803D' : '#B91C1C'}; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; cursor: pointer; display: flex; align-items: center; gap: 6px;"
-                    >
-                      <span>${isAvailable ? '✓' : '✕'}</span>
-                      <span>${isAvailable ? 'In Stock (Open)' : 'Out of Stock (Closed)'}</span>
-                    </button>
+                    <!-- Kitchen Item Control: Big Stock Toggle & Edit -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 1rem; border-top: 1.5px solid var(--border-light); margin-top: 1rem;">
+                      <button 
+                        class="toggle-cooked-btn" 
+                        data-item-id="${item.id}" 
+                        data-available="${isAvailable}"
+                        style="padding: 8px 16px; border-radius: 999px; border: 1.5px solid ${isAvailable ? '#22C55E' : '#EF4444'}; background: ${isAvailable ? '#F0FDF4' : '#FEF2F2'}; color: ${isAvailable ? '#15803D' : '#B91C1C'}; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; cursor: pointer; display: flex; align-items: center; gap: 6px;"
+                      >
+                        <span>${isAvailable ? '✓' : '✕'}</span>
+                        <span>${isAvailable ? 'In Stock (Open)' : 'Out of Stock (Closed)'}</span>
+                      </button>
 
-                    <button 
-                      class="edit-item-btn" 
-                      data-item-id="${item.id}"
-                      style="background: var(--bg-surface); border: 1px solid var(--border-light); padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--ink-primary);"
-                    >
-                      ✏️ Edit
-                    </button>
+                      <button 
+                        class="edit-item-btn" 
+                        data-item-id="${item.id}"
+                        style="background: var(--bg-surface); border: 1px solid var(--border-light); padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--ink-primary);"
+                      >
+                        ✏️ Edit
+                      </button>
+                    </div>
                   </div>
-                </div>
-              `;
-            }).join('')}
-          </div>
+                `;
+              }).join('')}
+            </div>
+          `}
         </div>
 
         <!-- ═══════════════════════════════════════════════════════════ -->
@@ -436,121 +556,156 @@ export function renderAdminView(container, options = {}) {
             </span>
           </div>
 
-          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1.2rem;">
-            ${storeItems.map(item => {
-              const stock = item.stockCount || 0;
-              const isInStock = stock > 0 && item.available !== false;
+          ${storeItems.length === 0 ? `
+            <div style="background: #FFF; border: 1.5px dashed var(--border-light); border-radius: 12px; padding: 1.5rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 0.85rem;">
+              No store packaged items match "${escapeHtml(menuSearchQuery || 'current filters')}".
+            </div>
+          ` : `
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1.2rem;">
+              ${storeItems.map(item => {
+                const rawStock = item.stockOnHand !== undefined 
+                  ? Number(item.stockOnHand) 
+                  : (item.stockCount !== undefined ? Number(item.stockCount) : 0);
+                const reserved = Number(item.reservedStock || 0);
+                const netAvailable = Math.max(0, rawStock - reserved);
+                const isSoldOut = item.available === false || item.availabilityStatus === 'OUT_OF_STOCK' || item.isOrderable === false || netAvailable <= 0;
+                const stock = isSoldOut ? 0 : netAvailable;
+                const isInStock = !isSoldOut && stock > 0;
 
-              return `
-                <div class="menu-card-admin" style="background: ${isInStock ? '#FFF' : '#FFFDF7'}; border: 2px solid ${isInStock ? 'var(--border-light)' : '#FCA5A5'}; border-radius: 14px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
-                  <div>
-                    <div style="display: flex; gap: 12px; align-items: flex-start;">
-                      ${renderMenuVisualHtml(item, 56, 56)}
-                      <div style="flex: 1; min-width: 0;">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
-                          <div>
-                            <h4 style="font-family: var(--font-sans); font-size: 1.1rem; font-weight: 800; color: var(--ink-primary); margin: 0; word-break: break-word;">
-                              ${escapeHtml(item.name)}
-                            </h4>
-                            <div style="display: flex; gap: 6px; margin-top: 5px; flex-wrap: wrap; align-items: center;">
-                              ${item.isPopular ? `
-                                <span style="font-family: var(--font-mono); font-size: 0.7rem; background: #FEF3C7; color: #B45309; padding: 2px 6px; border-radius: 4px; font-weight: 800;">
-                                  🔥 POPULAR
+                return `
+                  <div class="menu-card-admin" style="background: ${isInStock ? '#FFF' : '#FFFDF7'}; border: 2px solid ${isInStock ? 'var(--border-light)' : '#FCA5A5'}; border-radius: 14px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
+                    <div>
+                      <div style="display: flex; gap: 12px; align-items: flex-start;">
+                        ${renderMenuVisualHtml(item, 56, 56)}
+                        <div style="flex: 1; min-width: 0;">
+                          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                            <div>
+                              <h4 style="font-family: var(--font-sans); font-size: 1.1rem; font-weight: 800; color: var(--ink-primary); margin: 0; word-break: break-word;">
+                                ${escapeHtml(item.name)}
+                              </h4>
+                              <div style="display: flex; gap: 6px; margin-top: 5px; flex-wrap: wrap; align-items: center;">
+                                ${item.isPopular ? `
+                                  <span style="font-family: var(--font-mono); font-size: 0.7rem; background: #FEF3C7; color: #B45309; padding: 2px 6px; border-radius: 4px; font-weight: 800;">
+                                    🔥 POPULAR
+                                  </span>
+                                ` : ''}
+                                <span style="font-family: var(--font-mono); font-size: 0.75rem; background: #DCEACB; color: #2C4A1E; padding: 2px 8px; border-radius: 4px; font-weight: 700;">
+                                  Store Item
                                 </span>
-                              ` : ''}
-                              <span style="font-family: var(--font-mono); font-size: 0.75rem; background: #DCEACB; color: #2C4A1E; padding: 2px 8px; border-radius: 4px; font-weight: 700;">
-                                Store Item
+                                ${item.batchDate ? `
+                                  <span style="font-family: var(--font-mono); font-size: 0.75rem; background: var(--bg-surface); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-light); color: var(--ink-secondary);">
+                                    📦 Batch: ${escapeHtml(item.batchDate)}
+                                  </span>
+                                ` : ''}
+                              </div>
+                            </div>
+
+                            <div style="text-align: right; flex-shrink: 0;">
+                              <div style="font-family: var(--font-mono); font-size: 1.25rem; font-weight: 800; color: var(--ink-primary);">
+                                ₹${item.price}
+                              </div>
+                              <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: ${isInStock ? '#16A34A' : '#DC2626'};">
+                                ${isInStock ? `${stock} in stock` : '0 (Sold Out)'}
                               </span>
-                              ${item.batchDate ? `
-                                <span style="font-family: var(--font-mono); font-size: 0.75rem; background: var(--bg-surface); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-light); color: var(--ink-secondary);">
-                                  📦 Batch: ${escapeHtml(item.batchDate)}
-                                </span>
-                              ` : ''}
                             </div>
-                          </div>
-
-                          <div style="text-align: right; flex-shrink: 0;">
-                            <div style="font-family: var(--font-mono); font-size: 1.25rem; font-weight: 800; color: var(--ink-primary);">
-                              ₹${item.price}
-                            </div>
-                            <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: ${isInStock ? '#16A34A' : '#DC2626'};">
-                              ${isInStock ? `${stock} in stock` : '0 (Sold Out)'}
-                            </span>
                           </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  <!-- Store Item Control: Available Quantity Stepper -->
-                  <div style="padding-top: 1rem; border-top: 1.5px solid var(--border-light); margin-top: 1rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                      <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary);">
-                        AVAILABLE QUANTITY:
-                      </span>
-                      
-                      <div style="display: flex; align-items: center; gap: 4px;">
-                        <!-- Minus Button -->
-                        <button 
-                          class="stock-step-btn minus-stock-btn" 
-                          data-item-id="${item.id}" 
-                          data-current-stock="${stock}"
-                          style="width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
-                        >
-                          –
-                        </button>
-
-                        <!-- Stock Count Display / Input -->
-                        <input 
-                          type="number" 
-                          class="stock-count-input" 
-                          data-item-id="${item.id}" 
-                          value="${stock}" 
-                          style="width: 55px; padding: 4px; border-radius: 6px; border: 1.5px solid ${isInStock ? 'var(--border-light)' : '#EF4444'}; font-family: var(--font-mono); font-size: 1.05rem; font-weight: 800; text-align: center; color: ${isInStock ? 'var(--ink-primary)' : '#DC2626'};"
-                        />
-
-                        <!-- Plus Button -->
-                        <button 
-                          class="stock-step-btn plus-stock-btn" 
-                          data-item-id="${item.id}" 
-                          data-current-stock="${stock}"
-                          style="width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-
-                    <!-- Quick Restock Chips (+5, +10, +25) & Edit Button -->
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                      <div style="display: flex; gap: 4px;">
-                        ${[5, 10, 25].map(add => `
+                    <!-- Store Item Control: Available Quantity Stepper -->
+                    <div style="padding-top: 1rem; border-top: 1.5px solid var(--border-light); margin-top: 1rem;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary);">
+                          AVAILABLE QUANTITY:
+                        </span>
+                        
+                        <div style="display: flex; align-items: center; gap: 4px;">
+                          <!-- Minus Button -->
                           <button 
-                            class="quick-restock-btn" 
+                            class="stock-step-btn minus-stock-btn" 
                             data-item-id="${item.id}" 
-                            data-current-stock="${stock}" 
-                            data-add="${add}"
-                            style="padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer; color: var(--ink-primary);"
+                            data-current-stock="${stock}"
+                            style="width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
                           >
-                            +${add}
+                            –
                           </button>
-                        `).join('')}
+
+                          <!-- Stock Count Display / Input -->
+                          <input 
+                            type="number" 
+                            class="stock-count-input" 
+                            data-item-id="${item.id}" 
+                            value="${stock}" 
+                            min="0"
+                            style="width: 55px; padding: 4px; border-radius: 6px; border: 1.5px solid ${isInStock ? 'var(--border-light)' : '#EF4444'}; font-family: var(--font-mono); font-size: 1.05rem; font-weight: 800; text-align: center; color: ${isInStock ? 'var(--ink-primary)' : '#DC2626'};"
+                          />
+
+                          <!-- Plus Button -->
+                          <button 
+                            class="stock-step-btn plus-stock-btn" 
+                            data-item-id="${item.id}" 
+                            data-current-stock="${stock}"
+                            style="width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
+                          >
+                            +
+                          </button>
+                        </div>
                       </div>
 
-                      <button 
-                        class="edit-item-btn" 
-                        data-item-id="${item.id}"
-                        style="background: transparent; border: 1px solid var(--border-light); padding: 4px 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--ink-primary);"
-                      >
-                        ✏️ Edit
-                      </button>
-                    </div>
-                  </div>
+                      <!-- Quick Restock Chips (+5, +10, +25), Quick Sold Out & Edit Button -->
+                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap;">
+                        <div style="display: flex; gap: 4px; align-items: center; flex-wrap: wrap;">
+                          ${[5, 10, 25].map(add => `
+                            <button 
+                              class="quick-restock-btn" 
+                              data-item-id="${item.id}" 
+                              data-current-stock="${stock}" 
+                              data-add="${add}"
+                              style="padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer; color: var(--ink-primary);"
+                            >
+                              +${add}
+                            </button>
+                          `).join('')}
 
-                </div>
-              `;
-            }).join('')}
-          </div>
+                          ${isInStock ? `
+                            <button 
+                              class="mark-soldout-btn" 
+                              data-item-id="${item.id}" 
+                              title="Set quantity to 0 and mark sold out"
+                              style="padding: 2px 8px; border-radius: 4px; border: 1px solid #FCA5A5; background: #FEF2F2; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer; color: #DC2626;"
+                            >
+                              ✕ Sold Out
+                            </button>
+                          ` : `
+                            <button 
+                              class="quick-restock-btn" 
+                              data-item-id="${item.id}" 
+                              data-current-stock="0" 
+                              data-add="10"
+                              title="Restock 10 units"
+                              style="padding: 2px 8px; border-radius: 4px; border: 1px solid #86EFAC; background: #F0FDF4; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer; color: #166534;"
+                            >
+                              ✓ In Stock (+10)
+                            </button>
+                          `}
+                        </div>
+
+                        <button 
+                          class="edit-item-btn" 
+                          data-item-id="${item.id}"
+                          style="background: transparent; border: 1px solid var(--border-light); padding: 4px 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--ink-primary);"
+                        >
+                          ✏️ Edit
+                        </button>
+                      </div>
+                    </div>
+
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          `}
         </div>
 
         <!-- ═══════════════════════════════════════════════════════════ -->
@@ -839,6 +994,187 @@ export function renderAdminView(container, options = {}) {
           </div>
         ` : ''}
 
+        ${showCredModal ? `
+          <div class="modal-overlay" style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
+            <div class="modal-content" style="background: #FFF; border-radius: 16px; width: 100%; max-width: 540px; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.15); max-height: 90vh; overflow-y: auto;">
+              
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem;">
+                <h3 style="font-family: var(--font-display); font-size: 1.8rem; letter-spacing: 0.05em; margin: 0; color: var(--ink-primary);">
+                  STAFF CREDENTIALS & WORKSTATION ACCESS
+                </h3>
+                <button id="close-cred-modal-btn" style="background: transparent; border: none; font-size: 1.4rem; cursor: pointer; color: var(--ink-secondary);">✕</button>
+              </div>
+
+              <!-- Tabs -->
+              <div style="display: flex; gap: 6px; background: var(--bg-surface); padding: 4px; border-radius: 10px; border: 1.5px solid var(--border-light); margin-bottom: 1.5rem;">
+                <button id="cred-tab-pin" style="flex: 1; padding: 8px; border-radius: 8px; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; background: ${credModalTab === 'pin' ? '#FFF' : 'transparent'}; color: ${credModalTab === 'pin' ? '#3B82F6' : 'var(--ink-secondary)'}; box-shadow: ${credModalTab === 'pin' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'};">
+                  🔑 6-Digit Shift PIN
+                </button>
+                <button id="cred-tab-terminal" style="flex: 1; padding: 8px; border-radius: 8px; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; background: ${credModalTab === 'terminal' ? '#FFF' : 'transparent'}; color: ${credModalTab === 'terminal' ? '#3B82F6' : 'var(--ink-secondary)'}; box-shadow: ${credModalTab === 'terminal' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'};">
+                  🖥️ Terminal Invite Code
+                </button>
+              </div>
+
+              ${credModalError ? `
+                <div style="padding: 10px 14px; background: #FEE2E2; border: 1.5px solid #FCA5A5; border-radius: 8px; color: #DC2626; font-family: var(--font-mono); font-size: 0.82rem; margin-bottom: 1rem;">
+                  ${escapeHtml(credModalError)}
+                </div>
+              ` : ''}
+
+              ${credModalResult ? `
+                <div style="background: #F0FDF4; border: 1.5px solid #86EFAC; border-radius: 12px; padding: 1.2rem; margin-bottom: 1.5rem; text-align: center;">
+                  <div style="font-family: var(--font-mono); font-size: 0.8rem; color: #166534; font-weight: 700; margin-bottom: 6px;">
+                    ${credModalResult.type === 'pin' ? '✅ SHIFT PIN GENERATED' : '✅ TERMINAL ENROLLMENT CODE GENERATED'}
+                  </div>
+                  <div style="font-family: var(--font-mono); font-size: 2.2rem; font-weight: 800; letter-spacing: 0.15em; color: #15803D; margin: 8px 0; background: #FFF; padding: 8px 16px; border-radius: 8px; border: 2px dashed #86EFAC; display: inline-block;">
+                    ${escapeHtml(credModalResult.code)}
+                  </div>
+                  <div style="margin-top: 8px;">
+                    <button id="copy-cred-code-btn" data-code="${escapeHtml(credModalResult.code)}" style="background: #166534; color: #FFF; border: none; padding: 6px 14px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+                      📋 Copy to Clipboard
+                    </button>
+                  </div>
+                  <p style="font-family: var(--font-sans); font-size: 0.8rem; color: #166534; margin: 10px 0 0 0;">
+                    ${credModalResult.type === 'pin' 
+                      ? `Role: <strong>${credModalResult.role.toUpperCase()}</strong> · Window: <strong>${credModalResult.window}</strong><br>Write this PIN down or provide to staff. Counter tablets can unlock with this PIN.`
+                      : `Station: <strong>${credModalResult.stationName} (${credModalResult.stationType.toUpperCase()})</strong><br>Valid for 15 minutes. Enter this code on the tablet under Staff Workstation -> Enroll Terminal tab.`}
+                  </p>
+                </div>
+              ` : ''}
+
+              ${credModalTab === 'pin' ? `
+                <div>
+                  <div style="margin-bottom: 1.2rem;">
+                    <label style="display: block; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; margin-bottom: 6px; color: var(--ink-secondary);">
+                      STATION / STAFF ROLE:
+                    </label>
+                    <select id="modal-shift-role" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.9rem;">
+                      <option value="kitchen">🍳 Kitchen KDS</option>
+                      <option value="pickup">🛍️ Pickup Counter</option>
+                      <option value="cashier">💵 Cashier Workstation</option>
+                    </select>
+                  </div>
+
+                  <div style="margin-bottom: 1.2rem;">
+                    <label style="display: block; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; margin-bottom: 6px; color: var(--ink-secondary);">
+                      SHIFT TIME WINDOW:
+                    </label>
+                    <select id="modal-shift-window" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.9rem;">
+                      <option value="FULL_DAY">☀️ FULL DAY (Operational until 23:59 IST)</option>
+                      <option value="MORNING">🌅 MORNING SHIFT (Operational until 15:30 IST)</option>
+                      <option value="AFTERNOON">🌇 AFTERNOON SHIFT (Operational until 22:00 IST)</option>
+                    </select>
+                  </div>
+
+                  <div style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="modal-shift-force" checked style="width: 16px; height: 16px; cursor: pointer;" />
+                    <label for="modal-shift-force" style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-primary); cursor: pointer;">
+                      Replace / regenerate active PIN if one already exists for this shift
+                    </label>
+                  </div>
+
+                  <button id="modal-generate-pin-btn" ${credModalLoading ? 'disabled' : ''} style="width: 100%; padding: 12px; border-radius: 10px; background: #3B82F6; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.9rem; font-weight: 700; cursor: pointer;">
+                    ${credModalLoading ? 'Generating Shift PIN...' : 'Generate 6-Digit Shift PIN →'}
+                  </button>
+                </div>
+              ` : `
+                <div>
+                  <div style="margin-bottom: 1.2rem;">
+                    <label style="display: block; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; margin-bottom: 6px; color: var(--ink-secondary);">
+                      STATION TYPE:
+                    </label>
+                    <select id="modal-terminal-type" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.9rem;">
+                      <option value="kitchen">🍳 Kitchen KDS</option>
+                      <option value="pickup">📦 Pickup Counter</option>
+                      <option value="cashier">💵 Cashier Workstation</option>
+                    </select>
+                  </div>
+
+                  <div style="margin-bottom: 1.5rem;">
+                    <label style="display: block; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; margin-bottom: 6px; color: var(--ink-secondary);">
+                      TERMINAL / HARDWARE LABEL:
+                    </label>
+                    <input type="text" id="modal-terminal-name" placeholder="e.g. Kitchen Tablet Station 1" value="Kitchen Counter Tablet #1" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.9rem; box-sizing: border-box;" />
+                  </div>
+
+                  <button id="modal-generate-invite-btn" ${credModalLoading ? 'disabled' : ''} style="width: 100%; padding: 12px; border-radius: 10px; background: #0F172A; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.9rem; font-weight: 700; cursor: pointer;">
+                    ${credModalLoading ? 'Generating Enrollment Code...' : 'Generate 15-Minute Enrollment Code →'}
+                  </button>
+                </div>
+              `}
+
+            </div>
+          </div>
+        ` : ''}
+
+        ${showOperationalModal && targetOperationalMode ? `
+          <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
+            <div style="background: #FFF; border-radius: 16px; width: 100%; max-width: 520px; padding: 1.8rem; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2); border: 2px solid var(--border-light);">
+              
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.2rem;">
+                <div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.5rem;">🚨</span>
+                    <h3 style="font-family: var(--font-display); font-size: 1.6rem; letter-spacing: 0.05em; margin: 0; color: var(--ink-primary);">
+                      CONFIRM OPERATIONAL STATUS
+                    </h3>
+                  </div>
+                  <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin: 4px 0 0 0;">
+                    Switching system-wide operational runtime to <strong>${escapeHtml(targetOperationalMode)}</strong>.
+                  </p>
+                </div>
+                <button id="close-op-modal-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--ink-secondary);">&times;</button>
+              </div>
+
+              <!-- Mode Explanation Banner -->
+              <div style="padding: 12px 14px; border-radius: 10px; margin-bottom: 1.2rem; font-family: var(--font-mono); font-size: 0.82rem; ${targetOperationalMode === 'NORMAL' ? 'background: #F0FDF4; border: 1.5px solid #86EFAC; color: #166534;' : (targetOperationalMode === 'DEGRADED' ? 'background: #FFFBEB; border: 1.5px solid #FDE68A; color: #92400E;' : (targetOperationalMode === 'FINANCIAL_FROZEN' ? 'background: #FEF2F2; border: 1.5px solid #FCA5A5; color: #991B1B;' : 'background: #7F1D1D; border: 1.5px solid #991B1B; color: #FFF;'))}">
+                <strong>${targetOperationalMode === 'NORMAL' ? '🟢 NORMAL OPERATIONAL MODE' : (targetOperationalMode === 'DEGRADED' ? '🟡 DEGRADED (PAUSE ONLINE)' : (targetOperationalMode === 'FINANCIAL_FROZEN' ? '🔴 FINANCIAL FREEZE' : '🛑 TOTAL EMERGENCY HALT'))}</strong>:
+                <div style="margin-top: 4px; font-family: var(--font-sans); font-size: 0.8rem; opacity: 0.95;">
+                  ${targetOperationalMode === 'NORMAL' ? 'Full online checkout, payment gateways, and counter ordering will be enabled for students and staff.' : (targetOperationalMode === 'DEGRADED' ? 'Student online ordering will be paused with a friendly notification. Only physical counter orders will be accepted.' : (targetOperationalMode === 'FINANCIAL_FROZEN' ? 'All payment gateways and checkouts are locked for financial audit or ledger reconciliation.' : 'TOTAL EMERGENCY SHUTDOWN: All student mutations, payments, and operational checkouts are halted immediately.'))}
+                </div>
+              </div>
+
+              ${operationalModeError ? `
+                <div style="padding: 10px 14px; background: #FEE2E2; border: 1.5px solid #FCA5A5; border-radius: 8px; color: #DC2626; font-family: var(--font-mono); font-size: 0.82rem; margin-bottom: 1.2rem;">
+                  ${escapeHtml(operationalModeError)}
+                </div>
+              ` : ''}
+
+              <!-- Preset Reasons -->
+              <div style="margin-bottom: 1.2rem;">
+                <label style="display: block; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; margin-bottom: 6px; color: var(--ink-secondary);">
+                  QUICK OPERATIONAL REASON:
+                </label>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                  <button type="button" class="op-preset-btn" data-reason="Resuming standard daily canteen operations" style="padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 0.75rem; cursor: pointer;">Standard Resume</button>
+                  <button type="button" class="op-preset-btn" data-reason="Lunch rush load shedding - counter cash orders only" style="padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 0.75rem; cursor: pointer;">Kitchen Peak Rush</button>
+                  <button type="button" class="op-preset-btn" data-reason="Midday double-entry accounting reconciliation audit" style="padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 0.75rem; cursor: pointer;">Financial Audit</button>
+                  <button type="button" class="op-preset-btn" data-reason="Urgent emergency operational halt and campus safety review" style="padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 0.75rem; cursor: pointer;">Emergency Stop</button>
+                </div>
+              </div>
+
+              <!-- Detailed Reason Input -->
+              <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; margin-bottom: 6px; color: var(--ink-secondary);">
+                  OPERATIONAL AUDIT NOTE (REQUIRED):
+                </label>
+                <input type="text" id="op-modal-reason-input" value="${escapeHtml(operationalModeReason)}" placeholder="Provide operational reason for audit log" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.88rem; box-sizing: border-box;" />
+              </div>
+
+              <!-- Action Buttons -->
+              <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="cancel-op-modal-btn" type="button" style="padding: 10px 16px; border-radius: 8px; background: transparent; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer; color: var(--ink-secondary);">
+                  Cancel
+                </button>
+                <button id="submit-op-modal-btn" ${operationalModeLoading ? 'disabled' : ''} style="padding: 10px 20px; border-radius: 8px; background: ${targetOperationalMode === 'NORMAL' ? '#16A34A' : (targetOperationalMode === 'DEGRADED' ? '#D97706' : '#DC2626')}; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                  ${operationalModeLoading ? 'Applying Transition...' : `Confirm: Switch to ${targetOperationalMode} →`}
+                </button>
+              </div>
+
+            </div>
+          </div>
+        ` : ''}
+
       </div>
     `;
 
@@ -933,6 +1269,23 @@ export function renderAdminView(container, options = {}) {
       });
     });
 
+    // 3b. Direct Mark Sold Out Button (Sets quantity to 0 and marks sold out)
+    container.querySelectorAll('.mark-soldout-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const itemId = btn.getAttribute('data-item-id');
+        const input = container.querySelector(`.stock-count-input[data-item-id="${itemId}"]`);
+        if (input) input.value = 0;
+        btn.disabled = true;
+        try {
+          await updateItemStockCount(itemId, 0);
+        } catch (err) {
+          console.error('Mark sold out error:', err);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+
     // 4. Direct Stock Count Input
     container.querySelectorAll('.stock-count-input').forEach(input => {
       input.addEventListener('change', async () => {
@@ -948,6 +1301,49 @@ export function renderAdminView(container, options = {}) {
         }
       });
     });
+
+    // 4a. Menu Search & Stock Filter Listeners
+    const searchInput = container.querySelector('#menu-search-input');
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        menuSearchQuery = e.target.value;
+        render();
+        const nextInput = container.querySelector('#menu-search-input');
+        if (nextInput) {
+          nextInput.focus();
+          nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
+        }
+      });
+    }
+
+    const clearSearchBtn = container.querySelector('#clear-menu-search-btn');
+    if (clearSearchBtn) {
+      clearSearchBtn.addEventListener('click', () => {
+        menuSearchQuery = '';
+        render();
+        const nextInput = container.querySelector('#menu-search-input');
+        if (nextInput) nextInput.focus();
+      });
+    }
+
+    const stockFilterSelect = container.querySelector('#stock-filter-select');
+    if (stockFilterSelect) {
+      stockFilterSelect.addEventListener('change', (e) => {
+        stockStatusFilter = e.target.value;
+        render();
+      });
+    }
+
+    const resetFiltersBtn = container.querySelector('#reset-all-filters-btn');
+    if (resetFiltersBtn) {
+      resetFiltersBtn.addEventListener('click', () => {
+        menuSearchQuery = '';
+        selectedParentFilter = 'ALL';
+        selectedSubFilter = 'ALL';
+        stockStatusFilter = 'ALL';
+        render();
+      });
+    }
 
     // 4b. Menu Category & Subcategory Filter Listeners
     container.querySelectorAll('.cat-filter-btn').forEach(btn => {
@@ -1133,26 +1529,67 @@ export function renderAdminView(container, options = {}) {
 
     // 7. Emergency Operational Mode Controller Listeners
     container.querySelectorAll('.mode-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const targetMode = btn.getAttribute('data-mode');
-        const reason = prompt(`Reason for changing operational status to ${targetMode}:`, `Staff manual override to ${targetMode}`);
-        if (reason === null) return; // User cancelled
+      btn.addEventListener('click', () => {
+        targetOperationalMode = btn.getAttribute('data-mode');
+        showOperationalModal = true;
+        operationalModeError = null;
+        if (targetOperationalMode === 'NORMAL') {
+          operationalModeReason = 'Resuming standard daily canteen operations';
+        } else if (targetOperationalMode === 'DEGRADED') {
+          operationalModeReason = 'Lunch rush load shedding - counter cash orders only';
+        } else if (targetOperationalMode === 'FINANCIAL_FROZEN') {
+          operationalModeReason = 'Midday double-entry accounting reconciliation audit';
+        } else if (targetOperationalMode === 'EMERGENCY_HALT') {
+          operationalModeReason = 'Urgent emergency operational halt';
+        }
+        render();
+      });
+    });
+
+    if (showOperationalModal) {
+      container.querySelector('#close-op-modal-btn')?.addEventListener('click', () => {
+        showOperationalModal = false;
+        operationalModeError = null;
+        render();
+      });
+
+      container.querySelector('#cancel-op-modal-btn')?.addEventListener('click', () => {
+        showOperationalModal = false;
+        operationalModeError = null;
+        render();
+      });
+
+      container.querySelectorAll('.op-preset-btn').forEach(pBtn => {
+        pBtn.addEventListener('click', () => {
+          const r = pBtn.getAttribute('data-reason');
+          const input = container.querySelector('#op-modal-reason-input');
+          if (input) input.value = r;
+          operationalModeReason = r;
+        });
+      });
+
+      container.querySelector('#submit-op-modal-btn')?.addEventListener('click', async () => {
+        const inputReason = container.querySelector('#op-modal-reason-input')?.value?.trim();
+        const reason = inputReason || operationalModeReason || 'Manual staff operational status transition';
+        operationalModeLoading = true;
+        operationalModeError = null;
+        render();
 
         try {
-          modeLoading = true;
-          render();
-          const functions = getFunctions();
           const setModeFn = httpsCallable(functions, 'setSystemOperationalMode');
-          await setModeFn({ mode: targetMode, reason: reason || 'Manual admin override' });
-          currentMode = targetMode;
+          await setModeFn({ mode: targetOperationalMode, reason });
+          currentMode = targetOperationalMode;
+          showOperationalModal = false;
+          operationalModeLoading = false;
+          render();
         } catch (err) {
-          alert('Mode Transition Error: ' + (err.message || err));
-        } finally {
-          modeLoading = false;
+          console.error("setSystemOperationalMode error:", err);
+          operationalModeError = err.message || 'Failed to update system operational status.';
+          operationalModeLoading = false;
           render();
         }
       });
-    });
+    }
     // 8. Verification Applications Actions (Approve / Reject)
     container.querySelectorAll('.approve-app-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -1163,7 +1600,6 @@ export function renderAdminView(container, options = {}) {
         btn.textContent = 'Approving...';
         let handled = false;
         try {
-          const functions = getFunctions();
           const reviewFn = httpsCallable(functions, 'reviewVerificationApplication');
           await reviewFn({ applicationId: appId, decision: 'APPROVED' });
           handled = true;
@@ -1210,7 +1646,6 @@ export function renderAdminView(container, options = {}) {
         btn.textContent = 'Rejecting...';
         let handled = false;
         try {
-          const functions = getFunctions();
           const reviewFn = httpsCallable(functions, 'reviewVerificationApplication');
           await reviewFn({ applicationId: appId, decision: 'REJECTED', reviewNotes: reason });
           handled = true;
@@ -1244,38 +1679,121 @@ export function renderAdminView(container, options = {}) {
         }
       });
     });
-    // 9. Shift PIN Management Actions
+    // 9. Shift PIN & Terminal Credential Modal Actions
     const genShiftPinBtn = container.querySelector('#generate-shift-pins-btn');
     if (genShiftPinBtn) {
-      genShiftPinBtn.addEventListener('click', async () => {
-        const role = prompt('Enter role for new Shift PIN (kitchen / pickup / cashier):', 'kitchen');
-        if (!role || !['kitchen', 'pickup', 'cashier'].includes(role.toLowerCase().trim())) {
-          if (role !== null) alert('Invalid role. Must be kitchen, pickup, or cashier.');
-          return;
-        }
+      genShiftPinBtn.addEventListener('click', () => {
+        showCredModal = true;
+        credModalTab = 'pin';
+        credModalResult = null;
+        credModalError = null;
+        render();
+      });
+    }
 
-        const windowChoice = prompt('Enter shift window (MORNING / AFTERNOON / FULL_DAY):', 'FULL_DAY');
-        if (!windowChoice || !['MORNING', 'AFTERNOON', 'FULL_DAY'].includes(windowChoice.toUpperCase().trim())) {
-          if (windowChoice !== null) alert('Invalid window. Must be MORNING, AFTERNOON, or FULL_DAY.');
-          return;
-        }
+    const genTerminalInviteBtn = container.querySelector('#generate-terminal-invite-btn');
+    if (genTerminalInviteBtn) {
+      genTerminalInviteBtn.addEventListener('click', () => {
+        showCredModal = true;
+        credModalTab = 'terminal';
+        credModalResult = null;
+        credModalError = null;
+        render();
+      });
+    }
 
-        genShiftPinBtn.disabled = true;
-        genShiftPinBtn.textContent = 'Generating...';
+    container.querySelector('#close-cred-modal-btn')?.addEventListener('click', () => {
+      showCredModal = false;
+      credModalResult = null;
+      credModalError = null;
+      render();
+    });
+
+    container.querySelector('#cred-tab-pin')?.addEventListener('click', () => {
+      credModalTab = 'pin';
+      credModalError = null;
+      render();
+    });
+
+    container.querySelector('#cred-tab-terminal')?.addEventListener('click', () => {
+      credModalTab = 'terminal';
+      credModalError = null;
+      render();
+    });
+
+    const copyBtn = container.querySelector('#copy-cred-code-btn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => {
+        const code = copyBtn.getAttribute('data-code');
+        if (code) {
+          navigator.clipboard.writeText(code).then(() => {
+            copyBtn.textContent = '✓ Copied!';
+            setTimeout(() => { copyBtn.textContent = '📋 Copy to Clipboard'; }, 2500);
+          }).catch(() => {
+            prompt('Copy code:', code);
+          });
+        }
+      });
+    }
+
+    const modalGenPinBtn = container.querySelector('#modal-generate-pin-btn');
+    if (modalGenPinBtn) {
+      modalGenPinBtn.addEventListener('click', async () => {
+        const role = container.querySelector('#modal-shift-role')?.value || 'kitchen';
+        const shiftWindow = container.querySelector('#modal-shift-window')?.value || 'FULL_DAY';
+        const forceRegenerate = Boolean(container.querySelector('#modal-shift-force')?.checked);
+
+        credModalLoading = true;
+        credModalError = null;
+        render();
+
         try {
-          const functions = getFunctions();
           const genFn = httpsCallable(functions, 'generateShiftPin');
           const res = await genFn({
             role: role.toLowerCase().trim(),
-            shiftWindow: windowChoice.toUpperCase().trim(),
+            shiftWindow: shiftWindow.toUpperCase().trim(),
+            forceRegenerate,
           });
           const generatedPin = res.data?.pin;
-          alert(`✅ SHIFT PIN GENERATED!\n\nRole: ${role.toUpperCase()}\nWindow: ${windowChoice.toUpperCase()}\n\n🔑 6-DIGIT PIN: ${generatedPin}\n\n⚠️ IMPORTANT: Write this PIN down or provide to staff. It will NOT be displayed again.`);
+          credModalResult = {
+            type: 'pin',
+            code: generatedPin,
+            role,
+            window: shiftWindow,
+          };
         } catch (err) {
-          alert('Generation Error: ' + (err.message || err));
+          credModalError = err.message || 'Failed to generate shift PIN.';
         } finally {
-          genShiftPinBtn.disabled = false;
-          genShiftPinBtn.textContent = '+ Generate Shift PIN';
+          credModalLoading = false;
+          render();
+        }
+      });
+    }
+
+    const modalGenInviteBtn = container.querySelector('#modal-generate-invite-btn');
+    if (modalGenInviteBtn) {
+      modalGenInviteBtn.addEventListener('click', async () => {
+        const type = container.querySelector('#modal-terminal-type')?.value || 'kitchen';
+        const name = container.querySelector('#modal-terminal-name')?.value?.trim() || 'Counter Tablet';
+
+        credModalLoading = true;
+        credModalError = null;
+        render();
+
+        try {
+          const createInviteFn = httpsCallable(functions, 'createWorkstationInvite');
+          const res = await createInviteFn({ stationType: type, stationName: name });
+          credModalResult = {
+            type: 'terminal',
+            code: res.data?.inviteCode,
+            stationType: type,
+            stationName: name,
+          };
+        } catch (err) {
+          credModalError = err.message || 'Failed to generate terminal enrollment code.';
+        } finally {
+          credModalLoading = false;
+          render();
         }
       });
     }
@@ -1288,7 +1806,6 @@ export function renderAdminView(container, options = {}) {
         btn.disabled = true;
         btn.textContent = 'Revoking...';
         try {
-          const functions = getFunctions();
           const revokeFn = httpsCallable(functions, 'revokeShiftPin');
           await revokeFn({ pinId });
         } catch (err) {
@@ -1334,13 +1851,11 @@ export function renderAdminView(container, options = {}) {
       console.warn("Could not query verification applications:", err);
     }
 
-    // Subscribe to shift PINs (Platform 2.0)
+    // Subscribe to active shift PINs (Platform 2.0)
     try {
-      const d = new Date();
-      const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const pinsQuery = query(
         collection(db, 'shiftPins'),
-        where('shiftDate', '==', todayStr)
+        where('status', '==', 'ACTIVE')
       );
       unsubscribePins = onSnapshot(pinsQuery, (snap) => {
         currentShiftPins = snap.docs.map(d => ({ id: d.id, ...d.data() }));

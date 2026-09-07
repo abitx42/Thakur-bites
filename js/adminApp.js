@@ -1,9 +1,9 @@
 // Thakur Bites — Dedicated Business Administration Portal (Menu, Stock, Roles & Analytics)
-import { staffAuth, renderPinPadModal, getPrivilegedSession } from './auth.js?v=8';
-import { renderAdminView } from './views/adminView.js?v=5';
-import { renderAnalyticsView } from './views/analyticsView.js?v=5';
-import { renderWorkstationView } from './views/workstationView.js?v=1';
-import { renderPrivilegedAuthModal } from './views/mfaModal.js?v=1';
+import { staffAuth, renderPinPadModal, getPrivilegedSession, onStaffAuthStateChanged } from './auth.js?v=10';
+import { renderAdminView } from './views/adminView.js?v=9';
+import { renderAnalyticsView } from './views/analyticsView.js?v=6';
+import { renderWorkstationView } from './views/workstationView.js?v=2';
+import { renderPrivilegedAuthModal } from './views/mfaModal.js?v=2';
 
 let currentAdminView = 'menu'; // 'menu' | 'analytics' | 'workstations'
 
@@ -172,6 +172,9 @@ function initAdminPortal() {
   }
 
   render();
+  onStaffAuthStateChanged(() => {
+    render();
+  });
 }
 
 window.addEventListener('DOMContentLoaded', initAdminPortal);

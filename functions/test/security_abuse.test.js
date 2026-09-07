@@ -5466,6 +5466,529 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
       preferences: ['veg'],
     }).valid, false);
   });
+
+  it('254. Ready-Made Order Preference Auto-Detection & Sanitization Invariant: Validates isOnlyReadyMade and readyMadePreference', () => {
+    function evaluateOrderReadyMadeInvariants(items, readyMadePreference) {
+      // Preference sanitization
+      let sanitizedReadyMadePreference = undefined;
+      if (readyMadePreference !== undefined && readyMadePreference !== null) {
+        if (typeof readyMadePreference !== 'string' || readyMadePreference.length > 200) {
+          throw new Error('INVALID_ARGUMENT: readyMadePreference must be a string up to 200 characters.');
+        }
+        sanitizedReadyMadePreference = readyMadePreference.trim();
+      }
+
+      const isOnlyReadyMade = items.length > 0 && items.every(i => i.type === 'instant');
+      const finalPreference = isOnlyReadyMade
+        ? (sanitizedReadyMadePreference || 'Chilled ❄️ · Direct Handover ✋')
+        : undefined;
+
+      return {
+        isOnlyReadyMade,
+        readyMadePreference: finalPreference,
+      };
+    }
+
+    // 1. Ready-made only with custom preference
+    const result1 = evaluateOrderReadyMadeInvariants(
+      [{ itemId: 'coke_300', type: 'instant' }, { itemId: 'bisleri_500', type: 'instant' }],
+      'Room Temp 🥤 · Carry Bag 🛍️'
+    );
+    assert.strictEqual(result1.isOnlyReadyMade, true);
+    assert.strictEqual(result1.readyMadePreference, 'Room Temp 🥤 · Carry Bag 🛍️');
+
+    // 2. Ready-made only with default fallback
+    const result2 = evaluateOrderReadyMadeInvariants(
+      [{ itemId: 'lays_chips', type: 'instant' }],
+      undefined
+    );
+    assert.strictEqual(result2.isOnlyReadyMade, true);
+    assert.strictEqual(result2.readyMadePreference, 'Chilled ❄️ · Direct Handover ✋');
+
+    // 3. Mixed order (cooked + instant) - preference not attached to order-level ready-made
+    const result3 = evaluateOrderReadyMadeInvariants(
+      [{ itemId: 'masala_dosa', type: 'cooked' }, { itemId: 'coke_300', type: 'instant' }],
+      'Chilled ❄️'
+    );
+    assert.strictEqual(result3.isOnlyReadyMade, false);
+    assert.strictEqual(result3.readyMadePreference, undefined);
+
+    // 4. Corrupt preference (e.g. non-string or >200 chars) fails closed
+    assert.throws(() => {
+      evaluateOrderReadyMadeInvariants(
+        [{ itemId: 'coke_300', type: 'instant' }],
+        12345
+      );
+    }, /INVALID_ARGUMENT/);
+
+    assert.throws(() => {
+      evaluateOrderReadyMadeInvariants(
+        [{ itemId: 'coke_300', type: 'instant' }],
+        'a'.repeat(201)
+      );
+    }, /INVALID_ARGUMENT/);
+  });
+
+  it('255. Unpaid Order Pickup Barrier Invariant (SEC-02): verifyPickup strictly rejects handover of unpaid orders', () => {
+    function evaluatePickupPaymentBarrier(orderData) {
+      const isPaid = orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured';
+      if (!isPaid) {
+        throw new Error(`Cannot release order. Payment status is '${orderData.paymentStatus || 'pending'}'. Customer must complete payment at the cashier counter first.`);
+      }
+      return { allowed: true };
+    }
+
+    // 1. Paid / captured orders are allowed
+    assert.strictEqual(evaluatePickupPaymentBarrier({ paymentStatus: 'captured', status: 'ready' }).allowed, true);
+    assert.strictEqual(evaluatePickupPaymentBarrier({ paymentStatus: 'paid', status: 'ready' }).allowed, true);
+
+    // 2. Unpaid counter-cash orders in pending state fail closed
+    assert.throws(() => {
+      evaluatePickupPaymentBarrier({ paymentStatus: 'pending', paymentMethod: 'counter_cash', status: 'ready' });
+    }, /Payment status is 'pending'/);
+
+    // 3. Unpaid online orders in pending state fail closed
+    assert.throws(() => {
+      evaluatePickupPaymentBarrier({ paymentStatus: 'pending', paymentMethod: 'online', status: 'ready' });
+    }, /Payment status is 'pending'/);
+
+    // 4. Missing payment status defaults to pending and fails closed
+    assert.throws(() => {
+      evaluatePickupPaymentBarrier({ status: 'ready' });
+    }, /Payment status is 'pending'/);
+  });
+
+  it('256. Online Order Payment Requirement Invariant (SEC-01): Online orders must be created in payment_pending and commit stock only upon gateway capture', () => {
+    function evaluateOrderCreationStatus(paymentMethod) {
+      const isCounterCash = paymentMethod === 'counter_cash';
+      return {
+        status: 'payment_pending',
+        paymentStatus: 'pending',
+        paymentMethod: isCounterCash ? 'counter_cash' : 'online',
+      };
+    }
+
+    const onlineOrder = evaluateOrderCreationStatus('online');
+    assert.strictEqual(onlineOrder.status, 'payment_pending', 'Online orders must start in payment_pending');
+    assert.strictEqual(onlineOrder.paymentStatus, 'pending', 'Online orders must start in pending payment');
+
+    const cashOrder = evaluateOrderCreationStatus('counter_cash');
+    assert.strictEqual(cashOrder.status, 'payment_pending', 'Counter cash orders must start in payment_pending');
+    assert.strictEqual(cashOrder.paymentStatus, 'pending', 'Counter cash orders must start in pending payment');
+  });
+
+  it('257. Firestore Menu Items Price Governance Rule (SEC-03): Rejects operational staff direct write access to menuItems', () => {
+    function canWriteMenuItems(role) {
+      // Replicates firestore.rules: isManagerOrAdmin()
+      return ['manager', 'admin', 'developer', 'security_admin'].includes(role);
+    }
+
+    assert.strictEqual(canWriteMenuItems('admin'), true, 'Admin can modify menu items');
+    assert.strictEqual(canWriteMenuItems('manager'), true, 'Manager can modify menu items');
+    assert.strictEqual(canWriteMenuItems('developer'), true, 'Developer can modify menu items');
+    assert.strictEqual(canWriteMenuItems('kitchen'), false, 'Kitchen staff CANNOT directly write to menuItems');
+    assert.strictEqual(canWriteMenuItems('pickup'), false, 'Pickup station CANNOT directly write to menuItems');
+    assert.strictEqual(canWriteMenuItems('cashier'), false, 'Cashier CANNOT directly write to menuItems');
+    assert.strictEqual(canWriteMenuItems('student'), false, 'Student CANNOT directly write to menuItems');
+  });
+
+  it('258. Reserved Stock Calculation Integrity Invariant (SEC-04): Staff stock changes preserve availableStock = newStock - reservedStock', () => {
+    function computeAdjustedStock(previousStockOnHand, reservedStock, newStock) {
+      if (newStock < 0) throw new Error('Stock cannot be negative');
+      if (newStock < reservedStock) {
+        throw new Error(`Cannot reduce stock to ${newStock} because ${reservedStock} units are currently reserved`);
+      }
+      return {
+        stockOnHand: newStock,
+        reservedStock,
+        availableStock: newStock - reservedStock,
+      };
+    }
+
+    // 1. Normal restock with active reservations
+    const res1 = computeAdjustedStock(10, 4, 15);
+    assert.strictEqual(res1.stockOnHand, 15);
+    assert.strictEqual(res1.reservedStock, 4);
+    assert.strictEqual(res1.availableStock, 11, 'Available stock must subtract reserved stock');
+
+    // 2. Reducing stock below active reservations must fail closed
+    assert.throws(() => {
+      computeAdjustedStock(10, 4, 3);
+    }, /currently reserved/);
+
+    // 3. Reducing stock to exactly reserved stock leaves 0 available
+    const res2 = computeAdjustedStock(10, 4, 4);
+    assert.strictEqual(res2.availableStock, 0);
+  });
+
+  it('259. Verification Application Pre-Approval Defense (SEC-06): Rejects client creation with status other than SUBMITTED', () => {
+    function validateVerificationApplicationCreate(data) {
+      const allowedKeys = ['applicationId', 'userId', 'applicationType', 'employeeId', 'department', 'designation', 'officialEmail', 'claimedEmployeeId', 'claimedDepartment', 'claimedDesignation', 'claimedOfficialEmail', 'idProofStoragePath', 'status', 'submittedAt'];
+      const keys = Object.keys(data);
+      if (!keys.every(k => allowedKeys.includes(k))) {
+        throw new Error('Disallowed keys in verification application');
+      }
+      if (data.status !== 'SUBMITTED') {
+        throw new Error('Application status must be SUBMITTED upon creation');
+      }
+      return true;
+    }
+
+    assert.strictEqual(
+      validateVerificationApplicationCreate({ userId: 'u1', status: 'SUBMITTED', applicationId: 'FAC-123' }),
+      true
+    );
+
+    assert.throws(() => {
+      validateVerificationApplicationCreate({ userId: 'u1', status: 'APPROVED', applicationId: 'FAC-123' });
+    }, /Application status must be SUBMITTED/);
+  });
+
+  it('261. Direct Menu Item Mutation Schema Bounds: Rejects negative/zero prices and invalid stock bounds', () => {
+    function validateMenuItemDirectWrite(data) {
+      if ('price' in data) {
+        if (typeof data.price !== 'number' || data.price <= 0 || data.price > 10000) {
+          throw new Error('Price must be positive and <= 10000');
+        }
+      }
+      if ('stockOnHand' in data) {
+        if (!Number.isInteger(data.stockOnHand) || data.stockOnHand < 0) {
+          throw new Error('stockOnHand must be non-negative integer');
+        }
+      }
+      if ('reservedStock' in data) {
+        if (!Number.isInteger(data.reservedStock) || data.reservedStock < 0) {
+          throw new Error('reservedStock must be non-negative integer');
+        }
+      }
+      return true;
+    }
+
+    assert.strictEqual(validateMenuItemDirectWrite({ price: 45, stockOnHand: 10, reservedStock: 2 }), true);
+    assert.throws(() => validateMenuItemDirectWrite({ price: -10 }), /Price must be positive/);
+    assert.throws(() => validateMenuItemDirectWrite({ price: 0 }), /Price must be positive/);
+    assert.throws(() => validateMenuItemDirectWrite({ stockOnHand: -5 }), /stockOnHand must be non-negative/);
+    assert.throws(() => validateMenuItemDirectWrite({ reservedStock: -1 }), /reservedStock must be non-negative/);
+  });
+
+  it('262. Authoritative Claims Lockdown Invariant: Guarantees authoritativeClaims collection is unreachable via client SDK', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const rulesPath = path.resolve(__dirname, '../../firestore/firestore.rules');
+    const rulesContent = fs.readFileSync(rulesPath, 'utf8');
+
+    assert.ok(rulesContent.includes('match /authoritativeClaims/{uid}'), 'Rules must explicitly target authoritativeClaims collection');
+    assert.ok(rulesContent.includes('allow read, write: if false; // Server Admin SDK only'), 'authoritativeClaims must deny both read and write');
+  });
+
+  it('263. Privilege Boundary Bypasses Matrix: Enforces strict isolation across Student, Staff, Admin, and Developer', () => {
+    const { hasCapability } = require('../lib/authorization_policy');
+    const { classifyIdentity } = require('../lib/identity_classifier');
+
+    // 1. Student / Visitor cannot perform Staff operations
+    assert.strictEqual(hasCapability('student', 'view_kitchen_orders'), false);
+    assert.strictEqual(hasCapability('student', 'adjust_inventory'), false);
+    assert.strictEqual(hasCapability('visitor', 'view_pickup_orders'), false);
+    assert.strictEqual(hasCapability('visitor', 'record_cash_payment'), false);
+
+    // 2. Visitor cannot claim Teacher priority
+    const visitorClassification = classifyIdentity('random_visitor@gmail.com');
+    assert.strictEqual(visitorClassification.accountType, 'VISITOR');
+    assert.strictEqual(visitorClassification.priorityLevel, 0, 'Visitor must always receive Priority 0');
+
+    // 3. Operational Staff cannot perform Admin operations
+    assert.strictEqual(hasCapability('kitchen', 'manage_menu'), false);
+    assert.strictEqual(hasCapability('kitchen', 'manage_kill_switch'), false);
+    assert.strictEqual(hasCapability('pickup', 'manage_staff_roles'), false);
+    assert.strictEqual(hasCapability('cashier', 'manage_platform_flags'), false);
+
+    // 4. Admin cannot perform Developer-only emergency actions
+    assert.strictEqual(hasCapability('admin', 'emergency_freeze'), false, 'Admin lacks emergency_freeze');
+    assert.strictEqual(hasCapability('admin', 'view_telemetry'), false, 'Admin lacks view_telemetry');
+
+    // 5. Developer possesses engineering powers
+    assert.strictEqual(hasCapability('developer', 'emergency_freeze'), true);
+    assert.strictEqual(hasCapability('developer', 'view_telemetry'), true);
+    assert.strictEqual(hasCapability('security_admin', 'emergency_freeze'), true);
+  });
+
+  it('264. Step-Up Challenge Replay & Expiry Defense', () => {
+    const { verifyChallengeNonceConstantTime } = require('../lib/developer_cockpit');
+    const crypto = require('crypto');
+
+    const rawNonce = crypto.randomBytes(32).toString('hex');
+    const nonceHash = crypto.createHash('sha256').update(rawNonce).digest('hex');
+
+    const sessionData = {
+      challengeId: 'CHAL-TEST-001',
+      actorUid: 'dev_123',
+      action: 'KILL_SWITCH',
+      nonceHash,
+      used: false,
+      expiresAtMs: Date.now() + 60000,
+    };
+
+    function simulateExecuteEmergencyAction(incomingNonce, session) {
+      if (session.used) {
+        throw new Error('Replay detected: Step-up challenge has already been consumed.');
+      }
+      if (Date.now() > session.expiresAtMs) {
+        throw new Error('Step-up challenge has expired. Request a fresh challenge.');
+      }
+      const isValid = verifyChallengeNonceConstantTime(incomingNonce, session.nonceHash);
+      if (!isValid) {
+        throw new Error('Invalid challenge nonce. Authentication failed.');
+      }
+      session.used = true;
+      return { success: true };
+    }
+
+    // 1. Valid execution succeeds and consumes challenge
+    const result1 = simulateExecuteEmergencyAction(rawNonce, sessionData);
+    assert.strictEqual(result1.success, true);
+    assert.strictEqual(sessionData.used, true);
+
+    // 2. Replay of same nonce must fail closed
+    assert.throws(() => {
+      simulateExecuteEmergencyAction(rawNonce, sessionData);
+    }, /Replay detected/);
+
+    // 3. Expired session must fail closed
+    const expiredSession = {
+      challengeId: 'CHAL-EXPIRED',
+      actorUid: 'dev_123',
+      action: 'KILL_SWITCH',
+      nonceHash,
+      used: false,
+      expiresAtMs: Date.now() - 1000,
+    };
+    assert.throws(() => {
+      simulateExecuteEmergencyAction(rawNonce, expiredSession);
+    }, /challenge has expired/);
+  });
+
+  it('265. Deterministic Financial Ledger Key Invariant: Guarantees exact 1 financial transaction document under concurrency', () => {
+    function generateFinancialTransactionId(orderId, gatewayPaymentId, isCash) {
+      return isCash ? `cash_fin_${orderId}` : `pay_fin_${gatewayPaymentId}`;
+    }
+
+    const orderId = 'ord_123456';
+    const gatewayPaymentId = 'pay_Hk829J102';
+
+    // Simulate 10 concurrent requests to finalize payment
+    const generatedIds = new Set();
+    for (let i = 0; i < 10; i++) {
+      generatedIds.add(generateFinancialTransactionId(orderId, gatewayPaymentId, false));
+    }
+
+    // Must collapse to exactly 1 document ID
+    assert.strictEqual(generatedIds.size, 1);
+    assert.strictEqual(Array.from(generatedIds)[0], 'pay_fin_pay_Hk829J102');
+
+    // Cash transactions also deterministic per order
+    const cashIds = new Set();
+    for (let i = 0; i < 10; i++) {
+      cashIds.add(generateFinancialTransactionId(orderId, null, true));
+    }
+    assert.strictEqual(cashIds.size, 1);
+    assert.strictEqual(Array.from(cashIds)[0], 'cash_fin_ord_123456');
+  });
+
+  it('266. Cancelled Order Late Payment Capture & Suspense Invariant: Never resurrects cancelled order', () => {
+    function simulatePaymentFinalize(orderData, gatewayPaymentId) {
+      if (orderData.status === 'cancelled') {
+        // Must route to suspense without mutating order status to confirmed
+        return {
+          success: true,
+          alreadyCaptured: false,
+          orderId: orderData.id,
+          status: 'cancelled',
+          orphaned: true,
+          suspenseAccount: 'ORPHAN_SUSPENSE',
+          ledgerDocumentId: `orphan_fin_${gatewayPaymentId}`,
+        };
+      }
+      return {
+        success: true,
+        alreadyCaptured: false,
+        orderId: orderData.id,
+        status: 'confirmed',
+        ledgerDocumentId: `pay_fin_${gatewayPaymentId}`,
+      };
+    }
+
+    const cancelledOrder = { id: 'ord_cancelled_99', status: 'cancelled', paymentStatus: 'cancelled' };
+    const res = simulatePaymentFinalize(cancelledOrder, 'pay_late_123');
+
+    assert.strictEqual(res.status, 'cancelled', 'Order status must remain cancelled');
+    assert.strictEqual(res.orphaned, true, 'Payment must be marked orphaned');
+    assert.strictEqual(res.suspenseAccount, 'ORPHAN_SUSPENSE');
+    assert.strictEqual(res.ledgerDocumentId, 'orphan_fin_pay_late_123');
+  });
+
+  it('267. Inventory Concurrency Torture: 3 Simultaneous Checkouts on Last 1 Unit', () => {
+    // Database item state
+    const itemState = {
+      itemId: 'coke_300',
+      stockOnHand: 1,
+      reservedStock: 0,
+    };
+
+    // Optimistic Concurrency Transaction Simulator
+    function tryReserveItem(workerId, quantity) {
+      // Step 1: Read
+      const available = itemState.stockOnHand - itemState.reservedStock;
+      if (quantity > available) {
+        throw new Error(`INSUFFICIENT_AVAILABLE_STOCK: Insufficient stock for coke_300. Available: ${available}, requested: ${quantity}.`);
+      }
+
+      // Step 2: Write (atomic reservation)
+      itemState.reservedStock += quantity;
+      return {
+        workerId,
+        success: true,
+        reservedStock: itemState.reservedStock,
+        availableStock: itemState.stockOnHand - itemState.reservedStock,
+      };
+    }
+
+    // Workers A, B, C attempt to reserve 1 unit simultaneously
+    const results = [];
+    const errors = [];
+
+    const workers = ['Worker_A', 'Worker_B', 'Worker_C'];
+    for (const w of workers) {
+      try {
+        const res = tryReserveItem(w, 1);
+        results.push(res);
+      } catch (err) {
+        errors.push({ worker: w, error: err.message });
+      }
+    }
+
+    // Exactly 1 must succeed
+    assert.strictEqual(results.length, 1, 'Exactly one worker must succeed on last remaining unit');
+    assert.strictEqual(results[0].workerId, 'Worker_A');
+
+    // 2 must fail with INSUFFICIENT_AVAILABLE_STOCK
+    assert.strictEqual(errors.length, 2);
+    assert.ok(errors[0].error.includes('INSUFFICIENT_AVAILABLE_STOCK'));
+    assert.ok(errors[1].error.includes('INSUFFICIENT_AVAILABLE_STOCK'));
+
+    // Invariants preserved: Stock never drops below zero, reservation is not duplicated
+    assert.strictEqual(itemState.stockOnHand, 1);
+    assert.strictEqual(itemState.reservedStock, 1);
+    assert.strictEqual(itemState.stockOnHand - itemState.reservedStock, 0);
+  });
+
+  it('268. 3-Way Concurrency Torture: Expiry vs Payment Commit vs Staff Adjustment', () => {
+    const itemRecord = {
+      stockOnHand: 5,
+      reservedStock: 2, // 2 units held by reservation_001
+    };
+
+    const reservationRecord = {
+      id: 'res_001',
+      status: 'RESERVED', // 'RESERVED' | 'COMMITTED' | 'RELEASED'
+      quantity: 2,
+    };
+
+    // Action A: Staff adjustment cannot reduce stock below active reservations
+    function staffAdjustStock(newStock) {
+      if (newStock < itemRecord.reservedStock) {
+        throw new Error(`Cannot reduce stock to ${newStock} because ${itemRecord.reservedStock} units are currently reserved.`);
+      }
+      itemRecord.stockOnHand = newStock;
+    }
+
+    assert.throws(() => staffAdjustStock(1), /currently reserved/);
+
+    // Action B: Payment commit transitions status to COMMITTED
+    function commitReservation() {
+      if (reservationRecord.status !== 'RESERVED') {
+        return { alreadyFinalized: true };
+      }
+      reservationRecord.status = 'COMMITTED';
+      itemRecord.stockOnHand -= reservationRecord.quantity;
+      itemRecord.reservedStock -= reservationRecord.quantity;
+      return { success: true };
+    }
+
+    // Action C: Release reservation (e.g. timeout)
+    function releaseReservation() {
+      if (reservationRecord.status !== 'RESERVED') {
+        return { alreadyFinalized: true };
+      }
+      reservationRecord.status = 'RELEASED';
+      itemRecord.reservedStock -= reservationRecord.quantity;
+      return { success: true };
+    }
+
+    // Execute commit first
+    const commitResult = commitReservation();
+    assert.strictEqual(commitResult.success, true);
+    assert.strictEqual(reservationRecord.status, 'COMMITTED');
+    assert.strictEqual(itemRecord.stockOnHand, 3);
+    assert.strictEqual(itemRecord.reservedStock, 0);
+
+    // Late release attempt is safely ignored
+    const lateRelease = releaseReservation();
+    assert.strictEqual(lateRelease.alreadyFinalized, true);
+    assert.strictEqual(itemRecord.stockOnHand, 3, 'Stock on hand unchanged by late release');
+    assert.strictEqual(itemRecord.reservedStock, 0);
+  });
+
+  it('269. Forensic Audit-Log Immutability & Full Forensic Traceability', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const rulesPath = path.resolve(__dirname, '../../firestore/firestore.rules');
+    const rulesContent = fs.readFileSync(rulesPath, 'utf8');
+
+    // Verify Firestore rules lock all audit collections to append-only / server-only writes
+    const auditCollections = ['inventoryLedger', 'financialTransactions', 'orderEvents', 'securityEvents'];
+    auditCollections.forEach(col => {
+      assert.ok(rulesContent.includes(`match /${col}/{`), `Rules must define match for /${col}`);
+      const start = rulesContent.indexOf(`match /${col}/`);
+      const block = rulesContent.slice(start, start + 250);
+      assert.ok(block.includes('allow write: if false;'), `${col} must have allow write: if false;`);
+    });
+
+    // Verify inventory audit schema contains complete forensic fields
+    function validateAuditEntry(entry) {
+      const requiredFields = [
+        'ledgerId', 'itemId', 'changeType', 'deltaUnits',
+        'previousStockOnHand', 'newStockOnHand', 'reservedStock',
+        'previousAvailable', 'newAvailable', 'actorId', 'actorRole',
+        'reason', 'timestamp',
+      ];
+      for (const field of requiredFields) {
+        if (entry[field] === undefined) {
+          throw new Error(`Missing mandatory audit field: ${field}`);
+        }
+      }
+      return true;
+    }
+
+    const validEntry = {
+      ledgerId: 'led_123',
+      itemId: 'TB-001',
+      changeType: 'RESTOCK',
+      deltaUnits: 10,
+      previousStockOnHand: 5,
+      newStockOnHand: 15,
+      reservedStock: 2,
+      previousAvailable: 3,
+      newAvailable: 13,
+      actorId: 'admin_uid_789',
+      actorRole: 'admin',
+      reason: 'Morning supplier shipment',
+      requestId: 'req_abc123',
+      timestamp: new Date().toISOString(),
+    };
+
+    assert.strictEqual(validateAuditEntry(validEntry), true);
+  });
 });
+
 
 

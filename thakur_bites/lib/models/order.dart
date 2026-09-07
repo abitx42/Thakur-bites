@@ -17,6 +17,8 @@ class Order {
   final int estimatedMinutes; // max prep time of all items
   final double totalAmount;
   final List<OrderItem> items;
+  final bool isOnlyReadyMade;
+  final String? readyMadePreference;
 
   Order({
     required this.id,
@@ -31,6 +33,8 @@ class Order {
     required this.estimatedMinutes,
     required this.totalAmount,
     required this.items,
+    this.isOnlyReadyMade = false,
+    this.readyMadePreference,
   });
 
   /// Status progression
@@ -42,6 +46,7 @@ class Order {
   ];
 
   /// Status helpers
+  bool get isPaymentPending => status == 'payment_pending';
   bool get isConfirmed => status == 'confirmed' || status == 'placed';
   bool get isPreparing => status == 'preparing';
   bool get isReady => status == 'ready';
@@ -58,6 +63,8 @@ class Order {
   /// Human-friendly status label
   String get statusLabel {
     switch (status) {
+      case 'payment_pending':
+        return 'Payment Pending';
       case 'confirmed':
       case 'placed':
         return 'Order confirmed';
@@ -72,7 +79,15 @@ class Order {
     }
   }
 
+
   factory Order.fromFirestore(String docId, Map<String, dynamic> data) {
+    final parsedItems = (data['items'] as List<dynamic>?)
+            ?.map((item) => OrderItem.fromMap(item as Map<String, dynamic>))
+            .toList() ??
+        [];
+    final onlyReadyMade = data['isOnlyReadyMade'] == true ||
+        (parsedItems.isNotEmpty && parsedItems.every((i) => i.isInstant));
+
     return Order(
       id: docId,
       tokenNumber: data['tokenNumber'] ?? '',
@@ -86,10 +101,9 @@ class Order {
       estimatedMinutes: data['estimatedMinutes'] ?? 0,
       totalAmount: (data['totalAmount'] as num?)?.toDouble() ??
           (((data['totalAmountPaise'] as num?)?.toDouble() ?? 0.0) / 100.0),
-      items: (data['items'] as List<dynamic>?)
-              ?.map((item) => OrderItem.fromMap(item as Map<String, dynamic>))
-              .toList() ??
-          [],
+      items: parsedItems,
+      isOnlyReadyMade: onlyReadyMade,
+      readyMadePreference: data['readyMadePreference'] as String?,
     );
   }
 
@@ -107,6 +121,8 @@ class Order {
       'totalAmount': totalAmount,
       'totalAmountPaise': (totalAmount * 100).round(),
       'items': items.map((item) => item.toMap()).toList(),
+      'isOnlyReadyMade': isOnlyReadyMade,
+      if (readyMadePreference != null) 'readyMadePreference': readyMadePreference,
     };
   }
 
@@ -123,6 +139,8 @@ class Order {
     int? estimatedMinutes,
     double? totalAmount,
     List<OrderItem>? items,
+    bool? isOnlyReadyMade,
+    String? readyMadePreference,
   }) {
     return Order(
       id: id ?? this.id,
@@ -137,6 +155,8 @@ class Order {
       estimatedMinutes: estimatedMinutes ?? this.estimatedMinutes,
       totalAmount: totalAmount ?? this.totalAmount,
       items: items ?? this.items,
+      isOnlyReadyMade: isOnlyReadyMade ?? this.isOnlyReadyMade,
+      readyMadePreference: readyMadePreference ?? this.readyMadePreference,
     );
   }
 }
@@ -147,13 +167,18 @@ class OrderItem {
   final String name;
   final int quantity;
   final double price;
+  final String? type; // 'cooked' | 'instant'
 
   OrderItem({
     required this.menuItemId,
     required this.name,
     required this.quantity,
     required this.price,
+    this.type,
   });
+
+  bool get isInstant => type == 'instant';
+  bool get isCooked => type == 'cooked';
 
   double get subtotal => price * quantity;
 
@@ -163,6 +188,7 @@ class OrderItem {
       name: map['name'] ?? '',
       quantity: map['quantity'] ?? 1,
       price: (map['price'] ?? map['unitPrice'] ?? 0).toDouble(),
+      type: map['type'] as String?,
     );
   }
 
@@ -172,6 +198,7 @@ class OrderItem {
       'name': name,
       'quantity': quantity,
       'price': price,
+      if (type != null) 'type': type,
     };
   }
 }

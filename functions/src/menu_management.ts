@@ -141,11 +141,22 @@ export const toggleMenuItemAvailability = onCall<ToggleMenuItemAvailabilityReque
     throw new HttpsError('not-found', `Menu item ${itemId} not found.`);
   }
 
-  await itemRef.update({
+  const updateData: any = {
     available,
+    isOrderable: available,
+    availabilityStatus: available ? 'AVAILABLE' : 'OUT_OF_STOCK',
     updatedAt: Timestamp.now(),
     updatedBy: request.auth.uid,
-  });
+  };
+
+  // Invariant: Sold-out items must have 0 quantity and 0 available stock
+  if (!available) {
+    updateData.stockOnHand = 0;
+    updateData.stockCount = 0;
+    updateData.availableStock = 0;
+  }
+
+  await itemRef.update(updateData);
 
   await logSecurityEvent({
     eventType: 'MENU_ITEM_AVAILABILITY_CHANGED',

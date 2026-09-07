@@ -232,8 +232,8 @@ export const runSecurityIntegrityScan = onCall<void, Promise<IntegrityScanResult
   }
 
   const role = (request.auth.token.role as UserRole) || 'student';
-  if (role !== 'security_admin' && role !== 'admin') {
-    throw new HttpsError('permission-denied', 'Permission denied: Security Admin or Admin role required.');
+  if (role !== 'security_admin' && role !== 'admin' && (role as string) !== 'developer') {
+    throw new HttpsError('permission-denied', 'Permission denied: Security Admin, Developer, or Admin role required.');
   }
 
   return await executeIntegrityScan();

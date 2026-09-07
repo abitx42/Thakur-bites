@@ -42,11 +42,19 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   }
 
   await enforceRateLimit(studentId, 'checkout');
-  const { idempotencyKey, items, paymentMethod = 'online' } = request.data || {};
+  const { idempotencyKey, items, paymentMethod = 'online', readyMadePreference } = request.data || {};
 
   // Strict Payment Method Enum Validation (TB-NEW-008 Remediation)
   if (paymentMethod !== 'online' && paymentMethod !== 'counter_cash') {
     throw new HttpsError('invalid-argument', 'paymentMethod must be either "online" or "counter_cash".');
+  }
+
+  let sanitizedReadyMadePreference: string | undefined = undefined;
+  if (readyMadePreference !== undefined && readyMadePreference !== null) {
+    if (typeof readyMadePreference !== 'string' || readyMadePreference.length > 200) {
+      throw new HttpsError('invalid-argument', 'readyMadePreference must be a string up to 200 characters.');
+    }
+    sanitizedReadyMadePreference = readyMadePreference.trim();
   }
 
   if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0 || idempotencyKey.length > 128) {
@@ -252,9 +260,15 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
 
       const readyAtDate = new Date(now.toMillis() + maxPrepMinutes * 60000);
       const isCounterCash = paymentMethod === 'counter_cash';
+      const gatewayOrderId = !isCounterCash ? `order_${crypto.randomBytes(8).toString('hex')}` : undefined;
+
+      const isOnlyReadyMade = orderItemSnapshots.length > 0 && orderItemSnapshots.every(i => i.type === 'instant');
+      const finalReadyMadePreference = isOnlyReadyMade
+        ? (sanitizedReadyMadePreference || 'Chilled ❄️ · Direct Handover ✋')
+        : undefined;
 
       // Zero-Knowledge Clean Order Document: Zero secrets in readable orders document
-      // Cash Lifecycle (TB-012): Cash orders start in payment_pending with reserved inventory
+      // All orders start in payment_pending with reserved inventory
       const orderDoc: OrderDocument = {
         id: newOrderRef.id,
         idempotencyKey,
@@ -265,11 +279,15 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         status: 'payment_pending',
         paymentStatus: 'pending',
         paymentMethod: isCounterCash ? 'counter_cash' : 'online',
+        gatewayOrderId,
         totalAmount: calculatedTotalPaise / 100,
         totalAmountPaise: calculatedTotalPaise,
         currency: 'INR',
+
         items: orderItemSnapshots,
         estimatedMinutes: maxPrepMinutes,
+        isOnlyReadyMade,
+        readyMadePreference: finalReadyMadePreference,
         priorityLevel: assignedPriority,
         priorityReason: priorityReason,
         createdAt: now,
@@ -343,7 +361,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         actorId: studentId,
         actorRole: 'student',
         timestamp: now,
-        reason: isCounterCash ? 'CHECKOUT_COUNTER_CASH' : 'CHECKOUT_PAYMENT_PENDING',
+        reason: isCounterCash ? 'CHECKOUT_COUNTER_CASH' : 'CHECKOUT_ONLINE_PAYMENT_PENDING',
       });
 
       return {
@@ -355,8 +373,12 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         },
         rawPin,
         signedQrPayload,
+        gatewayOrderId,
+        amountPaise: calculatedTotalPaise,
+        keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_tcet_canteen',
       };
     });
+
 
     // Asynchronously synchronize the single ephemeral publicLiveQueue/current document
     await updatePublicLiveQueueProjection(db);

@@ -1,7 +1,7 @@
 // Thakur Bites Platform 2.0 — Executive Owner Console & Financial Telemetry View
-import { db, subscribeOrders, subscribeMenuItems } from '../firebase.js';
+import { db, functions, subscribeOrders, subscribeMenuItems } from '../firebase.js?v=5';
 import { doc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
+import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 
 let unsubscribeOrders = null;
 let unsubscribeMenu = null;
@@ -387,7 +387,6 @@ export function renderAnalyticsView(container) {
         btn.textContent = 'Updating...';
 
         try {
-          const functions = getFunctions();
           const updateFn = httpsCallable(functions, 'updateOwnerFeatureFlags');
           await updateFn({ [flagName]: targetVal });
         } catch (err) {
@@ -411,7 +410,6 @@ export function renderAnalyticsView(container) {
         rushBtn.disabled = true;
         rushBtn.textContent = 'Updating...';
         try {
-          const functions = getFunctions();
           const updateFn = httpsCallable(functions, 'updateOwnerFeatureFlags');
           await updateFn({ rushMultiplier: num });
         } catch (err) {

@@ -1,7 +1,7 @@
 // Thakur Bites — Dedicated Developer Command Cockpit & Engineering Security Center
-import { staffAuth, renderPinPadModal, getPrivilegedSession } from './auth.js?v=8';
-import { renderSecurityCenterView } from './views/securityCenterView.js?v=5';
-import { renderPrivilegedAuthModal } from './views/mfaModal.js?v=1';
+import { staffAuth, renderPinPadModal, getPrivilegedSession, onStaffAuthStateChanged } from './auth.js?v=10';
+import { renderSecurityCenterView } from './views/securityCenterView.js?v=6';
+import { renderPrivilegedAuthModal } from './views/mfaModal.js?v=2';
 
 function initDeveloperCockpit() {
   const root = document.getElementById('app-root');
@@ -142,6 +142,9 @@ function initDeveloperCockpit() {
   }
 
   render();
+  onStaffAuthStateChanged(() => {
+    render();
+  });
 }
 
 window.addEventListener('DOMContentLoaded', initDeveloperCockpit);
