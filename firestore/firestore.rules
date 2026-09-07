@@ -51,10 +51,6 @@ service cloud.firestore {
       return isKitchen() || isPickup() || isCashier() || hasAdministrativeAccess();
     }
 
-    function isTeacher() {
-      return isAuthenticated() && ('accountType' in request.auth.token && request.auth.token.accountType == 'TEACHER');
-    }
-
     // ─── Menu Items (Server Authority Architecture) ───────────────
     // Public read for live canteen catalog. Modifications restricted to Managers/Admins or audited Cloud Functions.
     match /menuItems/{itemId} {

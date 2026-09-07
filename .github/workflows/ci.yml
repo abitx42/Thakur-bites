@@ -64,6 +64,11 @@ jobs:
       - name: Run Master CI Security Verification Script
         run: bash scripts/run_all_security_checks.sh
 
+      - name: Verify Cloud Deployment Dry-Run & Configuration Reality
+        run: |
+          node scripts/audit_deployment_reality.js
+          npx firebase-tools deploy --only firestore,hosting --dry-run --project adi-thakur-bite
+
       - name: Build Flutter Web Production Bundle
         working-directory: thakur_bites
         run: flutter build web --release

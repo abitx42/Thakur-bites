@@ -1,0 +1,18 @@
+{
+  "projects": {
+    "default": "adi-thakur-bite"
+  },
+  "targets": {
+    "adi-thakur-bite": {
+      "hosting": {
+        "app": [
+          "adi-thakur-bite"
+        ],
+        "staff": [
+          "adi-thakur-bite-staff"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

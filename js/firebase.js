@@ -52,12 +52,16 @@ export const storage = getStorage(app);
 export { ref, uploadBytes, getDownloadURL };
 
 if (typeof window !== 'undefined') {
-  // Directly point emulatorOrigin to window.location.origin so that both http://localhost:8080
-  // and https://*.trycloudflare.com (Cloudflare tunnel) route callable requests via reverse proxy
-  // (/adi-thakur-bite/us-central1/*) with exact protocol/port alignment, completely eliminating
-  // mixed-content blocks, plain-HTTP-to-SSL mismatches, and connection errors.
-  functions.emulatorOrigin = window.location.origin;
+  // Only route via emulator proxy when running on local dev server or Cloudflare test tunnel.
+  // In production (e.g. adi-thakur-bite.web.app or custom domains), use standard Google Cloud Functions routing.
+  const isLocalDev = window.location.hostname === 'localhost' ||
+                     window.location.hostname === '127.0.0.1' ||
+                     window.location.hostname.endsWith('.trycloudflare.com');
+  if (isLocalDev) {
+    functions.emulatorOrigin = window.location.origin;
+  }
 }
+
 
 // ─── Staff Authentication & Role Management ─────────────────────────
 
