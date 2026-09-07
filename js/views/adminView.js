@@ -42,6 +42,7 @@ let selectedParentFilter = 'ALL';
 let selectedSubFilter = 'ALL';
 let menuSearchQuery = '';
 let stockStatusFilter = 'ALL';
+let selectedSortOption = 'DEFAULT';
 
 export function renderAdminView(container, options = {}) {
   const isStaffMode = Boolean(options && options.staffMode);
@@ -102,6 +103,23 @@ export function renderAdminView(container, options = {}) {
       }
 
       return true;
+    });
+
+    // 5. Multi-tier Sorting
+    visibleItems.sort((a, b) => {
+      switch (selectedSortOption) {
+        case 'PRICE_LOW_HIGH':
+          return (Number(a.price) || 0) - (Number(b.price) || 0);
+        case 'PRICE_HIGH_LOW':
+          return (Number(b.price) || 0) - (Number(a.price) || 0);
+        case 'NAME_AZ':
+          return (a.name || '').localeCompare(b.name || '');
+        case 'POPULAR':
+          return (b.isPopular ? 1 : 0) - (a.isPopular ? 1 : 0) || ((a.sortOrder || 100) - (b.sortOrder || 100));
+        case 'DEFAULT':
+        default:
+          return (a.sortOrder || 100) - (b.sortOrder || 100);
+      }
     });
 
     const cookedItems = visibleItems.filter(i => i.type === 'cooked');
@@ -409,6 +427,18 @@ export function renderAdminView(container, options = {}) {
             </div>
 
             <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <!-- Multi-Tier Sort Filter -->
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary);">SORT:</span>
+                <select id="sort-filter-select" style="padding: 6px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.85rem; background: var(--bg-surface); cursor: pointer;">
+                  <option value="DEFAULT" ${selectedSortOption === 'DEFAULT' ? 'selected' : ''}>Default</option>
+                  <option value="PRICE_LOW_HIGH" ${selectedSortOption === 'PRICE_LOW_HIGH' ? 'selected' : ''}>₹ Price: Low → High</option>
+                  <option value="PRICE_HIGH_LOW" ${selectedSortOption === 'PRICE_HIGH_LOW' ? 'selected' : ''}>₹ Price: High → Low</option>
+                  <option value="NAME_AZ" ${selectedSortOption === 'NAME_AZ' ? 'selected' : ''}>🔤 Name: A → Z</option>
+                  <option value="POPULAR" ${selectedSortOption === 'POPULAR' ? 'selected' : ''}>🔥 Popular First</option>
+                </select>
+              </div>
+
               <!-- Stock Status Filter -->
               <div style="display: flex; align-items: center; gap: 6px;">
                 <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary);">STOCK:</span>
@@ -1326,6 +1356,14 @@ export function renderAdminView(container, options = {}) {
       });
     }
 
+    const sortFilterSelect = container.querySelector('#sort-filter-select');
+    if (sortFilterSelect) {
+      sortFilterSelect.addEventListener('change', (e) => {
+        selectedSortOption = e.target.value;
+        render();
+      });
+    }
+
     const stockFilterSelect = container.querySelector('#stock-filter-select');
     if (stockFilterSelect) {
       stockFilterSelect.addEventListener('change', (e) => {
@@ -1341,6 +1379,7 @@ export function renderAdminView(container, options = {}) {
         selectedParentFilter = 'ALL';
         selectedSubFilter = 'ALL';
         stockStatusFilter = 'ALL';
+        selectedSortOption = 'DEFAULT';
         render();
       });
     }
