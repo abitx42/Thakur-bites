@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/menu_item.dart';
 import '../services/firestore_service.dart';
 
@@ -18,20 +20,96 @@ class CartEntry {
 
 /// Central cart state using ChangeNotifier (Provider pattern).
 ///
-/// ARCHITECTURE: Cart is a WISHLIST. Adding items never checks or reserves stock.
+/// ARCHITECTURE: Cart is a WISHLIST with local offline persistence.
 /// Stock is checked ONLY at checkout time by the backend (Firestore).
 /// First student to successfully place the order gets the stock.
 class CartProvider extends ChangeNotifier {
+  static const String _storageKey = 'offline_cart_v1';
   final FirestoreService? _firestore;
   StreamSubscription? _menuSub;
 
   /// Map of item ID → CartEntry for O(1) lookups
   final Map<String, CartEntry> _entries = {};
+  final List<String> _priceChangeAlerts = [];
+
+  List<String> get priceChangeAlerts => List.unmodifiable(_priceChangeAlerts);
+  bool get hasPriceChangeAlerts => _priceChangeAlerts.isNotEmpty;
+
+  void clearPriceChangeAlerts() {
+    _priceChangeAlerts.clear();
+    notifyListeners();
+  }
 
   CartProvider({FirestoreService? firestoreService, bool listenToLiveStock = true})
       : _firestore = firestoreService {
+    _loadPersistedCart();
     if (listenToLiveStock) {
       _initLiveStockListener();
+    }
+  }
+
+  /// Load cached wishlist from local device storage upon app startup/reconnect
+  Future<void> _loadPersistedCart() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_storageKey);
+      if (raw != null && raw.isNotEmpty) {
+        final List<dynamic> list = jsonDecode(raw);
+        for (final entry in list) {
+          final m = Map<String, dynamic>.from(entry as Map);
+          final itemId = m['itemId'] as String? ?? '';
+          final qty = (m['qty'] as num?)?.toInt() ?? 1;
+          if (itemId.isNotEmpty && qty > 0) {
+            final item = MenuItem(
+              id: itemId,
+              name: m['cachedName'] as String? ?? 'Item',
+              price: (m['cachedPrice'] as num?)?.toDouble() ?? 0.0,
+              parentCategory: m['cachedParentCategory'] as String? ?? 'Food',
+              category: m['cachedCategory'] as String? ?? 'general',
+              available: true,
+              stockCount: 50,
+              prepMinutes: (m['cachedPrepMinutes'] as num?)?.toInt() ?? 0,
+              type: m['cachedType'] as String? ?? 'instant',
+              iconKey: m['cachedIconKey'] as String? ?? 'dosa',
+            );
+            _entries[itemId] = CartEntry(item: item, qty: qty);
+          }
+        }
+        notifyListeners();
+      }
+    } catch (e) {
+      // Safely ignore when run in headless test environments without platform channels
+      if (!e.toString().contains('Binding') && !e.toString().contains('MissingPluginException')) {
+        debugPrint('Error loading persisted cart: $e');
+      }
+    }
+  }
+
+  /// Authoritatively save wishlist locally (INV-001: offline cart ≠ offline order)
+  Future<void> _persistCartLocally() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_entries.isEmpty) {
+        await prefs.remove(_storageKey);
+        return;
+      }
+      final list = _entries.values.map((e) => {
+        'itemId': e.item.id,
+        'qty': e.qty,
+        'cachedPrice': e.item.price,
+        'cachedName': e.item.name,
+        'cachedIconKey': e.item.iconKey,
+        'cachedCategory': e.item.category,
+        'cachedParentCategory': e.item.parentCategory,
+        'cachedType': e.item.type,
+        'cachedPrepMinutes': e.item.prepMinutes,
+      }).toList();
+      await prefs.setString(_storageKey, jsonEncode(list));
+    } catch (e) {
+      // Safely ignore when run in headless test environments without platform channels
+      if (!e.toString().contains('Binding') && !e.toString().contains('MissingPluginException')) {
+        debugPrint('Error persisting cart locally: $e');
+      }
     }
   }
 
@@ -170,6 +248,7 @@ class CartProvider extends ChangeNotifier {
     } else {
       _entries[item.id] = CartEntry(item: item);
     }
+    _persistCartLocally();
     notifyListeners();
   }
 
@@ -180,6 +259,7 @@ class CartProvider extends ChangeNotifier {
     if (_entries[itemId]!.qty <= 0) {
       _entries.remove(itemId);
     }
+    _persistCartLocally();
     notifyListeners();
   }
 
@@ -195,12 +275,14 @@ class CartProvider extends ChangeNotifier {
         _entries[item.id] = CartEntry(item: item, qty: safeQty);
       }
     }
+    _persistCartLocally();
     notifyListeners();
   }
 
   /// Remove an item completely by ID
   void deleteItem(String itemId) {
     _entries.remove(itemId);
+    _persistCartLocally();
     notifyListeners();
   }
 
@@ -213,10 +295,11 @@ class CartProvider extends ChangeNotifier {
     } else if (_entries[itemId]!.qty > maxAvailable) {
       _entries[itemId]!.qty = maxAvailable;
     }
+    _persistCartLocally();
     notifyListeners();
   }
 
-  /// Sync cart items with live catalog availability and stock.
+  /// Sync cart items with live catalog availability and stock (INV-001, INV-010).
   void syncAvailability(List<MenuItem> allCatalogItems) {
     bool hasChanged = false;
     final map = {for (var i in allCatalogItems) i.id: i};
@@ -224,6 +307,13 @@ class CartProvider extends ChangeNotifier {
     for (final entry in _entries.values) {
       final liveItem = map[entry.item.id];
       if (liveItem != null) {
+        if (entry.item.price != liveItem.price) {
+          final alert = '${liveItem.name}: Price updated from ₹${entry.item.price.toInt()} to ₹${liveItem.price.toInt()}';
+          if (!_priceChangeAlerts.contains(alert)) {
+            _priceChangeAlerts.add(alert);
+          }
+          hasChanged = true;
+        }
         if (entry.item.available != liveItem.available ||
             entry.item.stockCount != liveItem.stockCount ||
             entry.item.price != liveItem.price ||
@@ -240,7 +330,10 @@ class CartProvider extends ChangeNotifier {
       }
     }
 
-    if (hasChanged) notifyListeners();
+    if (hasChanged) {
+      _persistCartLocally();
+      notifyListeners();
+    }
   }
 
   /// Mark specific item IDs as out of stock (from pre-checkout check)
@@ -252,12 +345,16 @@ class CartProvider extends ChangeNotifier {
         hasChanged = true;
       }
     }
-    if (hasChanged) notifyListeners();
+    if (hasChanged) {
+      _persistCartLocally();
+      notifyListeners();
+    }
   }
 
   /// Remove all out-of-stock items in one tap
   void removeOutOfStockItems() {
     _entries.removeWhere((key, entry) => !entry.isAvailable);
+    _persistCartLocally();
     notifyListeners();
   }
 
@@ -266,6 +363,8 @@ class CartProvider extends ChangeNotifier {
     _entries.clear();
     _temperaturePreference = 'Chilled ❄️';
     _packagingPreference = 'Direct Handover ✋';
+    _priceChangeAlerts.clear();
+    _persistCartLocally();
     notifyListeners();
   }
 }

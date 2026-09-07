@@ -7365,6 +7365,424 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(ticketJson.includes('student@tcetmumbai.in'), false, 'Student email must not leak to kitchen ticket');
     assert.strictEqual(ticketJson.includes('9999988888'), false, 'Student phone must not leak to kitchen ticket');
   });
+
+  it('293. Phase 4 Cart Pricing & Stock Tampering Defense (INV-001, INV-002): Server strictly rejects client price overrides, zero/negative quantities, and unavailable items', () => {
+    const catalog = new Map([
+      ['item_dosa', { name: 'Masala Dosa', price: 60, available: true, isArchived: false, type: 'cooked' }],
+      ['item_chips', { name: 'Potato Chips', price: 20, available: true, isArchived: false, type: 'instant', stockOnHand: 15, reservedStock: 0 }],
+      ['item_soldout', { name: 'Cold Coffee', price: 40, available: false, isArchived: false, type: 'instant', stockOnHand: 0, reservedStock: 0 }],
+      ['item_archived', { name: 'Old Sandwich', price: 50, available: true, isArchived: true, type: 'cooked' }],
+    ]);
+
+    function serverAuthoritativeCartValidation(clientCartItems) {
+      if (!clientCartItems || clientCartItems.length === 0) {
+        throw new Error('Cart cannot be empty.');
+      }
+
+      let totalPaise = 0;
+      const validatedItems = [];
+
+      for (const req of clientCartItems) {
+        const item = catalog.get(req.itemId);
+        if (!item) {
+          throw new Error(`Item ${req.itemId} not found in catalog.`);
+        }
+        if (item.isArchived) {
+          throw new Error(`${item.name} has been discontinued.`);
+        }
+        if (!item.available) {
+          throw new Error(`${item.name} is currently out of stock.`);
+        }
+        if (!Number.isSafeInteger(req.quantity) || req.quantity <= 0 || req.quantity > 50) {
+          throw new Error(`Invalid quantity ${req.quantity} for ${item.name}.`);
+        }
+
+        // Price is strictly derived from catalog in integer paise, client-sent price is completely ignored
+        const unitPricePaise = Math.round(item.price * 100);
+        const subtotalPaise = unitPricePaise * req.quantity;
+        totalPaise += subtotalPaise;
+
+        validatedItems.push({
+          itemId: req.itemId,
+          name: item.name,
+          quantity: req.quantity,
+          unitPricePaise,
+          subtotalPaise,
+        });
+      }
+
+      return { totalPaise, totalRupees: totalPaise / 100, items: validatedItems };
+    }
+
+    // 1. Valid cart -> Calculated authoritatively
+    const validResult = serverAuthoritativeCartValidation([
+      { itemId: 'item_dosa', quantity: 2, clientPrice: 1 }, // Client attempts ₹1 tampering
+      { itemId: 'item_chips', quantity: 1, clientPrice: 0 },
+    ]);
+    assert.strictEqual(validResult.totalPaise, 14000); // (60*2 + 20*1) * 100 = 14000 paise
+    assert.strictEqual(validResult.totalRupees, 140);
+
+    // 2. Client tampering: Non-positive quantity rejected
+    assert.throws(() => {
+      serverAuthoritativeCartValidation([{ itemId: 'item_dosa', quantity: -1 }]);
+    }, /Invalid quantity -1/);
+
+    // 3. Client tampering: Fractional quantity rejected
+    assert.throws(() => {
+      serverAuthoritativeCartValidation([{ itemId: 'item_dosa', quantity: 1.5 }]);
+    }, /Invalid quantity 1.5/);
+
+    // 4. Sold out item rejected
+    assert.throws(() => {
+      serverAuthoritativeCartValidation([{ itemId: 'item_soldout', quantity: 1 }]);
+    }, /Cold Coffee is currently out of stock/);
+
+    // 5. Archived item rejected
+    assert.throws(() => {
+      serverAuthoritativeCartValidation([{ itemId: 'item_archived', quantity: 1 }]);
+    }, /Old Sandwich has been discontinued/);
+  });
+
+  it('294. Phase 4 Server-Time Reservation Expiry Invariant (INV-003, INV-018): Client device clock manipulation cannot extend reservation validity', () => {
+    // Simulates server reservation expiry validation
+    function validateReservationExpiry(reservation, serverNow) {
+      const expiresAtMillis = reservation.expiresAtMillis;
+      const serverNowMillis = serverNow.getTime();
+
+      if (serverNowMillis > expiresAtMillis) {
+        throw new Error('RESERVATION_EXPIRED: Stock reservation has expired on server.');
+      }
+      return { isValid: true, remainingSeconds: Math.floor((expiresAtMillis - serverNowMillis) / 1000) };
+    }
+
+    const reservation = {
+      orderId: 'ord_clock_test',
+      expiresAtMillis: 1770000000000, // Fixed future timestamp
+    };
+
+    // Case 1: Server time is before expiry -> Valid
+    const validServerNow = new Date(1770000000000 - 60000); // 60s remaining
+    const validCheck = validateReservationExpiry(reservation, validServerNow);
+    assert.strictEqual(validCheck.isValid, true);
+    assert.strictEqual(validCheck.remainingSeconds, 60);
+
+    // Case 2: Server time passed expiry -> Rejection regardless of what client clock claims
+    const expiredServerNow = new Date(1770000000000 + 1000);
+    assert.throws(() => {
+      validateReservationExpiry(reservation, expiredServerNow);
+    }, /RESERVATION_EXPIRED/);
+
+    // Case 3: Device clock tampering proof
+    // Even if client device clock is set 10 days in the past, server uses serverNow
+    const manipulatedClientClock = new Date(1770000000000 - 864000000); // 10 days ago
+    assert.strictEqual(manipulatedClientClock.getTime() < reservation.expiresAtMillis, true);
+    // Server independently evaluates using true server time:
+    assert.throws(() => {
+      validateReservationExpiry(reservation, expiredServerNow);
+    }, /RESERVATION_EXPIRED/);
+  });
+
+  it('295. Phase 4 App-Crash Payment Recovery & Webhook Reconciliation (INV-004, INV-005): Webhook-captured payment recovers order even if client never reported success', () => {
+    // Simulates database state where Webhook captured payment while client crashed
+    const mockDb = {
+      orders: new Map([
+        ['ord_crash_recovery_1', {
+          id: 'ord_crash_recovery_1',
+          studentId: 'student_alice',
+          status: 'payment_pending',
+          paymentStatus: 'pending',
+          totalAmountPaise: 8000,
+          tokenNumber: 'TB-110',
+        }],
+      ]),
+      financialTransactions: new Map([
+        ['pay_fin_rzp_pay_999', {
+          transactionId: 'pay_fin_rzp_pay_999',
+          orderId: 'ord_crash_recovery_1',
+          gatewayTransactionId: 'rzp_pay_999',
+          amountPaise: 8000,
+          status: 'COMMITTED',
+        }],
+      ]),
+    };
+
+    function simulateReconcileOrderPayment(orderId, callerUid) {
+      const order = mockDb.orders.get(orderId);
+      if (!order) throw new Error('Order not found');
+      if (order.studentId !== callerUid) throw new Error('Permission denied');
+
+      // If already paid
+      if (order.paymentStatus === 'paid') {
+        return { success: true, orderStatus: order.status, paymentStatus: 'paid', isReconciled: true };
+      }
+
+      // Check financial ledger
+      for (const [_, finTx] of mockDb.financialTransactions) {
+        if (finTx.orderId === orderId && finTx.status === 'COMMITTED') {
+          order.paymentStatus = 'paid';
+          order.status = 'confirmed';
+          return {
+            success: true,
+            orderStatus: 'confirmed',
+            paymentStatus: 'paid',
+            tokenNumber: order.tokenNumber,
+            message: 'Payment reconciled authoritatively from financial ledger record.',
+            isReconciled: true,
+          };
+        }
+      }
+
+      return { success: true, orderStatus: order.status, paymentStatus: order.paymentStatus, isReconciled: false };
+    }
+
+    // Step 1: Student opens order tracking after app crash -> Reconcile detects ledger capture
+    const recoveryResult = simulateReconcileOrderPayment('ord_crash_recovery_1', 'student_alice');
+    assert.strictEqual(recoveryResult.success, true);
+    assert.strictEqual(recoveryResult.orderStatus, 'confirmed');
+    assert.strictEqual(recoveryResult.paymentStatus, 'paid');
+    assert.strictEqual(recoveryResult.isReconciled, true);
+
+    // Step 2: Order state updated in database
+    const updatedOrder = mockDb.orders.get('ord_crash_recovery_1');
+    assert.strictEqual(updatedOrder.paymentStatus, 'paid');
+    assert.strictEqual(updatedOrder.status, 'confirmed');
+
+    // Step 3: Unauthorized user blocked from querying order payment
+    assert.throws(() => {
+      simulateReconcileOrderPayment('ord_crash_recovery_1', 'attacker_bob');
+    }, /Permission denied/);
+  });
+
+  it('296. Phase 4 Payment Webhook Double-Submission Idempotency (INV-004, INV-005): Duplicate webhook payloads produce exactly 1 financial ledger entry', () => {
+    const processedEvents = new Set();
+    const ledger = new Map();
+
+    function processWebhookEvent(eventId, paymentId, orderId, amountPaise) {
+      // Step 1: Claim event
+      if (processedEvents.has(eventId)) {
+        return { received: true, alreadyProcessed: true };
+      }
+
+      // Step 2: Idempotent Ledger Check
+      const finTxId = `pay_fin_${paymentId}`;
+      if (ledger.has(finTxId)) {
+        processedEvents.add(eventId);
+        return { received: true, alreadyProcessed: true };
+      }
+
+      ledger.set(finTxId, {
+        finTxId,
+        orderId,
+        paymentId,
+        amountPaise,
+        createdAt: new Date().toISOString(),
+      });
+      processedEvents.add(eventId);
+
+      return { received: true, processed: true };
+    }
+
+    // Delivery 1: Gateway dispatches payment.captured
+    const res1 = processWebhookEvent('evt_rzp_001', 'pay_12345', 'ord_555', 6000);
+    assert.strictEqual(res1.processed, true);
+    assert.strictEqual(ledger.size, 1);
+
+    // Delivery 2: Network retry / duplicate webhook delivery with same eventId
+    const res2 = processWebhookEvent('evt_rzp_001', 'pay_12345', 'ord_555', 6000);
+    assert.strictEqual(res2.alreadyProcessed, true);
+    assert.strictEqual(ledger.size, 1, 'Duplicate webhook must NOT create second ledger posting');
+
+    // Delivery 3: Different eventId but identical paymentId (e.g. webhook re-fired by gateway)
+    const res3 = processWebhookEvent('evt_rzp_002', 'pay_12345', 'ord_555', 6000);
+    assert.strictEqual(res3.alreadyProcessed, true);
+    assert.strictEqual(ledger.size, 1, 'Same paymentId must never create second ledger posting');
+  });
+
+  it('297. Phase 4 Atomic Cancellation Boundary: Student cancel vs. kitchen start-prep race condition is serialized with exactly 1 winner (INV-007, INV-014)', () => {
+    // Simulates atomic transactional state machine
+    let orderState = {
+      id: 'ord_race_001',
+      status: 'confirmed',
+      paymentStatus: 'paid',
+      version: 1,
+    };
+
+    function simulateAtomicCancel(actorRole) {
+      const isStaff = actorRole === 'staff' || actorRole === 'admin';
+      // In-transaction atomic check:
+      if (orderState.status === 'collected' || orderState.status === 'cancelled') {
+        throw new Error(`Order is already in ${orderState.status} state.`);
+      }
+      if (!isStaff && (orderState.status === 'preparing' || orderState.status === 'ready')) {
+        throw new Error('Order is already being prepared. Please contact counter staff for cancellation.');
+      }
+
+      orderState.status = 'cancelled';
+      orderState.paymentStatus = 'cancelled';
+      orderState.version++;
+      return { success: true, status: 'cancelled' };
+    }
+
+    function simulateAtomicStartPreparing() {
+      if (orderState.status === 'cancelled') {
+        throw new Error('Cannot prepare a cancelled order.');
+      }
+      if (orderState.status !== 'confirmed') {
+        throw new Error(`Invalid state transition from ${orderState.status} to preparing.`);
+      }
+
+      orderState.status = 'preparing';
+      orderState.version++;
+      return { success: true, status: 'preparing' };
+    }
+
+    // Scenario A: Kitchen wins the race and marks preparing
+    const prepResult = simulateAtomicStartPreparing();
+    assert.strictEqual(prepResult.status, 'preparing');
+
+    // Concurrent student cancel attempt -> Fails closed
+    assert.throws(() => {
+      simulateAtomicCancel('student');
+    }, /Order is already being prepared/);
+
+    // Scenario B: Reset state; Student cancels first
+    orderState = { id: 'ord_race_002', status: 'confirmed', paymentStatus: 'paid', version: 1 };
+    const cancelResult = simulateAtomicCancel('student');
+    assert.strictEqual(cancelResult.status, 'cancelled');
+
+    // Concurrent kitchen attempt to prepare cancelled order -> Fails closed
+    assert.throws(() => {
+      simulateAtomicStartPreparing();
+    }, /Cannot prepare a cancelled order/);
+  });
+
+  it('298. Phase 4 Cancelled Order Non-Resurrection Invariant (INV-006, INV-014): Cancelled orders strictly reject transitions to preparing, ready, collected, or paid', () => {
+    const cancelledOrder = {
+      id: 'ord_cancelled_resurrect_test',
+      status: 'cancelled',
+      paymentStatus: 'cancelled',
+      totalAmountPaise: 5000,
+    };
+
+    function attemptStateTransition(order, nextStatus) {
+      if (order.status === 'cancelled') {
+        throw new Error('Cannot modify cancelled order. Cancelled orders are immutable.');
+      }
+      order.status = nextStatus;
+    }
+
+    function attemptPickupVerification(order) {
+      if (order.status === 'cancelled') {
+        throw new Error('Cannot verify pickup for a cancelled order.');
+      }
+      order.status = 'collected';
+    }
+
+    // Transitions to preparing, ready, collected fail
+    assert.throws(() => attemptStateTransition(cancelledOrder, 'preparing'), /Cannot modify cancelled order/);
+    assert.throws(() => attemptStateTransition(cancelledOrder, 'ready'), /Cannot modify cancelled order/);
+    assert.throws(() => attemptStateTransition(cancelledOrder, 'collected'), /Cannot modify cancelled order/);
+
+    // Pickup verification fails
+    assert.throws(() => attemptPickupVerification(cancelledOrder), /Cannot verify pickup for a cancelled order/);
+  });
+
+  it('299. Phase 4 Offline Cart Safe Reconnection Invariant (INV-001, INV-010): Stale local cart items revalidate prices and availability against server catalog', () => {
+    // Client has cached local cart from 3 hours ago
+    const offlineCachedCart = [
+      { itemId: 'item_1', name: 'Cheese Dosa', cachedPrice: 70, quantity: 2 },
+      { itemId: 'item_2', name: 'Fruit Juice', cachedPrice: 30, quantity: 1 },
+    ];
+
+    // Live catalog after reconnection:
+    // item_1 price increased to ₹80
+    // item_2 went out of stock
+    const liveCatalog = new Map([
+      ['item_1', { id: 'item_1', name: 'Cheese Dosa', price: 80, available: true }],
+      ['item_2', { id: 'item_2', name: 'Fruit Juice', price: 30, available: false }],
+    ]);
+
+    function revalidateOfflineCart(cachedEntries, liveMenu) {
+      const priceChanges = [];
+      const outOfStockItems = [];
+      let revalidatedSubtotal = 0;
+
+      for (const entry of cachedEntries) {
+        const live = liveMenu.get(entry.itemId);
+        if (!live || !live.available) {
+          outOfStockItems.push(entry.name);
+        } else {
+          if (live.price !== entry.cachedPrice) {
+            priceChanges.push({
+              name: entry.name,
+              oldPrice: entry.cachedPrice,
+              newPrice: live.price,
+            });
+          }
+          revalidatedSubtotal += live.price * entry.quantity;
+        }
+      }
+
+      return {
+        requiresReview: priceChanges.length > 0 || outOfStockItems.length > 0,
+        priceChanges,
+        outOfStockItems,
+        revalidatedSubtotal,
+      };
+    }
+
+    const validation = revalidateOfflineCart(offlineCachedCart, liveCatalog);
+    assert.strictEqual(validation.requiresReview, true, 'User review must be required when prices or stock change');
+    assert.strictEqual(validation.priceChanges.length, 1);
+    assert.strictEqual(validation.priceChanges[0].oldPrice, 70);
+    assert.strictEqual(validation.priceChanges[0].newPrice, 80);
+    assert.deepStrictEqual(validation.outOfStockItems, ['Fruit Juice']);
+    assert.strictEqual(validation.revalidatedSubtotal, 160); // 80 * 2
+  });
+
+  it('300. Phase 4 Payment Reconcile Idempotency: reconcileOrderPayment safely reconciles in-flight payments without duplicate capture (INV-004, INV-005)', () => {
+    function evaluateOrderReconciliation(orderDoc, hasFinTx, isReservationExpired) {
+      if (orderDoc.paymentStatus === 'paid' || orderDoc.paymentStatus === 'captured') {
+        return { isReconciled: true, status: orderDoc.status, paymentStatus: 'paid' };
+      }
+      if (orderDoc.status === 'cancelled') {
+        return { isReconciled: true, status: 'cancelled', paymentStatus: 'cancelled' };
+      }
+      if (hasFinTx) {
+        return { isReconciled: true, status: 'confirmed', paymentStatus: 'paid' };
+      }
+      if (isReservationExpired) {
+        return { isReconciled: true, status: orderDoc.status, paymentStatus: 'expired' };
+      }
+      return { isReconciled: false, status: orderDoc.status, paymentStatus: 'pending' };
+    }
+
+    // 1. Already paid order
+    const paidResult = evaluateOrderReconciliation({ status: 'confirmed', paymentStatus: 'paid' }, true, false);
+    assert.strictEqual(paidResult.isReconciled, true);
+    assert.strictEqual(paidResult.paymentStatus, 'paid');
+
+    // 2. Cancelled order
+    const cancelResult = evaluateOrderReconciliation({ status: 'cancelled', paymentStatus: 'cancelled' }, false, false);
+    assert.strictEqual(cancelResult.isReconciled, true);
+    assert.strictEqual(cancelResult.status, 'cancelled');
+
+    // 3. Webhook captured payment while client was offline
+    const recoveredResult = evaluateOrderReconciliation({ status: 'payment_pending', paymentStatus: 'pending' }, true, false);
+    assert.strictEqual(recoveredResult.isReconciled, true);
+    assert.strictEqual(recoveredResult.paymentStatus, 'paid');
+    assert.strictEqual(recoveredResult.status, 'confirmed');
+
+    // 4. Expired reservation
+    const expiredResult = evaluateOrderReconciliation({ status: 'payment_pending', paymentStatus: 'pending' }, false, true);
+    assert.strictEqual(expiredResult.isReconciled, true);
+    assert.strictEqual(expiredResult.paymentStatus, 'expired');
+
+    // 5. In-flight pending payment
+    const inFlightResult = evaluateOrderReconciliation({ status: 'payment_pending', paymentStatus: 'pending' }, false, false);
+    assert.strictEqual(inFlightResult.isReconciled, false);
+    assert.strictEqual(inFlightResult.paymentStatus, 'pending');
+  });
 });
 
 

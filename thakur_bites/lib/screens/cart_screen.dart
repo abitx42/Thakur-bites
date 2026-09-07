@@ -120,6 +120,51 @@ class _CartScreenState extends State<CartScreen> {
               },
             ),
 
+            // ─── Price Change Revalidation Banner (INV-001, INV-010) ─────────
+            Consumer<CartProvider>(
+              builder: (context, cart, _) {
+                if (!cart.hasPriceChangeAlerts) return const SizedBox.shrink();
+                return Container(
+                  margin: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    border: Border.all(color: const Color(0xFFF59E0B), width: 1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline_rounded, size: 20, color: Color(0xFFB45309)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${cart.priceChangeAlerts.length} item(s) updated prices while you were away.',
+                          style: AppFonts.body(fontSize: 12, fontWeight: FontWeight.w600, color: const Color(0xFF92400E)),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          cart.clearPriceChangeAlerts();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFB45309),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'OK',
+                            style: AppFonts.body(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+
             // ─── Cart items list ────────────────────────────────
             Expanded(
               child: Consumer<CartProvider>(
@@ -585,6 +630,7 @@ class _CartSummaryState extends State<_CartSummary> {
   final CheckoutService _checkoutService = CheckoutService();
   String? _currentIdempotencyKey;
   bool _isProcessing = false;
+  String _selectedPaymentMethod = 'online'; // 'online' | 'counter_cash'
 
   Future<void> _handleConfirmAndPay() async {
     if (_isProcessing) return;
@@ -645,6 +691,7 @@ class _CartSummaryState extends State<_CartSummary> {
       final order = await _checkoutService.createCheckout(
         idempotencyKey: _currentIdempotencyKey!,
         entries: cart.entries,
+        paymentMethod: _selectedPaymentMethod,
         readyMadePreference: cart.isOnlyReadyMade ? cart.readyMadePreferenceSummary : null,
         student: student,
       );
@@ -998,6 +1045,10 @@ class _CartSummaryState extends State<_CartSummary> {
                       ),
                   ],
                 ),
+                const SizedBox(height: 10),
+
+                // ── Payment Method Selector ──
+                _buildPaymentMethodSelector(),
                 const SizedBox(height: 8),
 
                 Row(
@@ -1089,6 +1140,92 @@ class _CartSummaryState extends State<_CartSummary> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildPaymentMethodSelector() {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.surface2,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.line, width: 1),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                HapticFeedback.selectionClick();
+                setState(() => _selectedPaymentMethod = 'online');
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: _selectedPaymentMethod == 'online' ? Colors.white : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _selectedPaymentMethod == 'online' ? AppColors.red : Colors.transparent,
+                    width: 1.5,
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text('💳 ', style: TextStyle(fontSize: 13)),
+                    Text(
+                      'Pay Online',
+                      style: AppFonts.body(
+                        fontSize: 12,
+                        fontWeight: _selectedPaymentMethod == 'online' ? FontWeight.w700 : FontWeight.w500,
+                        color: _selectedPaymentMethod == 'online' ? AppColors.red : AppColors.inkSoft,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                HapticFeedback.selectionClick();
+                setState(() => _selectedPaymentMethod = 'counter_cash');
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: _selectedPaymentMethod == 'counter_cash' ? Colors.white : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _selectedPaymentMethod == 'counter_cash' ? AppColors.red : Colors.transparent,
+                    width: 1.5,
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text('💵 ', style: TextStyle(fontSize: 13)),
+                    Text(
+                      'Pay Cash',
+                      style: AppFonts.body(
+                        fontSize: 12,
+                        fontWeight: _selectedPaymentMethod == 'counter_cash' ? FontWeight.w700 : FontWeight.w500,
+                        color: _selectedPaymentMethod == 'counter_cash' ? AppColors.red : AppColors.inkSoft,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

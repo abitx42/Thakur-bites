@@ -143,6 +143,35 @@ class FunctionsService {
     return Map<String, dynamic>.from(result.data as Map);
   }
 
+  // ─── Order Lifecycle & Cancellation ─────────────────────────────────────
+
+  /// Cancels an order authoritatively via Cloud Function.
+  /// Server enforces pre-preparation boundary and atomic state transition.
+  Future<Map<String, dynamic>> cancelOrder({
+    required String orderId,
+    required String reason,
+  }) async {
+    final callable = _getCallable('cancelOrder');
+    final result = await callable.call({
+      'orderId': orderId,
+      'reason': reason,
+      'appVersion': _appVersion,
+    });
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
+  /// Reconciles an order's payment status with authoritative ledger and gateway state.
+  /// Used upon app reconnect, crash recovery, or tracking screen display.
+  Future<Map<String, dynamic>> reconcileOrderPayment({
+    required String orderId,
+  }) async {
+    final callable = _getCallable('reconcileOrderPayment');
+    final result = await callable.call({
+      'orderId': orderId,
+      'appVersion': _appVersion,
+    });
+    return Map<String, dynamic>.from(result.data as Map);
+  }
 
   // ─── Version ─────────────────────────────────────────────────────────────
 

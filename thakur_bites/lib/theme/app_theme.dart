@@ -46,11 +46,13 @@ class AppFonts {
     double fontSize = 13,
     FontWeight fontWeight = FontWeight.w600,
     Color color = AppColors.ink,
+    double? letterSpacing,
   }) =>
       GoogleFonts.ibmPlexMono(
         fontSize: fontSize,
         fontWeight: fontWeight,
         color: color,
+        letterSpacing: letterSpacing,
       );
 
   /// Body — everything else

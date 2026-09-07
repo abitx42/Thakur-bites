@@ -6,6 +6,8 @@ import {
   PaymentSessionRequest,
   PaymentSessionResponse,
   PaymentVerificationRequest,
+  ReconcilePaymentRequest,
+  ReconcilePaymentResponse,
   DailyReconciliationRecord,
   UserRole,
 } from './types';
@@ -758,3 +760,124 @@ export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: s
     };
   });
 });
+
+/**
+ * 6. Authoritative Order Payment Reconciliation Callable (Phase 4 Hardened)
+ * Resolves edge-cases where app crashed after gateway payment capture,
+ * or where network dropped before client verification callback.
+ */
+export const reconcileOrderPayment = onCall<ReconcilePaymentRequest>(async (request): Promise<ReconcilePaymentResponse> => {
+  enforceAppCheck(request);
+  await enforceAppVersionPolicy((request.data as any)?.appVersion);
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated to reconcile payment.');
+  }
+
+  const actorUid = request.auth.uid;
+  const { orderId } = request.data || {};
+  if (!orderId || typeof orderId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid orderId is required.');
+  }
+
+  const orderRef = db.collection('orders').doc(orderId);
+  const orderSnap = await orderRef.get();
+  if (!orderSnap.exists) {
+    throw new HttpsError('not-found', `Order ${orderId} not found.`);
+  }
+
+  const orderData = orderSnap.data()!;
+  const isOwner = orderData.studentId === actorUid;
+  const callerRole = ((request.auth.token.role || '') as string).toLowerCase();
+  const isStaff = ['cashier', 'kitchen', 'pickup', 'manager', 'admin', 'developer', 'security_admin'].includes(callerRole);
+
+  if (!isOwner && !isStaff) {
+    throw new HttpsError('permission-denied', 'You do not have permission to inspect or reconcile this order.');
+  }
+
+  // 1. If order is already confirmed / paid
+  if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
+    return {
+      success: true,
+      orderId,
+      orderStatus: orderData.status,
+      paymentStatus: orderData.paymentStatus,
+      tokenNumber: orderData.tokenNumber,
+      message: 'Payment is confirmed and verified.',
+      isReconciled: true,
+    };
+  }
+
+  // 2. Check if order was cancelled
+  if (orderData.status === 'cancelled' || orderData.paymentStatus === 'cancelled') {
+    return {
+      success: true,
+      orderId,
+      orderStatus: 'cancelled',
+      paymentStatus: 'cancelled',
+      tokenNumber: orderData.tokenNumber,
+      message: 'Order has been cancelled.',
+      isReconciled: true,
+    };
+  }
+
+  // 3. Check if a financial ledger entry already posted for this order (e.g. Webhook captured while client crashed)
+  const finTxQuery = await db.collection('financialTransactions')
+    .where('orderId', '==', orderId)
+    .limit(1)
+    .get();
+
+  if (!finTxQuery.empty) {
+    const finTx = finTxQuery.docs[0].data();
+    if (finTx.status !== 'ORPHANED') {
+      // Reconcile order document to paid & confirmed
+      await orderRef.update({
+        paymentStatus: 'paid',
+        status: orderData.status === 'payment_pending' ? 'confirmed' : orderData.status,
+        updatedAt: Timestamp.now(),
+      });
+
+      return {
+        success: true,
+        orderId,
+        orderStatus: 'confirmed',
+        paymentStatus: 'paid',
+        tokenNumber: orderData.tokenNumber,
+        message: 'Payment reconciled authoritatively from financial ledger record.',
+        isReconciled: true,
+      };
+    }
+  }
+
+  // 4. Check inventory reservation expiration
+  const reservationRef = db.collection('inventoryReservations').doc(orderId);
+  const resSnap = await reservationRef.get();
+  if (resSnap.exists) {
+    const resData = resSnap.data()!;
+    const nowMillis = Date.now();
+    const expiresAtMillis = resData.expiresAt?.toMillis?.() || 0;
+    if (expiresAtMillis > 0 && nowMillis > expiresAtMillis && (orderData.paymentStatus === 'pending' || orderData.paymentStatus === 'initiated')) {
+      return {
+        success: true,
+        orderId,
+        orderStatus: orderData.status,
+        paymentStatus: 'expired',
+        tokenNumber: orderData.tokenNumber,
+        message: 'Stock reservation has expired. Please place a new order.',
+        isReconciled: true,
+        isExpired: true,
+      };
+    }
+  }
+
+  // 5. Payment still pending confirmation
+  return {
+    success: true,
+    orderId,
+    orderStatus: orderData.status,
+    paymentStatus: (orderData.paymentStatus as any) || 'pending',
+    tokenNumber: orderData.tokenNumber,
+    message: 'Payment verification is pending gateway confirmation.',
+    isReconciled: false,
+  };
+});
+

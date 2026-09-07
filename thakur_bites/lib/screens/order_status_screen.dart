@@ -1,14 +1,18 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/order.dart' as app;
 import '../models/menu_item.dart';
 import '../providers/cart_provider.dart';
 import '../services/firestore_service.dart';
+import '../services/functions_service.dart';
 import '../services/eta_service.dart';
 import '../theme/app_theme.dart';
 import 'cart_screen.dart';
 
-/// Phase 8 — Advanced Real-time order status screen with dynamic ETA,
+/// Phase 4 & Phase 8 — Advanced Real-time order status screen with dynamic ETA,
+/// 5-stage tracker, reservation countdown, payment reconciliation, atomic cancellation,
 /// post-pickup 5-star ratings, interactive feedback tags, and 1-tap quick reordering.
 class OrderStatusScreen extends StatefulWidget {
   final String orderId;
@@ -26,6 +30,12 @@ class OrderStatusScreen extends StatefulWidget {
 }
 
 class _OrderStatusScreenState extends State<OrderStatusScreen> {
+  final FunctionsService _functions = FunctionsService();
+  Timer? _countdownTimer;
+
+  bool _isCancelling = false;
+  bool _isReconciling = false;
+
   int _selectedStars = 5;
   final Set<String> _selectedFeedbackTags = {'🔥 Crispy & Fresh', '⚡️ Fast Service'};
   bool _feedbackSubmitted = false;
@@ -36,6 +46,20 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     '😋 Super Tasty',
     '📦 Perfect Packaging',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -123,14 +147,31 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                   return SingleChildScrollView(
                     padding: const EdgeInsets.all(18),
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _buildTokenCard(order),
-                        if (order.isOnlyReadyMade) ...[
+                        if (order.isCancelled) ...[
+                          const SizedBox(height: 14),
+                          _buildCancelledCard(order),
+                        ],
+                        if (order.isPaymentPending && !order.isCancelled) ...[
+                          const SizedBox(height: 14),
+                          _buildReservationCard(order),
+                        ],
+                        if (order.isOnlyReadyMade && !order.isCancelled) ...[
                           const SizedBox(height: 14),
                           _buildReadyMadePreferenceCard(order),
                         ],
+                        if (order.isReady) ...[
+                          const SizedBox(height: 16),
+                          _buildPickupPinCard(order),
+                        ],
                         const SizedBox(height: 24),
                         _buildTracker(order),
+                        if (order.canCancel && !order.isPaymentPending && !order.isCancelled) ...[
+                          const SizedBox(height: 24),
+                          _buildCancelOrderButton(order),
+                        ],
                         if (order.isCollected) ...[
                           const SizedBox(height: 28),
                           _buildPostPickupCard(order),
@@ -233,9 +274,13 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
 
   /// Token + ready time card at the top
   Widget _buildTokenCard(app.Order order) {
-    final waitLabel = order.isOnlyReadyMade
-        ? '⚡ Express Counter'
-        : EtaService.getWaitTimeLabel(order.estimatedMinutes);
+    final waitLabel = order.isCancelled
+        ? 'Cancelled'
+        : order.isPaymentPending
+            ? 'Awaiting Payment'
+            : order.isOnlyReadyMade
+                ? '⚡ Express Counter'
+                : EtaService.getWaitTimeLabel(order.estimatedMinutes);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -250,26 +295,52 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Your token',
-                  style: AppFonts.body(fontSize: 11, color: AppColors.inkSoft)),
+              Text(
+                'Your token',
+                style: AppFonts.body(fontSize: 11, color: AppColors.inkSoft),
+              ),
               const SizedBox(height: 2),
-              Text(order.tokenNumber,
-                  style: AppFonts.mono(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.red)),
+              Text(
+                order.tokenNumber.isEmpty ? '—' : order.tokenNumber,
+                style: AppFonts.mono(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: order.isCancelled ? AppColors.inkSoft : AppColors.red,
+                ),
+              ),
             ],
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(waitLabel,
-                  style: AppFonts.body(fontSize: 11, fontWeight: FontWeight.w600, color: order.isOnlyReadyMade ? const Color(0xFF16A34A) : AppColors.inkSoft)),
+              Text(
+                waitLabel,
+                style: AppFonts.body(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: order.isCancelled
+                      ? AppColors.inkSoft
+                      : order.isPaymentPending
+                          ? const Color(0xFFD97706)
+                          : order.isOnlyReadyMade
+                              ? const Color(0xFF16A34A)
+                              : AppColors.inkSoft,
+                ),
+              ),
               const SizedBox(height: 2),
               Text(
-                order.isOnlyReadyMade ? 'Ready Now' : (order.readyAt != null ? _formatTime(order.readyAt!) : 'Ready Now'),
+                order.isCancelled
+                    ? 'Cancelled'
+                    : order.isOnlyReadyMade
+                        ? 'Ready Now'
+                        : (order.readyAt != null ? _formatTime(order.readyAt!) : 'Ready Now'),
                 style: AppFonts.mono(
-                    fontSize: 14, fontWeight: FontWeight.w700, color: order.isOnlyReadyMade ? const Color(0xFF16A34A) : AppColors.ink),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: order.isOnlyReadyMade && !order.isCancelled
+                      ? const Color(0xFF16A34A)
+                      : AppColors.ink,
+                ),
               ),
             ],
           ),
@@ -278,24 +349,304 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     );
   }
 
-  /// The 4-step vertical tracker
+  /// Cancelled status card
+  Widget _buildCancelledCard(app.Order order) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFCA5A5), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.cancel_rounded, color: Color(0xFFDC2626), size: 22),
+              const SizedBox(width: 8),
+              Text(
+                'Order Cancelled',
+                style: AppFonts.display(fontSize: 16, color: const Color(0xFF991B1B)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            order.cancellationReason ?? 'Cancelled before kitchen preparation began.',
+            style: AppFonts.body(fontSize: 13, color: const Color(0xFF7F1D1D)),
+          ),
+          if (order.isOnlinePayment && order.paymentStatus != 'pending') ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFECACA)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.currency_rupee_rounded, size: 14, color: Color(0xFFB91C1C)),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Refund initiated: Funds will return to original payment method.',
+                      style: AppFonts.body(fontSize: 11.5, color: const Color(0xFF991B1B)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: () => Navigator.of(context).pop(),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFFDC2626)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Text(
+                'Return to Menu',
+                style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w600, color: const Color(0xFFDC2626)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Reservation Countdown & Reconcile Card
+  Widget _buildReservationCard(app.Order order) {
+    final now = DateTime.now();
+    final expiresAt = order.reservationExpiresAt ?? order.createdAt.add(const Duration(minutes: 15));
+    final diff = expiresAt.difference(now);
+    final isExpired = diff.isNegative;
+    final totalSeconds = isExpired ? 0 : diff.inSeconds;
+    final mins = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final secs = (totalSeconds % 60).toString().padLeft(2, '0');
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFCD34D), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.timer_outlined, color: Color(0xFFD97706), size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    isExpired ? 'Reservation Expired' : 'Holding Items for Payment',
+                    style: AppFonts.display(fontSize: 15, color: const Color(0xFF92400E)),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: isExpired ? const Color(0xFFFEE2E2) : const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: isExpired ? const Color(0xFFFCA5A5) : const Color(0xFFF59E0B),
+                  ),
+                ),
+                child: Text(
+                  isExpired ? '00:00' : '$mins:$secs',
+                  style: AppFonts.mono(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: isExpired ? const Color(0xFFDC2626) : const Color(0xFFB45309),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            isExpired
+                ? 'Your inventory reservation window has expired. If you were charged, verify below.'
+                : 'Stock is reserved for you. Complete payment before the timer expires to confirm your order.',
+            style: AppFonts.body(fontSize: 12, color: const Color(0xFF78350F)),
+          ),
+          const SizedBox(height: 14),
+
+          // Action Buttons: Reconcile Payment + Cancel Order
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: ElevatedButton.icon(
+                  onPressed: _isReconciling ? null : () => _handleReconcilePayment(order),
+                  icon: _isReconciling
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.sync_rounded, size: 16),
+                  label: Text(
+                    _isReconciling ? 'Checking...' : 'Check Payment Status',
+                    style: AppFonts.body(fontSize: 12.5, fontWeight: FontWeight.w700),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFD97706),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 2,
+                child: OutlinedButton(
+                  onPressed: _isCancelling ? null : () => _showCancelDialog(order),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFFDC2626)),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: Text(
+                    'Cancel',
+                    style: AppFonts.body(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFFDC2626),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Ready Pickup PIN Display Card
+  Widget _buildPickupPinCard(app.Order order) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0FDF4),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF4ADE80), width: 2),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.check_circle_rounded, color: Color(0xFF16A34A), size: 20),
+              const SizedBox(width: 8),
+              Text(
+                'Ready for Pickup!',
+                style: AppFonts.display(fontSize: 17, color: const Color(0xFF15803D)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            order.isOnlyReadyMade
+                ? 'Collect at Express Counter'
+                : 'Collect at Main Canteen Counter',
+            style: AppFonts.body(fontSize: 12.5, color: const Color(0xFF166534)),
+          ),
+          const SizedBox(height: 14),
+
+          // PIN Container
+          GestureDetector(
+            onTap: () {
+              if (order.pinCode.isNotEmpty) {
+                Clipboard.setData(ClipboardData(text: order.pinCode));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('PIN copied to clipboard'),
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    'PICKUP PIN',
+                    style: AppFonts.mono(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF15803D),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    order.pinCode.isEmpty ? '••••' : order.pinCode,
+                    style: AppFonts.mono(
+                      fontSize: 34,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 8,
+                      color: const Color(0xFF166534),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Show this 4-digit PIN to the canteen staff at handover',
+            style: AppFonts.body(fontSize: 11, color: const Color(0xFF166534)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 5-Step vertical order tracker
   Widget _buildTracker(app.Order order) {
-    final currentIndex = order.statusIndex;
+    final currentIndex = order.customerStatusIndex;
 
     final steps = [
       _StepData(
-        title: 'Order confirmed',
-        subtitle: 'Payment verified, token issued',
+        title: order.isPaymentPending ? 'Payment pending' : 'Payment confirmed',
+        subtitle: order.isPaymentPending
+            ? 'Complete transaction before reservation expires'
+            : order.isCounterCash
+                ? 'Pay at pickup counter'
+                : 'Transaction captured authoritatively',
       ),
       _StepData(
-        title: order.isOnlyReadyMade ? '⚡ Express Packaging' : 'Preparing in Kitchen',
+        title: 'Order confirmed',
+        subtitle: 'Token issued, queued in kitchen management system',
+      ),
+      _StepData(
+        title: order.isOnlyReadyMade ? '⚡ Express Packaging' : 'Preparing in kitchen',
         subtitle: order.isOnlyReadyMade
-            ? 'Items packaged at counter — no kitchen cooking needed!'
-            : 'Your dishes are cooking at the station',
+            ? 'Items packaged at counter — zero kitchen cooking wait!'
+            : 'Your meal is cooking at the preparation station',
       ),
       _StepData(
         title: 'Ready for pickup',
-        subtitle: 'Show PIN: ${order.pinCode} at pickup counter',
+        subtitle: order.isReady
+            ? 'Show PIN ${order.pinCode} at counter to collect'
+            : 'Staff will call token #${order.tokenNumber}',
       ),
       _StepData(
         title: 'Collected',
@@ -307,9 +658,9 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Column(
         children: List.generate(steps.length, (i) {
-          final isDone = i < currentIndex;
-          final isCurrent = i == currentIndex;
-          final isUpcoming = i > currentIndex;
+          final isDone = !order.isCancelled && i < currentIndex;
+          final isCurrent = !order.isCancelled && i == currentIndex;
+          final isUpcoming = order.isCancelled || i > currentIndex;
 
           return _buildStep(
             step: steps[i],
@@ -360,16 +711,26 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                 ),
                 child: isDone
                     ? const Center(
-                        child: Icon(Icons.check_rounded,
-                            size: 14, color: Colors.white),
+                        child: Icon(Icons.check_rounded, size: 14, color: Colors.white),
                       )
-                    : null,
+                    : isCurrent
+                        ? Center(
+                            child: Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          )
+                        : null,
               ),
               // Line (unless last)
               if (!isLast)
                 Container(
                   width: 2,
-                  height: 40,
+                  height: 44,
                   color: isDone ? AppColors.green : AppColors.line,
                 ),
             ],
@@ -388,15 +749,21 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                   step.title,
                   style: AppFonts.body(
                     fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: isUpcoming ? AppColors.inkSoft : AppColors.ink,
+                    fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w600,
+                    color: isCurrent
+                        ? AppColors.ink
+                        : isUpcoming
+                            ? AppColors.inkSoft
+                            : AppColors.ink,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   step.subtitle,
-                  style:
-                      AppFonts.body(fontSize: 11.5, color: AppColors.inkSoft),
+                  style: AppFonts.body(
+                    fontSize: 11.5,
+                    color: isCurrent ? AppColors.ink : AppColors.inkSoft,
+                  ),
                 ),
               ],
             ),
@@ -404,6 +771,209 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
         ),
       ],
     );
+  }
+
+  /// Pre-Preparation Cancel Order Button
+  Widget _buildCancelOrderButton(app.Order order) {
+    return Center(
+      child: TextButton.icon(
+        onPressed: _isCancelling ? null : () => _showCancelDialog(order),
+        icon: _isCancelling
+            ? const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFDC2626)),
+              )
+            : const Icon(Icons.cancel_outlined, size: 16, color: Color(0xFFDC2626)),
+        label: Text(
+          _isCancelling ? 'Cancelling...' : 'Cancel order',
+          style: AppFonts.body(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFFDC2626),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Cancellation Dialog
+  void _showCancelDialog(app.Order order) {
+    String selectedReason = 'Changed my mind';
+    final customController = TextEditingController();
+
+    final predefinedReasons = [
+      'Changed my mind',
+      'Accidental order',
+      'Wait time too long',
+      'Ordered incorrect items',
+      'Other',
+    ];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: Color(0xFFDC2626), size: 24),
+                const SizedBox(width: 8),
+                Text('Cancel Order?', style: AppFonts.display(fontSize: 17)),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Are you sure you want to cancel token #${order.tokenNumber}? Once kitchen starts preparing food, cancellation is locked.',
+                    style: AppFonts.body(fontSize: 12.5, color: AppColors.inkSoft),
+                  ),
+                  const SizedBox(height: 14),
+                  Text('Reason for cancellation:', style: AppFonts.body(fontSize: 12, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  ...predefinedReasons.map((reason) {
+                    final isSelected = selectedReason == reason;
+                    return GestureDetector(
+                      onTap: () => setModalState(() => selectedReason = reason),
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: isSelected ? const Color(0xFFFEE2E2) : AppColors.surface2,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isSelected ? const Color(0xFFEF4444) : AppColors.line,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                              size: 16,
+                              color: isSelected ? const Color(0xFFDC2626) : AppColors.inkSoft,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              reason,
+                              style: AppFonts.body(
+                                fontSize: 12.5,
+                                fontWeight: isSelected ? FontWeight.w700 : FontWeight.normal,
+                                color: isSelected ? const Color(0xFF991B1B) : AppColors.ink,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                  if (selectedReason == 'Other') ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: customController,
+                      decoration: InputDecoration(
+                        hintText: 'Type your reason here...',
+                        hintStyle: AppFonts.body(fontSize: 12, color: AppColors.inkSoft),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: Text('Keep Order', style: AppFonts.body(fontSize: 13, color: AppColors.inkSoft)),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  final finalReason = selectedReason == 'Other' && customController.text.trim().isNotEmpty
+                      ? customController.text.trim()
+                      : selectedReason;
+                  _handleCancelOrder(order, finalReason);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFDC2626),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                child: const Text('Confirm Cancel'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _handleCancelOrder(app.Order order, String reason) async {
+    setState(() => _isCancelling = true);
+    try {
+      final res = await _functions.cancelOrder(orderId: order.id, reason: reason);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(res['message'] ?? 'Order cancelled successfully.'),
+            backgroundColor: const Color(0xFF16A34A),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Cannot cancel: ${e.toString().replaceAll('Exception:', '').trim()}'),
+            backgroundColor: const Color(0xFFDC2626),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isCancelling = false);
+    }
+  }
+
+  Future<void> _handleReconcilePayment(app.Order order) async {
+    setState(() => _isReconciling = true);
+    try {
+      final res = await _functions.reconcileOrderPayment(orderId: order.id);
+      final reconciled = res['reconciled'] == true;
+      final status = res['status'] as String?;
+
+      if (mounted) {
+        if (reconciled) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Payment verified authoritatively! Order confirmed.'),
+              backgroundColor: Color(0xFF16A34A),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Status: $status. If you paid, it will reconcile automatically.'),
+              backgroundColor: const Color(0xFFD97706),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Reconciliation check: ${e.toString().replaceAll('Exception:', '').trim()}'),
+            backgroundColor: const Color(0xFFDC2626),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isReconciling = false);
+    }
   }
 
   /// Post-Pickup Card: Star Ratings, Feedback Tags & 1-Tap Quick Reorder

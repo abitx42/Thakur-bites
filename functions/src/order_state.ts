@@ -77,8 +77,11 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
     const orderData = snap.data()!;
     const currentStatus = orderData.status as OrderStatus;
 
-    if (currentStatus === nextStatus) {
-      return { success: true, message: `Order already in status ${nextStatus}` };
+    if (currentStatus === 'cancelled') {
+      throw new HttpsError(
+        'failed-precondition',
+        'Cannot modify cancelled order. Cancelled orders are immutable.'
+      );
     }
 
     const isPaid = orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured';
@@ -234,6 +237,11 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
     const orderData = snap.data()!;
     if (orderData.status === 'collected' || orderData.status === 'cancelled') {
       throw new HttpsError('failed-precondition', `Order is already in ${orderData.status} state.`);
+    }
+
+    // Atomic race-condition defense: If kitchen starts preparing, student cancellation fails closed
+    if (!isStaff && (orderData.status === 'preparing' || orderData.status === 'ready')) {
+      throw new HttpsError('failed-precondition', 'Order is already being prepared. Please contact counter staff for cancellation.');
     }
 
     // 1. Release or Restore Inventory (Fail-Closed Hardened)

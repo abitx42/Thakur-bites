@@ -11,12 +11,19 @@ class Order {
   final String? studentId; // Firebase Auth UID
   final String? studentName;
   final String? studentRoll;
-  final String status; // 'confirmed' | 'placed' | 'preparing' | 'ready' | 'collected'
+  final String status; // 'payment_pending' | 'confirmed' | 'placed' | 'preparing' | 'ready' | 'collected' | 'cancelled'
+  final String paymentStatus; // 'pending' | 'initiated' | 'paid' | 'captured' | 'expired' | 'cancelled'
+  final String paymentMethod; // 'online' | 'counter_cash'
+  final String? cancellationReason;
+  final DateTime? cancelledAt;
+  final int? totalAmountPaise;
+  final String? gatewayOrderId;
   final DateTime createdAt;
   final DateTime? readyAt;
   final int estimatedMinutes; // max prep time of all items
   final double totalAmount;
   final List<OrderItem> items;
+  final DateTime? reservationExpiresAt;
   final bool isOnlyReadyMade;
   final String? readyMadePreference;
 
@@ -28,8 +35,15 @@ class Order {
     this.studentName,
     this.studentRoll,
     required this.status,
+    this.paymentStatus = 'pending',
+    this.paymentMethod = 'online',
+    this.cancellationReason,
+    this.cancelledAt,
+    this.totalAmountPaise,
+    this.gatewayOrderId,
     required this.createdAt,
     this.readyAt,
+    this.reservationExpiresAt,
     required this.estimatedMinutes,
     required this.totalAmount,
     required this.items,
@@ -45,12 +59,27 @@ class Order {
     'collected',
   ];
 
+  static const List<String> customerStatusFlow = [
+    'payment_pending',
+    'confirmed',
+    'preparing',
+    'ready',
+    'collected',
+  ];
+
   /// Status helpers
-  bool get isPaymentPending => status == 'payment_pending';
-  bool get isConfirmed => status == 'confirmed' || status == 'placed';
-  bool get isPreparing => status == 'preparing';
-  bool get isReady => status == 'ready';
-  bool get isCollected => status == 'collected';
+  bool get isPaymentPending => status == 'payment_pending' || paymentStatus == 'pending' || paymentStatus == 'initiated';
+  bool get isPaymentInitiated => paymentStatus == 'initiated';
+  bool get isConfirmed => (status == 'confirmed' || status == 'placed') && !isCancelled;
+  bool get isPreparing => status == 'preparing' && !isCancelled;
+  bool get isReady => status == 'ready' && !isCancelled;
+  bool get isCollected => status == 'collected' && !isCancelled;
+  bool get isCancelled => status == 'cancelled' || paymentStatus == 'cancelled';
+  bool get isOnlinePayment => paymentMethod == 'online';
+  bool get isCounterCash => paymentMethod == 'counter_cash';
+
+  /// Pre-preparation cancellation exclusivity (INV-007, INV-014)
+  bool get canCancel => !isCancelled && !isPreparing && !isReady && !isCollected;
 
   /// Index of current status in the flow (0-3)
   int get statusIndex {
@@ -60,8 +89,20 @@ class Order {
     return 0;
   }
 
+  /// 5-Stage Customer Tracking Index (0-4, or -1 for cancelled)
+  int get customerStatusIndex {
+    if (isCancelled) return -1;
+    if (isPaymentPending) return 0;
+    if (isConfirmed) return 1;
+    if (isPreparing) return 2;
+    if (isReady) return 3;
+    if (isCollected) return 4;
+    return 0;
+  }
+
   /// Human-friendly status label
   String get statusLabel {
+    if (isCancelled) return 'Order Cancelled';
     switch (status) {
       case 'payment_pending':
         return 'Payment Pending';
@@ -69,7 +110,7 @@ class Order {
       case 'placed':
         return 'Order confirmed';
       case 'preparing':
-        return 'Preparing in Kitchen';
+        return isOnlyReadyMade ? 'Express Packaging' : 'Preparing in Kitchen';
       case 'ready':
         return 'Ready for pickup';
       case 'collected':
@@ -78,7 +119,6 @@ class Order {
         return status;
     }
   }
-
 
   factory Order.fromFirestore(String docId, Map<String, dynamic> data) {
     final parsedItems = (data['items'] as List<dynamic>?)
@@ -96,8 +136,15 @@ class Order {
       studentName: data['studentName'],
       studentRoll: data['studentRoll'],
       status: data['status'] ?? 'confirmed',
+      paymentStatus: data['paymentStatus'] ?? 'pending',
+      paymentMethod: data['paymentMethod'] ?? 'online',
+      cancellationReason: data['cancellationReason'] as String?,
+      cancelledAt: (data['cancelledAt'] as Timestamp?)?.toDate(),
+      totalAmountPaise: (data['totalAmountPaise'] as num?)?.toInt(),
+      gatewayOrderId: data['gatewayOrderId'] as String?,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       readyAt: (data['readyAt'] as Timestamp?)?.toDate(),
+      reservationExpiresAt: (data['reservationExpiresAt'] as Timestamp?)?.toDate(),
       estimatedMinutes: data['estimatedMinutes'] ?? 0,
       totalAmount: (data['totalAmount'] as num?)?.toDouble() ??
           (((data['totalAmountPaise'] as num?)?.toDouble() ?? 0.0) / 100.0),
@@ -115,11 +162,17 @@ class Order {
       'studentName': studentName,
       'studentRoll': studentRoll,
       'status': status,
+      'paymentStatus': paymentStatus,
+      'paymentMethod': paymentMethod,
+      if (cancellationReason != null) 'cancellationReason': cancellationReason,
+      if (cancelledAt != null) 'cancelledAt': Timestamp.fromDate(cancelledAt!),
       'createdAt': Timestamp.fromDate(createdAt),
       'readyAt': readyAt != null ? Timestamp.fromDate(readyAt!) : null,
+      if (reservationExpiresAt != null) 'reservationExpiresAt': Timestamp.fromDate(reservationExpiresAt!),
       'estimatedMinutes': estimatedMinutes,
       'totalAmount': totalAmount,
-      'totalAmountPaise': (totalAmount * 100).round(),
+      'totalAmountPaise': totalAmountPaise ?? (totalAmount * 100).round(),
+      if (gatewayOrderId != null) 'gatewayOrderId': gatewayOrderId,
       'items': items.map((item) => item.toMap()).toList(),
       'isOnlyReadyMade': isOnlyReadyMade,
       if (readyMadePreference != null) 'readyMadePreference': readyMadePreference,
@@ -134,8 +187,15 @@ class Order {
     String? studentName,
     String? studentRoll,
     String? status,
+    String? paymentStatus,
+    String? paymentMethod,
+    String? cancellationReason,
+    DateTime? cancelledAt,
+    int? totalAmountPaise,
+    String? gatewayOrderId,
     DateTime? createdAt,
     DateTime? readyAt,
+    DateTime? reservationExpiresAt,
     int? estimatedMinutes,
     double? totalAmount,
     List<OrderItem>? items,
@@ -150,8 +210,15 @@ class Order {
       studentName: studentName ?? this.studentName,
       studentRoll: studentRoll ?? this.studentRoll,
       status: status ?? this.status,
+      paymentStatus: paymentStatus ?? this.paymentStatus,
+      paymentMethod: paymentMethod ?? this.paymentMethod,
+      cancellationReason: cancellationReason ?? this.cancellationReason,
+      cancelledAt: cancelledAt ?? this.cancelledAt,
+      totalAmountPaise: totalAmountPaise ?? this.totalAmountPaise,
+      gatewayOrderId: gatewayOrderId ?? this.gatewayOrderId,
       createdAt: createdAt ?? this.createdAt,
       readyAt: readyAt ?? this.readyAt,
+      reservationExpiresAt: reservationExpiresAt ?? this.reservationExpiresAt,
       estimatedMinutes: estimatedMinutes ?? this.estimatedMinutes,
       totalAmount: totalAmount ?? this.totalAmount,
       items: items ?? this.items,

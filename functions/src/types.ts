@@ -26,8 +26,12 @@ export type OrderStatus =
 export type PaymentStatus =
   | 'unpaid'
   | 'pending'
+  | 'initiated'
   | 'captured'
+  | 'paid'
   | 'settled'
+  | 'expired'
+  | 'cancelled'
   | 'refund_requested'
   | 'gateway_refund_pending'
   | 'refunded'
@@ -100,6 +104,7 @@ export interface OrderDocument {
   refundReason?: string;
   refundedByStaffId?: string;
   paidAt?: Timestamp;
+  reservationExpiresAt?: Timestamp;
   priorityLevel?: PriorityLevel;
   priorityReason?: string;
   updatedAt?: Timestamp;
@@ -336,3 +341,19 @@ export interface MenuItemDocument {
   updatedAt: Timestamp;
   updatedBy?: string;
 }
+
+export interface ReconcilePaymentRequest {
+  orderId: string;
+}
+
+export interface ReconcilePaymentResponse {
+  success: boolean;
+  orderId: string;
+  orderStatus: OrderStatus;
+  paymentStatus: PaymentStatus;
+  tokenNumber?: string;
+  message: string;
+  isReconciled: boolean;
+  isExpired?: boolean;
+}
+

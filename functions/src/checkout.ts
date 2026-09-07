@@ -292,6 +292,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         priorityReason: priorityReason,
         createdAt: now,
         readyAt: Timestamp.fromDate(readyAtDate),
+        reservationExpiresAt: Timestamp.fromDate(new Date(Date.now() + 15 * 60000)),
       };
 
       // ═════════════════════════════════════════════════════════════

@@ -18,7 +18,7 @@ export {
   recordCashPayment,
   simulateOnlinePaymentFinalization,
   handlePaymentWebhook,
-
+  reconcileOrderPayment,
   reconcileDailyLedger,
   cancelOrExpirePaymentSession,
 } from './payments';
