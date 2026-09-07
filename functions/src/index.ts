@@ -95,6 +95,13 @@ export {
 } from './workstation_binding';
 export { evaluateOperationalSLOs } from './alert_thresholds';
 export { getSmartCanteenIntelligence } from './smart_canteen';
+export { getOrderLifecycleTrace } from './order_tracer';
+export {
+  submitPilotStudentFeedback,
+  submitPilotStaffFeedback,
+  getPilotFeedbackSummary,
+} from './pilot_feedback';
+export { getOrderSuccessFunnel } from './funnel_metrics';
 
 
 

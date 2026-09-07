@@ -130,3 +130,70 @@ Upon successful completion of Pilot 2, the following stakeholders must sign the 
 2. **Student Council Representative**: Confirms student satisfaction score $\ge 4.5 / 5.0$.
 3. **TCET IT Infrastructure Lead**: Confirms network and display kiosk stability.
 4. **Lead Software Engineer (Aadi)**: Confirms 0 unresolved critical anomalies and 100% balanced financial ledgers.
+
+---
+
+## 6. Five-Second Student Dispute Resolution Playbook (Correlation ID)
+
+### Problem Scenario
+A student arrives at Counter B stating:
+> *"₹120 was deducted from my Google Pay / PhonePe bank account, but the app didn't give me a token!"*
+
+```mermaid
+flowchart TD
+    Student["Student at Counter:<br/>'Money deducted, no token!'"] --> StaffInput["Staff asks for UPI Reference ID<br/>or Order ID or Phone Number"]
+    StaffInput --> ForensicLookup["Forensic Tracer Lookup:<br/>getOrderLifecycleTrace(id)"]
+    ForensicLookup --> CheckState{"Trace Timeline<br/>Analysis"}
+    CheckState -->|Captured & Confirmed| FoundToken["Show Token #TB-142<br/>'Cooking at Station 1'"]
+    CheckState -->|Late Capture Post-Cancel| Orphaned["Orphaned Capture Diagnosed<br/>'Refund Queued to Bank: rfnd_xyz'"]
+    CheckState -->|Pending Gateway Webhook| ForceReconcile["Tap 'Reconcile Now'<br/>Authoritative Gateway Check"]
+```
+
+### Action Protocol
+1. **Request Identifier**: Staff asks student to show the UPI transaction receipt on Google Pay / PhonePe. Copy the Razorpay Payment ID (`pay_...`) or Order ID (`order_...`).
+2. **Execute Forensic Lookup**: Open Manager Console $\to$ **"Order Lifecycle Forensic Search"** and paste the identifier (calls `getOrderLifecycleTrace`).
+3. **Instant Timeline Analysis ($< 5\text{ seconds}$)**:
+   - **Case A: Order Confirmed**: If the timeline shows `WEBHOOK_RECEIVED` $\to$ `ORDER_CONFIRMED`, inform the student:
+     > *"Your order was confirmed under Token #TB-142. It is currently being cooked at the Hot Snacks station."*
+   - **Case B: Orphaned Payment (Auto-Refund Queued)**: If the timeline shows `ORDER_CANCELLED` $\to$ `ORPHANED_PAYMENT_CAPTURE`, inform the student:
+     > *"Your session expired before payment reached us. A full automatic refund of ₹120 has been dispatched to your UPI account. Refund Reference: rfnd_9a2f1b."*
+   - **Case C: Delayed Webhook**: If the timeline shows `PAYMENT_INITIATED` without capture, tap **"Reconcile Order Now"**. The backend queries Razorpay directly, captures the payment, logs the ledger, and generates the student's token on the spot.
+
+---
+
+## 7. Order Success Conversion Funnel & Drop-Off Diagnosis
+
+During Pilot 0 and Pilot 1, the DevOps team monitors the 9-stage conversion funnel in real-time via `getOrderSuccessFunnel()`:
+
+$$\text{Order Success Rate} = \frac{\text{Food Picked Up}}{\text{Checkout Started}} \times 100$$
+
+### Funnel Drop-Off Diagnosis Guide
+* **Drop at `Payment Started` $\to$ `Payment Successful` ($> 8\%$ drop)**:
+  - *Diagnosis*: Payment gateway or UPI intent failure.
+  - *Action*: Ensure college Wi-Fi is not blocking Razorpay payment sockets; verify UPI deep-link intent fallback on student devices.
+* **Drop at `Food Ready` $\to$ `Food Picked Up` ($> 5\%$ drop)**:
+  - *Diagnosis*: Students are unaware their food is ready.
+  - *Action*: Elevate smart TV chime volume; verify push notifications or SMS alerts are dispatching promptly.
+
+---
+
+## 8. Pilot Feedback Collection Instruments
+
+### Student Post-Meal Survey (30 Seconds)
+Displayed automatically on the Flutter mobile app upon order collection:
+* **Star Rating**: ★★★★★ (1 to 5 Stars)
+* **Quick Reason Pills**:
+  - `payment_seamless` (UPI was fast)
+  - `great_experience` (Smooth & hot food)
+  - `payment_problem` (UPI dropped or retried)
+  - `app_confusing` (UI was hard to navigate)
+  - `order_delayed` (Food took $> 15$ mins)
+  - `food_not_found` (Item was missing)
+* **Optional Comment**: 1 sentence box (max 280 characters).
+
+### Canteen Staff Retrospective (End of Shift)
+Completed on the KDS tablet or printed paper rubric:
+1. *Station Screen Clarity*: 1 to 5 (Were tickets easy to read while cooking?)
+2. *Queue Volume*: `Too Fast` / `Manageable` / `Slow`
+3. *Kitchen Blockers*: Free-text field for cooks to report recipe bottlenecks, fryer delays, or tablet placement issues.
+

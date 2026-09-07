@@ -43,6 +43,8 @@ export interface SmartCanteenForecast {
     deadline: string;
     priority: 'HIGH' | 'MEDIUM';
   }>;
+  isAdvisoryOnly: true;
+  advisoryNotice: string;
 }
 
 /**
@@ -273,6 +275,8 @@ export function calculateSmartCanteenForecast(
     },
     stockoutRiskPredictions: stockoutRiskPredictions.slice(0, 15),
     proactivePrepRecommendations,
+    isAdvisoryOnly: true,
+    advisoryNotice: 'ADVISORY NOTICE: Demand forecasts and kitchen prep recommendations are strictly advisory and will NEVER automatically mutate inventory, trigger supplier purchases, or alter active orders.',
   };
 }
 
