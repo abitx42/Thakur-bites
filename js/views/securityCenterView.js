@@ -37,6 +37,15 @@ let stepUpChallenge = null;
 let stepUpExecuting = false;
 let stepUpError = null;
 
+// Phase 7 & 8: Observability Telemetry, Alerts, Disaster Drill & Incident State
+let systemTelemetryData = null;
+let staffAlerts = [];
+let drillRunning = false;
+let lastDrillResult = null;
+let drillError = null;
+let currentIncidents = [];
+let unsubscribeIncidents = null;
+
 function escapeHtml(str) {
   if (typeof str !== 'string') str = String(str ?? '');
   return str.replace(/[&<>"']/g, (m) => ({
@@ -54,6 +63,9 @@ export function renderSecurityCenterView(container) {
   }
   if (unsubscribeSystemStatus) {
     try { unsubscribeSystemStatus(); } catch (_) {}
+  }
+  if (unsubscribeIncidents) {
+    try { unsubscribeIncidents(); } catch (_) {}
   }
 
   function render() {
@@ -182,6 +194,18 @@ export function renderSecurityCenterView(container) {
               <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">SECURITY INCIDENTS</div>
               <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: ${critCount > 0 ? '#EF4444' : '#4ADE80'};">${telemetryData ? telemetryData.activeSecurityIncidents : critCount} Active</div>
             </div>
+            <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
+              <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">CHECKOUT SUCCESS</div>
+              <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #4ADE80;">${systemTelemetryData && systemTelemetryData.healthIndicators ? (systemTelemetryData.healthIndicators.checkoutSuccessRate * 100).toFixed(0) + '%' : '100%'}</div>
+            </div>
+            <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
+              <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">CIRCUIT TRIPS</div>
+              <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: ${systemTelemetryData && systemTelemetryData.counters && systemTelemetryData.counters.circuitBreakerActivations > 0 ? '#F59E0B' : '#4ADE80'};">${systemTelemetryData && systemTelemetryData.counters ? systemTelemetryData.counters.circuitBreakerActivations : 0} Trips</div>
+            </div>
+            <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
+              <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">AVG PREP TIME</div>
+              <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #38BDF8;">${systemTelemetryData && systemTelemetryData.latencies ? Math.round(systemTelemetryData.latencies.avgPrepTimeMs / 1000) + 's' : '45s'}</div>
+            </div>
             <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155; display: flex; align-items: center; justify-content: center;">
               <button id="refresh-telemetry-btn" ${telemetryLoading ? 'disabled' : ''} style="background: #1E293B; border: 1px solid #475569; color: #E2E8F0; padding: 8px 12px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer; width: 100%;">
                 ${telemetryLoading ? '⏳ Refreshing...' : '🔄 Refresh Metrics'}
@@ -221,6 +245,113 @@ export function renderSecurityCenterView(container) {
             </div>
           </div>
         ` : ''}
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 0.5: AUTOMATED DISASTER RESTORE DRILL ENGINE         -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="background: #1E293B; border: 1.5px solid #334155; border-radius: 16px; padding: 1.4rem; margin-bottom: 2rem; box-shadow: 0 2px 8px rgba(0,0,0,0.2);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1rem;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <h3 style="font-family: var(--font-display); font-size: 1.4rem; margin: 0; display: flex; align-items: center; gap: 8px; color: #FFF;">
+                  <span>💾</span>
+                  <span>AUTOMATED DISASTER RESTORE DRILL ENGINE</span>
+                </h3>
+                <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; background: ${lastDrillResult && lastDrillResult.status === 'PASSED' ? '#064E3B' : '#334155'}; color: ${lastDrillResult && lastDrillResult.status === 'PASSED' ? '#34D399' : '#CBD5E1'};">
+                  ${lastDrillResult ? lastDrillResult.status : 'DRILL READY'}
+                </span>
+              </div>
+              <p style="font-family: var(--font-sans); font-size: 0.85rem; color: #94A3B8; margin-top: 4px; margin-bottom: 0;">
+                <em>"A backup that has never been restored successfully is only a theory."</em> Executes an isolated sandbox restore and audits double-entry balance and inventory equations.
+              </p>
+            </div>
+
+            <button 
+              id="run-disaster-drill-btn"
+              ${drillRunning ? 'disabled' : ''}
+              style="padding: 8px 16px; border-radius: 8px; background: #0F172A; color: #FFF; border: 1.5px solid #6366F1; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(99,102,241,0.3);"
+            >
+              ${drillRunning ? '⏳ EXECUTING RESTORE DRILL...' : '🧪 RUN DISASTER RESTORE DRILL'}
+            </button>
+          </div>
+
+          ${drillError ? `
+            <div style="padding: 10px 14px; border-radius: 8px; background: #450A0A; border: 1px solid #EF4444; color: #FCA5A5; font-family: var(--font-mono); font-size: 0.8rem; margin-bottom: 1rem;">
+              Drill Error: ${escapeHtml(drillError)}
+            </div>
+          ` : ''}
+
+          ${lastDrillResult ? `
+            <div style="background: #0F172A; border: 1.5px solid ${lastDrillResult.status === 'PASSED' ? '#10B981' : '#EF4444'}; border-radius: 12px; padding: 1.2rem; font-family: var(--font-mono); font-size: 0.82rem; color: #FFF;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+                <span style="font-weight: 800; font-size: 1rem; color: ${lastDrillResult.status === 'PASSED' ? '#4ADE80' : '#F87171'};">
+                  ✓ DRILL REPORT: ${escapeHtml(lastDrillResult.drillId)}
+                </span>
+                <span style="color: #94A3B8;">Executed: ${new Date(lastDrillResult.executedAt || Date.now()).toLocaleTimeString()}</span>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-bottom: 10px;">
+                <div style="background: #1E293B; padding: 8px; border-radius: 6px;">
+                  <span style="color: #94A3B8; font-size: 0.7rem;">FINANCIAL LEDGERS:</span>
+                  <div style="color: ${lastDrillResult.financialInvariantsBalanced ? '#4ADE80' : '#EF4444'}; font-weight: 700;">
+                    ${lastDrillResult.financialInvariantsBalanced ? '✓ DEBITS == CREDITS' : '❌ UNBALANCED'}
+                  </div>
+                </div>
+                <div style="background: #1E293B; padding: 8px; border-radius: 6px;">
+                  <span style="color: #94A3B8; font-size: 0.7rem;">INVENTORY CONSERVATION:</span>
+                  <div style="color: ${lastDrillResult.inventoryEquationsValid ? '#4ADE80' : '#EF4444'}; font-weight: 700;">
+                    ${lastDrillResult.inventoryEquationsValid ? '✓ EQUATIONS BALANCED' : '❌ NEGATIVE STOCK'}
+                  </div>
+                </div>
+                <div style="background: #1E293B; padding: 8px; border-radius: 6px;">
+                  <span style="color: #94A3B8; font-size: 0.7rem;">LIFECYCLE STATES:</span>
+                  <div style="color: ${lastDrillResult.lifecycleStatesValid ? '#4ADE80' : '#EF4444'}; font-weight: 700;">
+                    ${lastDrillResult.lifecycleStatesValid ? '✓ ZERO ILLEGAL STATES' : '❌ IMPOSSIBLE STATES'}
+                  </div>
+                </div>
+              </div>
+              <div style="font-size: 0.72rem; color: #94A3B8; word-break: break-all;">
+                SHA-256 Checksum: <code>${escapeHtml(lastDrillResult.cryptographicChecksum || '')}</code>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 0.6: MULTI-TIER OPERATIONAL ALERTS FEED              -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="background: #1E293B; border: 1.5px solid #334155; border-radius: 14px; padding: 1.2rem; margin-bottom: 2rem; box-shadow: 0 1px 4px rgba(0,0,0,0.2);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem; flex-wrap: wrap; gap: 8px;">
+            <div style="font-family: var(--font-mono); font-size: 0.95rem; font-weight: 700; color: #FFF; display: flex; align-items: center; gap: 8px;">
+              🔔 MULTI-TIER OPERATIONAL ALERTS & ESCALATION FEED
+              <span style="font-size: 0.7rem; background: #0284C7; color: #FFF; padding: 2px 6px; border-radius: 4px;">DISPATCHER 2.0</span>
+            </div>
+            <button id="refresh-alerts-btn" style="background: #0F172A; border: 1px solid #475569; color: #E2E8F0; padding: 6px 12px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+              🔄 Refresh Alerts
+            </button>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            ${staffAlerts.length === 0 ? `
+              <div style="text-align: center; padding: 1.5rem; font-family: var(--font-mono); font-size: 0.85rem; color: #94A3B8;">
+                ✓ No active operational alerts. System routing optimal.
+              </div>
+            ` : staffAlerts.map(a => {
+              const sev = a.severity || 'WARNING';
+              const isCrit = sev === 'FINANCIAL_FROZEN' || sev === 'BREAK_GLASS';
+              const isDeg = sev === 'DEGRADED';
+              const color = isCrit ? '#EF4444' : (isDeg ? '#F59E0B' : '#38BDF8');
+              const bg = isCrit ? '#450A0A' : (isDeg ? '#451A03' : '#0F172A');
+              return `
+                <div style="background: ${bg}; border: 1px solid ${color}80; border-radius: 8px; padding: 8px 12px; font-family: var(--font-mono); font-size: 0.8rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
+                  <div>
+                    <span style="background: ${color}; color: #FFF; padding: 2px 6px; border-radius: 4px; font-weight: 800; font-size: 0.7rem; margin-right: 6px;">${sev}</span>
+                    <strong style="color: #FFF;">${escapeHtml(a.title || 'Alert')}</strong>: <span style="color: #CBD5E1;">${escapeHtml(a.message || '')}</span>
+                  </div>
+                  <div style="color: #94A3B8; font-size: 0.72rem;">${new Date(a.createdAt || Date.now()).toLocaleTimeString()}</div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
 
         <!-- ═══════════════════════════════════════════════════════════ -->
         <!-- SECTION 0.8: CANONICAL MENU HEALTH & VISUAL CONTENT COVERAGE -->
@@ -515,6 +646,62 @@ export function renderSecurityCenterView(container) {
                   <div style="color: #94A3B8; font-size: 0.75rem;">
                     ${e.lastSeen ? new Date(e.lastSeen.toDate ? e.lastSeen.toDate() : e.lastSeen).toLocaleTimeString() : (e.firstSeen ? new Date(e.firstSeen.toDate ? e.firstSeen.toDate() : e.firstSeen).toLocaleTimeString() : 'Just now')}
                   </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- SECTION 2.5: PRODUCTION INCIDENTS & POSTMORTEM AUDIT        -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div style="background: #1E293B; border: 1.5px solid #334155; border-radius: 14px; padding: 1.2rem; margin-top: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,0.2);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1rem;">
+            <div>
+              <div style="font-family: var(--font-mono); font-size: 0.95rem; font-weight: 700; color: #FFF; display: flex; align-items: center; gap: 8px;">
+                🚨 PRODUCTION INCIDENTS & POSTMORTEM AUDIT (${currentIncidents.length} recorded)
+                <span style="font-size: 0.7rem; background: #DC2626; color: #FFF; padding: 2px 6px; border-radius: 4px;">P0–P3 TRACKER</span>
+              </div>
+              <p style="font-family: var(--font-sans); font-size: 0.8rem; color: #94A3B8; margin: 3px 0 0 0;">
+                Formal incident state transitions from DETECTED through POST_INCIDENT_REVIEW with immutable root-cause archiving.
+              </p>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            ${currentIncidents.length === 0 ? `
+              <div style="text-align: center; padding: 2rem 1rem; font-family: var(--font-mono); font-size: 0.85rem; color: #94A3B8;">
+                🛡️ No production incidents recorded. Zero downtime.
+              </div>
+            ` : currentIncidents.map(inc => {
+              const sev = inc.severity || 'MEDIUM';
+              const isCrit = sev === 'CRITICAL';
+              const isHigh = sev === 'HIGH';
+              const sevColor = isCrit ? '#EF4444' : (isHigh ? '#F97316' : '#EAB308');
+              const statusColor = inc.status === 'RECOVERED' || inc.status === 'POST_INCIDENT_REVIEW' ? '#10B981' : '#F59E0B';
+
+              return `
+                <div style="background: #0F172A; border: 1px solid #334155; border-radius: 10px; padding: 12px 14px; font-family: var(--font-mono); font-size: 0.82rem;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 6px;">
+                    <div>
+                      <span style="background: ${sevColor}; color: #FFF; padding: 2px 6px; border-radius: 4px; font-weight: 800; font-size: 0.7rem; margin-right: 6px;">${sev}</span>
+                      <strong style="color: #FFF; font-size: 0.9rem;">${escapeHtml(inc.title || inc.id)}</strong>
+                      <span style="color: #94A3B8; font-size: 0.75rem; margin-left: 6px;">[${escapeHtml(inc.id)}]</span>
+                    </div>
+                    <span style="background: #1E293B; border: 1px solid ${statusColor}; color: ${statusColor}; padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 700;">
+                      ● ${escapeHtml(inc.status || 'DETECTED')}
+                    </span>
+                  </div>
+                  <div style="color: #CBD5E1; font-family: var(--font-sans); font-size: 0.8rem; margin-bottom: 6px;">
+                    Detected: ${inc.detectedAt ? new Date(inc.detectedAt.toDate ? inc.detectedAt.toDate() : inc.detectedAt).toLocaleString() : 'Recent'} | Impact: Mode ${escapeHtml(inc.circuitBreakerMode || 'NORMAL')}
+                  </div>
+                  ${inc.postmortem ? `
+                    <div style="background: #1E293B; border-left: 3px solid #10B981; padding: 8px 10px; border-radius: 0 6px 6px 0; margin-top: 6px;">
+                      <div style="font-weight: 700; color: #34D399; font-size: 0.75rem;">✓ POSTMORTEM REVIEWED:</div>
+                      <div style="color: #E2E8F0; font-size: 0.78rem;">Root Cause: ${escapeHtml(inc.postmortem.rootCause || 'N/A')}</div>
+                      <div style="color: #94A3B8; font-size: 0.72rem; margin-top: 2px;">Reviewed by: ${escapeHtml(inc.postmortem.reviewedBy || 'Admin')}</div>
+                    </div>
+                  ` : ''}
                 </div>
               `;
             }).join('')}
@@ -836,6 +1023,65 @@ export function renderSecurityCenterView(container) {
         }
       });
     }
+
+    // Disaster Restore Drill Listener
+    const drillBtn = container.querySelector('#run-disaster-drill-btn');
+    if (drillBtn) {
+      drillBtn.addEventListener('click', async () => {
+        await runDisasterDrill();
+      });
+    }
+
+    // Refresh Alerts Listener
+    const refreshAlertsBtn = container.querySelector('#refresh-alerts-btn');
+    if (refreshAlertsBtn) {
+      refreshAlertsBtn.addEventListener('click', async () => {
+        await loadStaffAlerts();
+      });
+    }
+  }
+
+  async function runDisasterDrill() {
+    if (drillRunning) return;
+    try {
+      drillRunning = true;
+      drillError = null;
+      render();
+      const drillFn = httpsCallable(functions, 'executeDisasterRecoveryDrill');
+      const res = await drillFn({ backupManifestId: `manifest_ui_${Date.now()}` });
+      lastDrillResult = res.data;
+    } catch (err) {
+      drillError = err.message || String(err);
+    } finally {
+      drillRunning = false;
+      render();
+    }
+  }
+
+  async function loadSystemTelemetryOverview() {
+    try {
+      const telFn = httpsCallable(functions, 'getSystemTelemetryOverview');
+      const res = await telFn();
+      if (res.data) {
+        systemTelemetryData = res.data;
+        render();
+      }
+    } catch (err) {
+      console.warn('Could not load system telemetry overview:', err);
+    }
+  }
+
+  async function loadStaffAlerts() {
+    try {
+      const alertFn = httpsCallable(functions, 'getStaffAlertsFeed');
+      const res = await alertFn();
+      if (res.data && res.data.alerts) {
+        staffAlerts = res.data.alerts;
+        render();
+      }
+    } catch (err) {
+      console.warn('Could not load staff alerts:', err);
+    }
   }
 
   async function loadDeveloperTelemetry() {
@@ -875,6 +1121,8 @@ export function renderSecurityCenterView(container) {
 
   // Load telemetry & rate limits on mount
   loadDeveloperTelemetry();
+  loadSystemTelemetryOverview();
+  loadStaffAlerts();
   if (!rateLimitsData && !rateLimitsLoading) {
     loadRateLimits();
   }
@@ -905,4 +1153,19 @@ export function renderSecurityCenterView(container) {
     console.error("Security Center subscription notice:", error);
     render();
   });
+
+  // Subscribe to real-time incidents
+  try {
+    const incRef = collection(db, 'incidents');
+    const qInc = query(incRef, limit(20));
+    unsubscribeIncidents = onSnapshot(qInc, (snapshot) => {
+      currentIncidents = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      render();
+    }, (error) => {
+      console.warn('Incidents subscription notice:', error);
+    });
+  } catch (err) {
+    console.warn('Could not attach incidents listener:', err);
+  }
 }
+

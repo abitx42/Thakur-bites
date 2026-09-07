@@ -68,10 +68,15 @@ echo "▶ Step 8: Executing Peak Lunch Rush Concurrency Simulator (100 parallel 
 node scripts/simulate_lunch_rush.js
 
 echo ""
+echo "▶ Step 8.1: Executing TCET Campus Lunch Rush Multi-Wave Load Simulator (1,200 orders across 4 waves)..."
+node scripts/simulate_tcet_lunch_rush.js
+
+echo ""
 echo "▶ Step 9: Executing Automated Staging DAST Security Attack Harness (10 Attack Classes)..."
 node scripts/run_dast_suite.js
 
 TOTAL_TESTS=$((NODE_PASS_COUNT + FLUTTER_PASS_COUNT + 18 + 11))
+
 
 echo ""
 echo "══════════════════════════════════════════════════════════════════════"
