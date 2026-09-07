@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:provider/provider.dart';
 import 'package:thakur_bites/models/menu_item.dart';
 import 'package:thakur_bites/models/order.dart';
 import 'package:thakur_bites/providers/cart_provider.dart';
-import 'package:thakur_bites/providers/auth_provider.dart';
 import 'package:thakur_bites/screens/cart_screen.dart';
 
 void main() {
@@ -15,16 +13,6 @@ void main() {
       id: 'coke_300',
       name: 'Coca Cola (300ml)',
       price: 40.0,
-      category: 'drinks',
-      parentCategory: 'BEVERAGES',
-      type: 'instant',
-      prepMinutes: 0,
-    );
-
-    final waterBottle = MenuItem(
-      id: 'bisleri_500',
-      name: 'Bisleri Mineral Water (500ml)',
-      price: 20.0,
       category: 'drinks',
       parentCategory: 'BEVERAGES',
       type: 'instant',
@@ -140,16 +128,6 @@ void main() {
       parentCategory: 'BEVERAGES',
       type: 'instant',
       prepMinutes: 0,
-    );
-
-    final cookedDosa = MenuItem(
-      id: 'masala_dosa',
-      name: 'Masala Dosa',
-      price: 70.0,
-      category: 'dosa',
-      parentCategory: 'FOOD',
-      type: 'cooked',
-      prepMinutes: 10,
     );
 
     testWidgets('ReadyMadePreferenceCard renders correctly and handles preference taps', (tester) async {
