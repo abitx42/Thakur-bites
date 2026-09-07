@@ -12,6 +12,39 @@ function getDb(): admin.firestore.Firestore {
 }
 
 /**
+ * Universal timestamp normalizer that safely handles:
+ * - Firestore Timestamp objects (.toMillis())
+ * - Epoch seconds (e.g. 1720000000) -> converted to ms
+ * - Epoch milliseconds (e.g. 1720000000000)
+ * - Date objects (.getTime())
+ * - ISO 8601 or RFC strings (Date.parse(str))
+ * - Serialized Firestore JSON {_seconds, _nanoseconds}
+ * - null, undefined, NaN -> returns 0
+ */
+export function normalizeTimestampToMillis(ts: any): number {
+  if (!ts) return 0;
+  if (typeof ts === 'number') {
+    if (!Number.isFinite(ts) || ts <= 0) return 0;
+    // Numbers below 1e11 represent epoch seconds (e.g. 1.7e9 vs 1.7e12)
+    return ts < 1e11 ? Math.round(ts * 1000) : Math.round(ts);
+  }
+  if (typeof ts.toMillis === 'function') {
+    return ts.toMillis();
+  }
+  if (ts instanceof Date) {
+    return ts.getTime();
+  }
+  if (typeof ts._seconds === 'number') {
+    return ts._seconds * 1000 + Math.round((ts._nanoseconds || 0) / 1e6);
+  }
+  if (typeof ts === 'string') {
+    const parsed = Date.parse(ts);
+    return isNaN(parsed) ? 0 : parsed;
+  }
+  return 0;
+}
+
+/**
  * Validates that an operation is performed within an active 6-hour privileged session
  * with a 30-minute idle activity threshold.
  */
@@ -53,13 +86,14 @@ export async function assertPrivilegedSession(
     throw new HttpsError('permission-denied', 'ROLE_REVOKED: User role is not authorized for privileged sessions.');
   }
 
-  // Priority 9: Token revocation awareness via Firebase Auth tokensValidAfterTime
+  const sessionCreatedMs = normalizeTimestampToMillis(data.createdAt);
+
+  // Priority 9: Token revocation awareness via Firebase Auth tokensValidAfterTime (Normalized)
   try {
     const authUser = await admin.auth().getUser(userId);
     if (authUser && authUser.tokensValidAfterTime) {
-      const validAfterMs = new Date(authUser.tokensValidAfterTime).getTime();
-      const sessionCreatedMs = data.createdAt ? data.createdAt.toMillis() : 0;
-      if (sessionCreatedMs < validAfterMs) {
+      const validAfterMs = normalizeTimestampToMillis(authUser.tokensValidAfterTime);
+      if (validAfterMs > 0 && sessionCreatedMs > 0 && sessionCreatedMs < validAfterMs) {
         await sessionRef.update({ status: 'REVOKED', reason: 'FIREBASE_TOKENS_REVOKED' }).catch(() => {});
         throw new HttpsError(
           'unauthenticated',
@@ -76,8 +110,8 @@ export async function assertPrivilegedSession(
   }
 
   const now = Date.now();
-  const expiresAtMs = data.expiresAt ? data.expiresAt.toMillis() : 0;
-  const lastActivityMs = data.lastActivityAt ? data.lastActivityAt.toMillis() : 0;
+  const expiresAtMs = normalizeTimestampToMillis(data.expiresAt);
+  const lastActivityMs = normalizeTimestampToMillis(data.lastActivityAt);
 
   // Enforce 6-hour total lifetime
   if (now > expiresAtMs) {

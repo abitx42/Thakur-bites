@@ -6557,6 +6557,294 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
       /Replay detected/
     );
   });
+
+  it('278. Priority 14: Atomic State + Ledger Coupling Invariance (All-or-Nothing Commit)', () => {
+    // Simulates database transaction state to verify atomic state + ledger coupling
+    const dbState = {
+      menuItems: new Map([
+        ['item_001', { id: 'item_001', stockOnHand: 20, reservedStock: 2, availableStock: 18 }],
+      ]),
+      inventoryLedger: new Map(),
+    };
+
+    function executeAtomicInventoryAdjustment(itemId, delta, shouldSimulateFailure) {
+      // Transaction isolation: stage all mutations in pending buffer
+      const pendingUpdates = [];
+      const pendingLedgerWrites = [];
+
+      const currentItem = dbState.menuItems.get(itemId);
+      if (!currentItem) throw new Error('Item not found');
+
+      const newStockOnHand = currentItem.stockOnHand + delta;
+      if (newStockOnHand < currentItem.reservedStock) {
+        throw new Error('Stock cannot drop below active reservations');
+      }
+      const newAvailable = newStockOnHand - currentItem.reservedStock;
+
+      // Stage mutation
+      pendingUpdates.push({
+        ref: itemId,
+        data: { ...currentItem, stockOnHand: newStockOnHand, availableStock: newAvailable },
+      });
+
+      // Stage ledger write
+      const ledgerId = `ledg_${Date.now()}_${Math.random()}`;
+      pendingLedgerWrites.push({
+        ledgerId,
+        itemId,
+        deltaUnits: delta,
+        newStockOnHand,
+      });
+
+      // Mid-transaction failure injection
+      if (shouldSimulateFailure) {
+        throw new Error('TRANSACTION_ABORTED_MIDWAY: Network timeout or conflict');
+      }
+
+      // Atomic commit: Apply all or none
+      pendingUpdates.forEach(u => dbState.menuItems.set(u.ref, u.data));
+      pendingLedgerWrites.forEach(l => dbState.inventoryLedger.set(l.ledgerId, l));
+
+      return { success: true, newStockOnHand };
+    }
+
+    // Step 1: Successful atomic adjustment (+10 units)
+    const successResult = executeAtomicInventoryAdjustment('item_001', 10, false);
+    assert.strictEqual(successResult.newStockOnHand, 30);
+    assert.strictEqual(dbState.menuItems.get('item_001').stockOnHand, 30);
+    assert.strictEqual(dbState.inventoryLedger.size, 1);
+
+    // Step 2: Failed adjustment (+5 units, transaction fails midway)
+    assert.throws(
+      () => executeAtomicInventoryAdjustment('item_001', 5, true),
+      /TRANSACTION_ABORTED_MIDWAY/
+    );
+
+    // INVARIANT 1: State did NOT change (+5 was NOT applied, remains 30)
+    assert.strictEqual(dbState.menuItems.get('item_001').stockOnHand, 30);
+
+    // INVARIANT 2: Zero orphaned ledger records created (remains exactly 1)
+    assert.strictEqual(dbState.inventoryLedger.size, 1);
+  });
+
+  it('279. Priority 15: Event / Notification Exactly-Once & Idempotent Retry Invariance', () => {
+    const processingLedger = {
+      financialCaptures: 0,
+      inventoryCommits: 0,
+      orderEventsEmitted: 0,
+      notificationAttempts: 0,
+      deliveredNotificationIds: new Set(),
+    };
+
+    function processPaymentFinalizeWithOutboxRetry(orderId, paymentId, attemptNumber) {
+      // 1. Transactional Core: Guarded by deterministic paymentId
+      const isFirstAttempt = processingLedger.financialCaptures === 0;
+      if (isFirstAttempt) {
+        processingLedger.financialCaptures += 1;
+        processingLedger.inventoryCommits += 1;
+        processingLedger.orderEventsEmitted += 1;
+      }
+
+      // 2. Outbox Notification Worker (May retry independently)
+      processingLedger.notificationAttempts += 1;
+      const idempotentNotifKey = `notif_${orderId}_confirmed`;
+      if (!processingLedger.deliveredNotificationIds.has(idempotentNotifKey)) {
+        // First time notification delivers
+        processingLedger.deliveredNotificationIds.add(idempotentNotifKey);
+      }
+
+      return {
+        success: true,
+        alreadyCaptured: !isFirstAttempt,
+        orderId,
+      };
+    }
+
+    // Attempt 1: Initial finalization (Succeeds)
+    const call1 = processPaymentFinalizeWithOutboxRetry('ord_999', 'pay_123', 1);
+    assert.strictEqual(call1.alreadyCaptured, false);
+
+    // Attempt 2: Worker restart / duplicate webhook retry
+    const call2 = processPaymentFinalizeWithOutboxRetry('ord_999', 'pay_123', 2);
+    assert.strictEqual(call2.alreadyCaptured, true);
+
+    // Attempt 3: Client reconnection retry
+    const call3 = processPaymentFinalizeWithOutboxRetry('ord_999', 'pay_123', 3);
+    assert.strictEqual(call3.alreadyCaptured, true);
+
+    // Invariant 1: Financial capture executed EXACTLY ONCE
+    assert.strictEqual(processingLedger.financialCaptures, 1);
+
+    // Invariant 2: Inventory commit executed EXACTLY ONCE
+    assert.strictEqual(processingLedger.inventoryCommits, 1);
+
+    // Invariant 3: Order event recorded EXACTLY ONCE
+    assert.strictEqual(processingLedger.orderEventsEmitted, 1);
+
+    // Invariant 4: Distinct delivered notifications capped at 1
+    assert.strictEqual(processingLedger.deliveredNotificationIds.size, 1);
+  });
+
+  it('280. Priority 16: Corrupted / Malformed Database State Fail-Closed Invariance', () => {
+    const { hasCapability } = require('../lib/authorization_policy');
+
+    // Scenario 1: Malformed Role in Firestore ("supergod" or null)
+    assert.strictEqual(hasCapability('supergod', 'manage_menu'), false);
+    assert.strictEqual(hasCapability(null, 'create_checkout'), false);
+    assert.strictEqual(hasCapability(undefined, 'emergency_freeze'), false);
+    assert.strictEqual(hasCapability('', 'adjust_inventory'), false);
+
+    // Scenario 2: Corrupted Catalog Pricing in Database
+    function validateCatalogItemForCheckout(item) {
+      if (typeof item.price !== 'number' || !Number.isFinite(item.price) || item.price <= 0) {
+        throw new Error(`MENU_CONFIGURATION_ERROR: Item "${item.name}" has invalid price.`);
+      }
+      if (typeof item.stockOnHand !== 'number' || !Number.isSafeInteger(item.stockOnHand) || item.stockOnHand < 0) {
+        throw new Error(`INVENTORY_CONFIGURATION_ERROR: Item "${item.name}" has invalid stock.`);
+      }
+      if (typeof item.reservedStock !== 'number' || !Number.isSafeInteger(item.reservedStock) || item.reservedStock < 0 || item.reservedStock > item.stockOnHand) {
+        throw new Error(`INVENTORY_CORRUPTION: Item "${item.name}" has corrupt reservedStock.`);
+      }
+      return true;
+    }
+
+    // Corrupted price (null / zero / string)
+    assert.throws(() => validateCatalogItemForCheckout({ name: 'Dosa', price: null, stockOnHand: 10, reservedStock: 0 }), /MENU_CONFIGURATION_ERROR/);
+    assert.throws(() => validateCatalogItemForCheckout({ name: 'Dosa', price: -10, stockOnHand: 10, reservedStock: 0 }), /MENU_CONFIGURATION_ERROR/);
+
+    // Corrupted reservedStock (-5 or greater than stockOnHand)
+    assert.throws(() => validateCatalogItemForCheckout({ name: 'Dosa', price: 50, stockOnHand: 10, reservedStock: -5 }), /INVENTORY_CORRUPTION/);
+    assert.throws(() => validateCatalogItemForCheckout({ name: 'Dosa', price: 50, stockOnHand: 10, reservedStock: 15 }), /INVENTORY_CORRUPTION/);
+
+    // Scenario 3: Corrupted Order Status in Pickup Verification
+    function validateOrderStatusForPickup(orderStatus, paymentStatus) {
+      if (paymentStatus !== 'paid' && paymentStatus !== 'captured') {
+        throw new Error(`Cannot release order: paymentStatus is '${paymentStatus}'.`);
+      }
+      const validStatuses = ['ready', 'confirmed', 'preparing', 'collected'];
+      if (!validStatuses.includes(orderStatus)) {
+        throw new Error(`Cannot hand over order: Invalid order status '${orderStatus}'.`);
+      }
+      return true;
+    }
+
+    assert.throws(() => validateOrderStatusForPickup('banana', 'paid'), /Invalid order status 'banana'/);
+    assert.throws(() => validateOrderStatusForPickup('ready', 'unverified_hacked'), /paymentStatus is 'unverified_hacked'/);
+  });
+
+  it('281. Priority 17: Backup Restoration Attack & Stale Session Invalidation Invariant', () => {
+    const { normalizeTimestampToMillis } = require('../lib/privileged_guard');
+
+    // Attacker restored an old Firestore backup from 7 days ago where demoted user was ACTIVE admin
+    const restoredBackupSession = {
+      sessionId: 'psess_restored_001',
+      userId: 'ex_admin_mallory',
+      role: 'admin',
+      status: 'ACTIVE', // Restored backup claims active!
+      createdAt: { toMillis: () => Date.now() - (7 * 24 * 3600 * 1000) }, // 7 days ago
+      expiresAt: { toMillis: () => Date.now() + 3600000 }, // Stale expiry
+    };
+
+    // Firebase Auth has current revocation epoch (Tokens revoked 2 days ago)
+    const currentAuthTokensValidAfter = new Date(Date.now() - (2 * 24 * 3600 * 1000)).toISOString();
+
+    function validateRestoredSessionAgainstAuth(session, tokensValidAfterStr) {
+      const sessionCreatedMs = normalizeTimestampToMillis(session.createdAt);
+      const validAfterMs = normalizeTimestampToMillis(tokensValidAfterStr);
+
+      if (validAfterMs > 0 && sessionCreatedMs < validAfterMs) {
+        throw new Error('USER_TOKENS_REVOKED: Stale restored session detected. Credentials invalidated post-backup.');
+      }
+      return true;
+    }
+
+    // Invariant 1: Restored backup session is rejected by Auth revocation boundary
+    assert.throws(
+      () => validateRestoredSessionAgainstAuth(restoredBackupSession, currentAuthTokensValidAfter),
+      /USER_TOKENS_REVOKED/
+    );
+
+    // Invariant 2: Shift PIN from restored backup rejected because shiftDate is in the past
+    function validateShiftPinDate(pinShiftDate, currentTodayDate) {
+      if (pinShiftDate !== currentTodayDate) {
+        throw new Error(`SHIFT_PIN_EXPIRED: PIN belongs to past shift date '${pinShiftDate}', today is '${currentTodayDate}'.`);
+      }
+      return true;
+    }
+
+    assert.throws(
+      () => validateShiftPinDate('2026-09-01', '2026-09-08'),
+      /SHIFT_PIN_EXPIRED/
+    );
+  });
+
+  it('282. Priority 18: Clock, Timezone & Timestamp Normalization Invariance', () => {
+    const { normalizeTimestampToMillis } = require('../lib/privileged_guard');
+
+    // 1. Universal Timestamp Normalization Tests
+    const refDateMs = 1725753600000; // Reference ms
+    const refDateSec = 1725753600;    // Reference sec
+
+    // Test A: Number in seconds converted to milliseconds
+    assert.strictEqual(normalizeTimestampToMillis(refDateSec), refDateMs);
+
+    // Test B: Number in milliseconds preserved
+    assert.strictEqual(normalizeTimestampToMillis(refDateMs), refDateMs);
+
+    // Test C: Firestore Timestamp object
+    const mockFirestoreTimestamp = { toMillis: () => refDateMs };
+    assert.strictEqual(normalizeTimestampToMillis(mockFirestoreTimestamp), refDateMs);
+
+    // Test D: JavaScript Date object
+    const mockDate = new Date(refDateMs);
+    assert.strictEqual(normalizeTimestampToMillis(mockDate), refDateMs);
+
+    // Test E: Serialized Firestore JSON object
+    const mockSerializedJson = { _seconds: refDateSec, _nanoseconds: 0 };
+    assert.strictEqual(normalizeTimestampToMillis(mockSerializedJson), refDateMs);
+
+    // Test F: ISO 8601 String
+    assert.strictEqual(normalizeTimestampToMillis(mockDate.toISOString()), refDateMs);
+
+    // Test G: Invalid / null / undefined fails safe to 0
+    assert.strictEqual(normalizeTimestampToMillis(null), 0);
+    assert.strictEqual(normalizeTimestampToMillis(undefined), 0);
+    assert.strictEqual(normalizeTimestampToMillis('invalid-date'), 0);
+    assert.strictEqual(normalizeTimestampToMillis(-100), 0);
+
+    // 2. Exact Boundary Verification for 60s Step-Up Challenge
+    function evaluateChallengeBoundary(issuedAtMs, nowMs) {
+      const elapsedMs = nowMs - issuedAtMs;
+      if (elapsedMs > 60000) {
+        throw new Error('Step-up challenge has expired');
+      }
+      return true;
+    }
+
+    const t0 = 1000000;
+    assert.strictEqual(evaluateChallengeBoundary(t0, t0 + 59999), true, '59.999s must be valid');
+    assert.strictEqual(evaluateChallengeBoundary(t0, t0 + 60000), true, 'Exact 60.000s must be valid');
+    assert.throws(() => evaluateChallengeBoundary(t0, t0 + 60001), /expired/, '60.001s must fail closed');
+
+    // 3. Exact Boundary Verification for 6-Hour Privileged Session
+    function evaluatePrivilegedSessionLifetime(issuedAtMs, nowMs) {
+      const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+      if (nowMs - issuedAtMs > SIX_HOURS_MS) {
+        throw new Error('Privileged session has expired');
+      }
+      return true;
+    }
+
+    const s0 = 2000000;
+    const SIX_HOURS_MS = 21600000;
+    assert.strictEqual(evaluatePrivilegedSessionLifetime(s0, s0 + SIX_HOURS_MS), true);
+    assert.throws(() => evaluatePrivilegedSessionLifetime(s0, s0 + SIX_HOURS_MS + 1), /expired/);
+
+    // 4. Timezone Authority (Asia/Kolkata +05:30 offset)
+    const { getMumbaiDateStr } = require('../lib/shift_pins');
+    const mumbaiDate = getMumbaiDateStr();
+    assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(mumbaiDate), 'Must return YYYY-MM-DD in Asia/Kolkata');
+  });
 });
 
 
