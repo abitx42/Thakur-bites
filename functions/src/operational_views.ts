@@ -77,13 +77,30 @@ export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async 
   }
 
   const snap = await db.collection('orders')
-    .where('status', 'in', ['confirmed', 'preparing', 'placed', 'payment_pending'])
+    .where('status', 'in', ['confirmed', 'preparing', 'placed'])
     .limit(100)
     .get();
 
   const now = new Date();
-  const orders = snap.docs.map(doc => {
+  const orders: KitchenOrderView[] = [];
+
+  for (const doc of snap.docs) {
     const data = doc.data();
+
+    // ── Kitchen Gate Invariant (INV-007, INV-010) ──
+    // 1. Never show payment_pending in kitchen
+    if (data.status === 'payment_pending') continue;
+
+    // 2. Online orders must be authoritatively paid before reaching kitchen
+    if (data.paymentMethod === 'online' && data.paymentStatus !== 'paid' && data.paymentStatus !== 'captured') {
+      continue;
+    }
+
+    // 3. Pure ready-made / packaged items route to express counter, not cooking queue
+    const isOnlyReadyMade = data.isOnlyReadyMade === true ||
+      (Array.isArray(data.items) && data.items.length > 0 && data.items.every((it: any) => it.type === 'instant'));
+    if (isOnlyReadyMade) continue;
+
     const createdAtDate = data.createdAt?.toDate ? data.createdAt.toDate() : new Date();
     const priorityLevel = typeof data.priorityLevel === 'number' ? data.priorityLevel : 1;
     const effectivePriority = calculateEffectivePriority(priorityLevel, createdAtDate, now);
@@ -92,17 +109,14 @@ export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async 
       ? data.estimatedMinutes
       : (typeof data.estimatedPrepTimeMinutes === 'number' ? data.estimatedPrepTimeMinutes : null);
 
-    const isOnlyReadyMade = data.isOnlyReadyMade === true ||
-      (Array.isArray(data.items) && data.items.length > 0 && data.items.every((it: any) => it.type === 'instant'));
-
-    return {
+    orders.push({
       orderId: doc.id,
       tokenNumber: data.tokenNumber || 'TB-???',
       status: data.status,
       priorityLevel,
       effectivePriority,
-      isOnlyReadyMade,
-      readyMadePreference: data.readyMadePreference || (isOnlyReadyMade ? 'Chilled ❄️ · Direct Handover ✋' : undefined),
+      isOnlyReadyMade: false,
+      readyMadePreference: data.readyMadePreference,
       items: (data.items || []).map((it: any) => ({
         itemId: it.itemId,
         name: it.name,
@@ -111,8 +125,8 @@ export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async 
       })),
       estimatedMinutes,
       createdAt: createdAtDate.toISOString(),
-    };
-  });
+    });
+  }
 
   // Rank by effective priority descending, breaking ties by earliest createdAt
   orders.sort((a, b) => {

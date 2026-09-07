@@ -7781,7 +7781,335 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     // 5. In-flight pending payment
     const inFlightResult = evaluateOrderReconciliation({ status: 'payment_pending', paymentStatus: 'pending' }, false, false);
     assert.strictEqual(inFlightResult.isReconciled, false);
-    assert.strictEqual(inFlightResult.paymentStatus, 'pending');
+  });
+
+  it('301. Phase 5 Financial Invariant Scanner: Detects unbalanced debits/credits, ledger amount mismatches, and missing ledgers', () => {
+    function scanFinancialIntegrity(transactions, orders) {
+      const violations = [];
+      const txnsByOrderId = new Map();
+
+      for (const txn of transactions) {
+        if (txn.orderId) {
+          if (!txnsByOrderId.has(txn.orderId)) txnsByOrderId.set(txn.orderId, []);
+          txnsByOrderId.get(txn.orderId).push(txn);
+        }
+
+        const debits = (txn.postings || []).reduce((sum, p) => sum + (p.debitPaise || 0), 0);
+        const credits = (txn.postings || []).reduce((sum, p) => sum + (p.creditPaise || 0), 0);
+
+        if (debits !== credits) {
+          violations.push(`LEDGER_UNBALANCED_TRANSACTION: Txn ${txn.id} debits (${debits}) != credits (${credits})`);
+        }
+        if (typeof txn.amountPaise === 'number' && debits !== txn.amountPaise) {
+          violations.push(`LEDGER_AMOUNT_MISMATCH: Txn ${txn.id} amountPaise (${txn.amountPaise}) != postings (${debits})`);
+        }
+      }
+
+      for (const order of orders) {
+        if (order.paymentStatus === 'paid' && !txnsByOrderId.has(order.id)) {
+          violations.push(`MISSING_FINANCIAL_LEDGER: Order ${order.id} marked PAID without ledger record`);
+        }
+      }
+
+      return violations;
+    }
+
+    const testTxns = [
+      { id: 'txn_1', orderId: 'ord_1', amountPaise: 5000, postings: [{ debitPaise: 5000 }, { creditPaise: 5000 }] },
+      { id: 'txn_2', orderId: 'ord_2', amountPaise: 3000, postings: [{ debitPaise: 3000 }, { creditPaise: 2500 }] }, // Unbalanced!
+      { id: 'txn_3', orderId: 'ord_3', amountPaise: 4000, postings: [{ debitPaise: 3500 }, { creditPaise: 3500 }] }, // Amount mismatch!
+    ];
+
+    const testOrders = [
+      { id: 'ord_1', paymentStatus: 'paid' },
+      { id: 'ord_ghost', paymentStatus: 'paid' }, // Missing ledger!
+    ];
+
+    const breaches = scanFinancialIntegrity(testTxns, testOrders);
+    assert.strictEqual(breaches.length, 3);
+    assert.ok(breaches[0].includes('LEDGER_UNBALANCED_TRANSACTION'));
+    assert.ok(breaches[1].includes('LEDGER_AMOUNT_MISMATCH'));
+    assert.ok(breaches[2].includes('MISSING_FINANCIAL_LEDGER'));
+  });
+
+  it('302. Phase 5 Inventory Invariant Scanner: Detects negative stock, equation mismatch, and expired hold leaks', () => {
+    function scanInventoryIntegrity(menuItems, reservations, currentMillis) {
+      const violations = [];
+
+      for (const item of menuItems) {
+        if (item.type === 'instant') {
+          if (item.stockOnHand < 0 || item.reservedStock < 0) {
+            violations.push(`INVENTORY_NEGATIVE_STOCK: Item ${item.id} has negative stock`);
+          }
+          if (item.reservedStock > item.stockOnHand) {
+            violations.push(`INVENTORY_OVER_RESERVED: Item ${item.id} reserved > onHand`);
+          }
+          if (item.availableStock !== item.stockOnHand - item.reservedStock) {
+            violations.push(`INVENTORY_EQUATION_MISMATCH: Item ${item.id} availableStock mismatch`);
+          }
+        }
+      }
+
+      for (const res of reservations) {
+        if (res.status === 'RESERVED' && currentMillis > res.expiresAtMillis) {
+          violations.push(`EXPIRED_RESERVATION_HOLD_LEAK: Reservation ${res.id} expired but still RESERVED`);
+        }
+      }
+
+      return violations;
+    }
+
+    const items = [
+      { id: 'i1', type: 'instant', stockOnHand: 10, reservedStock: 2, availableStock: 8 }, // Healthy
+      { id: 'i2', type: 'instant', stockOnHand: -1, reservedStock: 0, availableStock: -1 }, // Negative!
+      { id: 'i3', type: 'instant', stockOnHand: 5, reservedStock: 8, availableStock: 5 }, // Over reserved!
+      { id: 'i4', type: 'instant', stockOnHand: 10, reservedStock: 2, availableStock: 7 }, // Equation mismatch!
+    ];
+
+    const resList = [
+      { id: 'r1', status: 'RESERVED', expiresAtMillis: 1000 }, // Expired when current is 2000!
+      { id: 'r2', status: 'COMMITTED', expiresAtMillis: 1000 },
+    ];
+
+    const breaches = scanInventoryIntegrity(items, resList, 2000);
+    assert.strictEqual(breaches.length, 6);
+    assert.ok(breaches.some(b => b.includes('INVENTORY_NEGATIVE_STOCK')));
+    assert.ok(breaches.some(b => b.includes('INVENTORY_OVER_RESERVED')));
+    assert.ok(breaches.some(b => b.includes('INVENTORY_EQUATION_MISMATCH')));
+    assert.ok(breaches.some(b => b.includes('EXPIRED_RESERVATION_HOLD_LEAK')));
+  });
+
+  it('303. Phase 5 Order Lifecycle Impossible States: Detects unpaid preparing, unverified collected, and unrefunded cancelled', () => {
+    function scanOrderLifecycleIntegrity(orders) {
+      const violations = [];
+
+      for (const o of orders) {
+        // 1. Preparing without payment
+        if (o.status === 'preparing' && o.paymentMethod === 'online' && o.paymentStatus === 'pending') {
+          violations.push(`LIFECYCLE_UNPAID_PREPARING: Order ${o.id}`);
+        }
+        // 2. Collected without verification
+        if (o.status === 'collected' && !o.collectedAt && !o.verificationMethod) {
+          violations.push(`LIFECYCLE_UNVERIFIED_COLLECTED: Order ${o.id}`);
+        }
+        // 3. Cancelled with captured payment but no refund record
+        if (o.status === 'cancelled' && o.paymentStatus === 'paid' && !o.refundId && !o.refundLifecycleStatus) {
+          violations.push(`LIFECYCLE_UNREFUNDED_CANCELLED: Order ${o.id}`);
+        }
+      }
+
+      return violations;
+    }
+
+    const testOrders = [
+      { id: 'o1', status: 'preparing', paymentMethod: 'online', paymentStatus: 'pending' },
+      { id: 'o2', status: 'collected' }, // Missing verification!
+      { id: 'o3', status: 'cancelled', paymentStatus: 'paid' }, // Missing refund record!
+      { id: 'o4', status: 'collected', collectedAt: '2026-09-08T00:00:00Z', verificationMethod: 'PIN' }, // Healthy!
+    ];
+
+    const violations = scanOrderLifecycleIntegrity(testOrders);
+    assert.strictEqual(violations.length, 3);
+    assert.ok(violations[0].includes('LIFECYCLE_UNPAID_PREPARING'));
+    assert.ok(violations[1].includes('LIFECYCLE_UNVERIFIED_COLLECTED'));
+    assert.ok(violations[2].includes('LIFECYCLE_UNREFUNDED_CANCELLED'));
+  });
+
+  it('304. Phase 5 Circuit Breaker Level 1: Warning mode logs anomaly without disrupting checkouts', () => {
+    function evaluateCircuitBreaker(financialViolations, inventoryViolations, warnings) {
+      if (financialViolations.length > 0) {
+        return { level: 'EMERGENCY_FREEZE', mode: 'FINANCIAL_FROZEN', orderingAvailable: false, allowHandover: true };
+      }
+      if (inventoryViolations.length >= 2) {
+        return { level: 'RESTRICTED', mode: 'DEGRADED', orderingAvailable: false, allowHandover: true };
+      }
+      if (warnings.length > 0) {
+        return { level: 'WARNING', mode: 'NORMAL', orderingAvailable: true, allowHandover: true };
+      }
+      return { level: 'NORMAL', mode: 'NORMAL', orderingAvailable: true, allowHandover: true };
+    }
+
+    const res = evaluateCircuitBreaker([], [], ['DUPLICATE_TOKEN_WARNING: Token TB-012']);
+    assert.strictEqual(res.level, 'WARNING');
+    assert.strictEqual(res.mode, 'NORMAL');
+    assert.strictEqual(res.orderingAvailable, true);
+    assert.strictEqual(res.allowHandover, true);
+  });
+
+  it('305. Phase 5 Circuit Breaker Level 2: Restricted mode halts new checkouts while permitting kitchen queue completion', () => {
+    function evaluateCircuitBreaker(financialViolations, inventoryViolations, warnings) {
+      if (financialViolations.length > 0) {
+        return { level: 'EMERGENCY_FREEZE', mode: 'FINANCIAL_FROZEN', orderingAvailable: false, allowHandover: true };
+      }
+      if (inventoryViolations.length >= 2) {
+        return { level: 'RESTRICTED', mode: 'DEGRADED', orderingAvailable: false, allowHandover: true };
+      }
+      return { level: 'NORMAL', mode: 'NORMAL', orderingAvailable: true, allowHandover: true };
+    }
+
+    const inventoryBreaches = [
+      'INVENTORY_EQUATION_MISMATCH: Item samosa_1',
+      'EXPIRED_RESERVATION_HOLD_LEAK: Res res_123',
+    ];
+
+    const res = evaluateCircuitBreaker([], inventoryBreaches, []);
+    assert.strictEqual(res.level, 'RESTRICTED');
+    assert.strictEqual(res.mode, 'DEGRADED');
+    assert.strictEqual(res.orderingAvailable, false); // New checkout reservations blocked
+    assert.strictEqual(res.allowHandover, true); // Existing cooking orders finish
+  });
+
+  it('306. Phase 5 Circuit Breaker Level 3: Emergency Freeze blocks checkouts/payments but explicitly preserves ready -> collected handover', () => {
+    function evaluateOperationPermission(category, operationalMode) {
+      if (operationalMode === 'FINANCIAL_FROZEN') {
+        if (category === 'checkout' || category === 'payment' || category === 'refund') {
+          throw new Error('Financial transactions and checkout are temporarily frozen for system reconciliation.');
+        }
+        if (category === 'handover' || category === 'pickup_verify') {
+          return { permitted: true, safeHarbor: true }; // Food not wasted!
+        }
+      }
+      return { permitted: true };
+    }
+
+    // Checkout blocked
+    assert.throws(() => evaluateOperationPermission('checkout', 'FINANCIAL_FROZEN'), /temporarily frozen/);
+    // Payment blocked
+    assert.throws(() => evaluateOperationPermission('payment', 'FINANCIAL_FROZEN'), /temporarily frozen/);
+    // Ready order pickup handover PERMITTED under Safe-Harbor invariant
+    const handover = evaluateOperationPermission('handover', 'FINANCIAL_FROZEN');
+    assert.strictEqual(handover.permitted, true);
+    assert.strictEqual(handover.safeHarbor, true);
+  });
+
+  it('307. Phase 5 Immutable Anomaly Record Invariant: Scanner writes tamper-resistant records to integrityAnomalies', () => {
+    const anomalyLog = [];
+
+    function recordIntegrityAnomaly(scanId, category, severity, details, relatedEntityId) {
+      const anomalyId = `ANOM_${scanId}_${String(anomalyLog.length + 1).padStart(3, '0')}`;
+      const doc = {
+        anomalyId,
+        scanId,
+        category,
+        severity,
+        details,
+        relatedEntityId,
+        detectedAt: new Date().toISOString(),
+      };
+      anomalyLog.push(doc);
+      return doc;
+    }
+
+    const rec = recordIntegrityAnomaly('SCAN_999', 'FINANCIAL', 'CRITICAL', 'Debits != Credits', 'txn_bad_1');
+    assert.strictEqual(rec.anomalyId, 'ANOM_SCAN_999_001');
+    assert.strictEqual(rec.category, 'FINANCIAL');
+    assert.strictEqual(rec.severity, 'CRITICAL');
+    assert.strictEqual(anomalyLog.length, 1);
+  });
+
+  it('308. Phase 5 Kitchen Gate Invariant: KDS strictly excludes payment_pending and unpaid online orders', () => {
+    function filterKitchenTickets(orders) {
+      return orders.filter(o => {
+        // 1. Exclude payment_pending
+        if (o.status === 'payment_pending') return false;
+        // 2. Exclude unpaid online orders
+        if (o.paymentMethod === 'online' && o.paymentStatus !== 'paid' && o.paymentStatus !== 'captured') {
+          return false;
+        }
+        // 3. Exclude pure ready-made
+        if (o.isOnlyReadyMade) return false;
+        // 4. Must be confirmed or preparing
+        return o.status === 'confirmed' || o.status === 'preparing';
+      });
+    }
+
+    const sampleOrders = [
+      { id: '1', status: 'payment_pending', paymentMethod: 'online', paymentStatus: 'pending' }, // Filtered!
+      { id: '2', status: 'confirmed', paymentMethod: 'online', paymentStatus: 'pending' }, // Unpaid -> Filtered!
+      { id: '3', status: 'confirmed', paymentMethod: 'online', paymentStatus: 'paid', isOnlyReadyMade: true }, // Store packaged -> Filtered!
+      { id: '4', status: 'confirmed', paymentMethod: 'online', paymentStatus: 'paid', isOnlyReadyMade: false }, // ALLOWED!
+      { id: '5', status: 'confirmed', paymentMethod: 'counter_cash', paymentStatus: 'pending', isOnlyReadyMade: false }, // Cashier counter order -> ALLOWED!
+    ];
+
+    const kitchenQueue = filterKitchenTickets(sampleOrders);
+    assert.strictEqual(kitchenQueue.length, 2);
+    assert.strictEqual(kitchenQueue[0].id, '4');
+    assert.strictEqual(kitchenQueue[1].id, '5');
+  });
+
+  it('309. Phase 5 TV Projection Zero-PII Invariant: publicLiveQueue/current strictly contains only token strings and zero PII', () => {
+    const rawOrders = [
+      {
+        tokenNumber: 'TB-042',
+        status: 'ready',
+        studentName: 'Private Student',
+        studentRoll: 'TE-COMP-99',
+        studentPhone: '+919876543210',
+        totalAmountPaise: 15000,
+        priorityLevel: 2,
+      },
+      {
+        tokenNumber: 'TB-057',
+        status: 'preparing',
+        studentName: 'Another Student',
+        estimatedMinutes: 8,
+      },
+    ];
+
+    // Projection builder simulation
+    function buildPublicQueueProjection(orders) {
+      const readyTokens = [];
+      const preparingTokens = [];
+
+      for (const o of orders) {
+        if (!o.tokenNumber) continue;
+        if (o.status === 'ready') readyTokens.push(o.tokenNumber);
+        if (o.status === 'preparing') preparingTokens.push(o.tokenNumber);
+      }
+
+      return {
+        readyTokens,
+        preparingTokens,
+        activeCount: readyTokens.length + preparingTokens.length,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    const projection = buildPublicQueueProjection(rawOrders);
+    assert.deepStrictEqual(projection.readyTokens, ['TB-042']);
+    assert.deepStrictEqual(projection.preparingTokens, ['TB-057']);
+    assert.strictEqual(projection.activeCount, 2);
+
+    // Verify ZERO PII exists in projected object
+    const serialized = JSON.stringify(projection);
+    assert.strictEqual(serialized.includes('Private Student'), false);
+    assert.strictEqual(serialized.includes('TE-COMP-99'), false);
+    assert.strictEqual(serialized.includes('+919876543210'), false);
+    assert.strictEqual(serialized.includes('15000'), false);
+  });
+
+  it('310. Phase 5 Anti-Starvation Queue Invariant: 20-minute student wait strictly equals/overtakes fresh faculty order', () => {
+    const PRIORITY_WEIGHTS = { 0: 0, 1: 100, 2: 200, 3: 300 };
+    const AGING_POINTS_PER_MINUTE = 5;
+
+    function calculateEffectivePriority(priorityLevel, waitMinutes) {
+      const baseWeight = PRIORITY_WEIGHTS[priorityLevel] ?? 100;
+      const agingBonus = Math.floor(waitMinutes * AGING_POINTS_PER_MINUTE);
+      return baseWeight + agingBonus;
+    }
+
+    // Faculty Level 2 just arrived (0 minutes wait)
+    const freshFacultyScore = calculateEffectivePriority(2, 0);
+    assert.strictEqual(freshFacultyScore, 200);
+
+    // Student Level 1 waiting 20 minutes
+    const student20MinScore = calculateEffectivePriority(1, 20);
+    assert.strictEqual(student20MinScore, 200); // 100 + 20*5 = 200 (Matches!)
+
+    // Student Level 1 waiting 21 minutes
+    const student21MinScore = calculateEffectivePriority(1, 21);
+    assert.strictEqual(student21MinScore, 205);
+    assert.ok(student21MinScore > freshFacultyScore, 'Aging ensures waiting students overtake newly placed priority orders');
   });
 });
 

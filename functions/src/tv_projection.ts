@@ -11,6 +11,8 @@ export interface PublicReadyTicket {
 }
 
 export interface PublicLiveQueueDocument {
+  readyTokens: string[];
+  preparingTokens: string[];
   preparing: PublicPreparingTicket[];
   ready: PublicReadyTicket[];
   activeCount: number;
@@ -32,6 +34,8 @@ export function buildPublicQueuePayload(
 ): PublicLiveQueueDocument {
   const preparing: PublicPreparingTicket[] = [];
   const ready: PublicReadyTicket[] = [];
+  const readyTokens: string[] = [];
+  const preparingTokens: string[] = [];
 
   for (const o of orders) {
     const token = (o.tokenNumber || '').trim();
@@ -41,6 +45,7 @@ export function buildPublicQueuePayload(
 
     if (status === 'ready') {
       ready.push({ token });
+      readyTokens.push(token);
     } else if (['preparing', 'confirmed', 'placed'].includes(status)) {
       preparing.push({
         token,
@@ -48,13 +53,16 @@ export function buildPublicQueuePayload(
           ? o.estimatedMinutes
           : null,
       });
+      preparingTokens.push(token);
     }
   }
 
   return {
+    readyTokens,
+    preparingTokens,
     preparing,
     ready,
-    activeCount: preparing.length + ready.length,
+    activeCount: readyTokens.length + preparingTokens.length,
     updatedAt: Timestamp.now(),
   };
 }

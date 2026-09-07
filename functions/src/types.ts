@@ -357,3 +357,15 @@ export interface ReconcilePaymentResponse {
   isExpired?: boolean;
 }
 
+export type CircuitBreakerLevel = 'WARNING' | 'RESTRICTED' | 'EMERGENCY_FREEZE';
+
+export interface IntegrityAnomalyDoc {
+  anomalyId: string;
+  scanId: string;
+  category: 'FINANCIAL' | 'INVENTORY' | 'ORDER_LIFECYCLE' | 'RATE_LIMIT';
+  severity: 'WARN' | 'RESTRICTED' | 'CRITICAL';
+  details: string;
+  relatedEntityId?: string;
+  detectedAt: Timestamp;
+}
+
