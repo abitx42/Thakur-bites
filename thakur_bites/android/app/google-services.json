@@ -12,7 +12,20 @@
           "package_name": "com.thakurbites.thakur_bites"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "391012293021-hlclvat0gpjgeajs96tcg474a0fkosjm.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.thakurbites.thakur_bites",
+            "certificate_hash": "804c6ed759c607c4b485117814208282d029e4db"
+          }
+        },
+        {
+          "client_id": "391012293021-5ak1k4a83ijbbgjjletl6vunmn1r6ung.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyDGfh8OsP4XLi8leD2_cbVLFVQk194RNFA"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "391012293021-5ak1k4a83ijbbgjjletl6vunmn1r6ung.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "391012293021-l3n6hjp9s0r9mcvns7jlq47ibfq4iov7.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.thakurbites.thakurBites"
+              }
+            }
+          ]
         }
       }
     }

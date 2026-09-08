@@ -20,6 +20,9 @@ class AuthService {
   final FunctionsService _functions;
   final GoogleSignIn _googleSignIn;
 
+  static const String serverClientId =
+      '391012293021-5ak1k4a83ijbbgjjletl6vunmn1r6ung.apps.googleusercontent.com';
+
   AuthService({
     FirebaseAuth? auth,
     FirebaseFirestore? firestore,
@@ -28,7 +31,11 @@ class AuthService {
   })  : _auth = auth ?? FirebaseAuth.instance,
         _db = firestore ?? FirebaseFirestore.instance,
         _functions = functions ?? FunctionsService(),
-        _googleSignIn = googleSignIn ?? GoogleSignIn(scopes: ['email', 'profile']);
+        _googleSignIn = googleSignIn ??
+            GoogleSignIn(
+              serverClientId: serverClientId,
+              scopes: ['email', 'profile'],
+            );
 
   static const List<String> allowedInstitutionalDomains = [
     'tcetmumbai.in',
