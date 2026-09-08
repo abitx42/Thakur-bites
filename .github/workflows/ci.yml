@@ -62,7 +62,17 @@ jobs:
 
       - name: Run Real Firebase Emulator Test Suite
         working-directory: functions
-        run: firebase emulators:exec --only firestore 'node --test test/emulator/*.test.js' --project ${{ secrets.FIREBASE_PROJECT_ID || 'thakur-bites-test' }}
+        run: |
+          set +e
+          firebase emulators:exec --only firestore 'node --test test/emulator/firestore_rules.test.js test/emulator/recovery_approval.test.js test/emulator/transaction_concurrency.test.js' --project thakur-bites-test > emulator.log 2>&1
+          STATUS=$?
+          cat emulator.log
+          if [ $STATUS -ne 0 ]; then
+            FAIL_REASON=$(grep -A 10 -E '(AssertionError|Error:|failing tests:)' emulator.log | tr '\n' ' ' | head -c 200)
+            echo "::error title=Emulator Test Failure::${FAIL_REASON:-Failed with exit code $STATUS}"
+            cat firestore-debug.log 2>/dev/null || true
+            exit $STATUS
+          fi
 
       - name: Install Flutter Client Dependencies
         working-directory: thakur_bites
