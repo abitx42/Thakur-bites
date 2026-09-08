@@ -633,7 +633,7 @@ class _CartSummaryState extends State<_CartSummary> {
   final CheckoutService _checkoutService = CheckoutService();
   String? _currentIdempotencyKey;
   bool _isProcessing = false;
-  String _selectedPaymentMethod = 'online'; // 'online' | 'counter_cash'
+  final String _selectedPaymentMethod = 'online';
 
   Future<void> _handleConfirmAndPay() async {
     if (_isProcessing) return;
@@ -711,51 +711,54 @@ class _CartSummaryState extends State<_CartSummary> {
         await prefs.setString('active_order_id', order.id);
       } catch (_) {}
 
-      // 4. Online Payment vs Counter Cash
-      if (_selectedPaymentMethod == 'online') {
-        try {
-          final paymentService = PaymentService();
-          await paymentService.initiateOnlinePayment(
-            orderId: order.id,
-            totalAmountRs: order.totalAmount,
-            studentName: student?.displayName ?? order.studentName ?? 'Student',
-            studentEmail: student?.email ?? 'student@tcetmumbai.in',
-          );
-        } on PaymentException catch (pe) {
-          // Payment dismissed, declined, or timed out.
-          // DO NOT wipe the cart! Keep items so student can retry or change payment method.
-          setState(() => _isProcessing = false);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(pe.message),
-                backgroundColor: AppColors.red,
-                duration: const Duration(seconds: 5),
-                action: SnackBarAction(
-                  label: 'View Order',
-                  textColor: Colors.white,
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => OrderStatusScreen(order: order),
-                      ),
-                    );
-                  },
-                ),
+      // 4. Online Payment via Razorpay
+      try {
+        final paymentService = PaymentService();
+        await paymentService.initiateOnlinePayment(
+          orderId: order.id,
+          totalAmountRs: order.totalAmount,
+          studentName: student?.displayName ?? order.studentName ?? 'Student',
+          studentEmail: student?.email ?? 'student@tcetmumbai.in',
+        );
+      } on PaymentException catch (pe) {
+        // Payment dismissed, declined, or timed out.
+        // DO NOT wipe the cart! Keep items so student can retry.
+        setState(() => _isProcessing = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(pe.message),
+              backgroundColor: AppColors.red,
+              duration: const Duration(seconds: 5),
+              action: SnackBarAction(
+                label: 'View Order',
+                textColor: Colors.white,
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => OrderStatusScreen(order: order),
+                    ),
+                  );
+                },
               ),
-            );
-          }
-          return;
+            ),
+          );
         }
+        return;
       }
 
-      // 5. Payment verified or Counter Cash selected — clear cart & show ticket
+      // 5. Payment verified — clear cart & show ticket
       cart.clear();
+
+      final confirmedOrder = order.copyWith(
+        status: 'confirmed',
+        paymentStatus: 'paid',
+      );
 
       if (mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
-            builder: (_) => TicketScreen(order: order),
+            builder: (_) => TicketScreen(order: confirmedOrder),
           ),
         );
       }
@@ -819,10 +822,15 @@ class _CartSummaryState extends State<_CartSummary> {
         return;
       }
       if (mounted) {
+        final displayMsg = e is CheckoutException
+            ? e.message
+            : 'Failed to place order: ${e.toString().replaceAll('Exception:', '').trim()}';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to place order: $e'),
+            content: Text(displayMsg),
             backgroundColor: AppColors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         );
       }
@@ -1191,7 +1199,7 @@ class _CartSummaryState extends State<_CartSummary> {
                                     ? 'Confirm & pay'
                                     : hasStockIssue
                                         ? 'Remove unavailable items'
-                                        : 'Place order · ₹${cart.totalPrice.toInt()}',
+                                        : 'Pay Online · ₹${cart.totalPrice.toInt()}',
                                 style: AppFonts.body(
                                   fontSize: 14.5,
                                   fontWeight: FontWeight.w700,
@@ -1210,7 +1218,7 @@ class _CartSummaryState extends State<_CartSummary> {
 
   Widget _buildPaymentMethodSelector() {
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: AppColors.surface2,
         borderRadius: BorderRadius.circular(12),
@@ -1218,75 +1226,33 @@ class _CartSummaryState extends State<_CartSummary> {
       ),
       child: Row(
         children: [
+          const Text('💳', style: TextStyle(fontSize: 18)),
+          const SizedBox(width: 10),
           Expanded(
-            child: GestureDetector(
-              onTap: () {
-                HapticFeedback.selectionClick();
-                setState(() => _selectedPaymentMethod = 'online');
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: _selectedPaymentMethod == 'online' ? Colors.white : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: _selectedPaymentMethod == 'online' ? AppColors.red : Colors.transparent,
-                    width: 1.5,
-                  ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Instant Online Payment',
+                  style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.ink),
                 ),
-                alignment: Alignment.center,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Text('💳 ', style: TextStyle(fontSize: 13)),
-                    Text(
-                      'Pay Online',
-                      style: AppFonts.body(
-                        fontSize: 12,
-                        fontWeight: _selectedPaymentMethod == 'online' ? FontWeight.w700 : FontWeight.w500,
-                        color: _selectedPaymentMethod == 'online' ? AppColors.red : AppColors.inkSoft,
-                      ),
-                    ),
-                  ],
+                Text(
+                  'UPI (GPay / PhonePe / Paytm) & Cards',
+                  style: AppFonts.mono(fontSize: 11, color: AppColors.inkSoft),
                 ),
-              ),
+              ],
             ),
           ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: GestureDetector(
-              onTap: () {
-                HapticFeedback.selectionClick();
-                setState(() => _selectedPaymentMethod = 'counter_cash');
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: _selectedPaymentMethod == 'counter_cash' ? Colors.white : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: _selectedPaymentMethod == 'counter_cash' ? AppColors.red : Colors.transparent,
-                    width: 1.5,
-                  ),
-                ),
-                alignment: Alignment.center,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Text('💵 ', style: TextStyle(fontSize: 13)),
-                    Text(
-                      'Pay Cash',
-                      style: AppFonts.body(
-                        fontSize: 12,
-                        fontWeight: _selectedPaymentMethod == 'counter_cash' ? FontWeight.w700 : FontWeight.w500,
-                        color: _selectedPaymentMethod == 'counter_cash' ? AppColors.red : AppColors.inkSoft,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.greenSoft,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              'FAST PICKUP',
+              style: AppFonts.mono(fontSize: 9.5, fontWeight: FontWeight.w700, color: AppColors.greenInk),
             ),
           ),
         ],

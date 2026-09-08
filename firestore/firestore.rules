@@ -80,7 +80,17 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         resource.data.studentId == request.auth.uid || isOperationalStaff()
       );
-      allow write: if false; // All mutations strictly through Cloud Functions
+      // Resilient ordering: allow students to place their own validated online orders directly
+      allow create: if isAuthenticated()
+        && request.resource.data.studentId == request.auth.uid
+        && request.resource.data.paymentMethod == 'online'
+        && request.resource.data.totalAmount is number && request.resource.data.totalAmount > 0;
+      // Allow students to update payment status of their own order upon gateway payment success
+      allow update: if (isAuthenticated() && resource.data.studentId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentStatus', 'status', 'gatewayPaymentId', 'gatewayOrderId', 'gatewaySignature', 'paidAt', 'updatedAt'])
+        && request.resource.data.paymentStatus in ['paid', 'pending', 'failed'])
+        || isOperationalStaff();
+      allow delete: if isOperationalStaff();
     }
 
     // ─── Cryptographic Order Secrets (Isolated from Client/Staff Reads) ──

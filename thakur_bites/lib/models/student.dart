@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'user_profile.dart';
 
 /// Thakur Bites — Student Model
 /// Maps to the `students` Firestore collection.
@@ -31,11 +32,17 @@ class Student {
 
   /// Short initials for avatar badge (e.g. "AB" for "Aditya Bodake")
   String get initials {
-    final parts = name.trim().split(RegExp(r'\s+'));
+    final parts = cleanDisplayName.trim().split(RegExp(r'\s+'));
     if (parts.isEmpty || parts.first.isEmpty) return 'TB';
     if (parts.length == 1) return parts.first[0].toUpperCase();
     return (parts.first[0] + parts.last[0]).toUpperCase();
   }
+
+  /// Display name getter for compatibility
+  String get displayName => name;
+
+  /// Clean display name suitable for UI header
+  String get cleanDisplayName => UserProfile.cleanName(name);
 
   factory Student.fromFirestore(String docId, Map<String, dynamic> data) {
     return Student(

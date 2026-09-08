@@ -98,8 +98,17 @@ class MenuItem {
   bool get isCooked => type == 'cooked';
   bool get isInstant => type == 'instant';
 
-  /// An item is truly in-stock if available == true AND !isArchived AND (if instant) availableStock > 0
-  bool get isInStock => available && !isArchived && (!isInstant || availableStock > 0);
+  /// Defensive validity invariant:
+  /// Reject unnamed products, zero/negative pricing, and missing identifiers.
+  bool get isValid =>
+      id.trim().isNotEmpty &&
+      name.trim().isNotEmpty &&
+      price > 0 &&
+      !price.isNaN &&
+      !price.isInfinite;
+
+  /// An item is truly in-stock if available == true AND !isArchived AND isValid AND (if instant) availableStock > 0
+  bool get isInStock => isValid && available && !isArchived && (!isInstant || availableStock > 0);
 
   /// Availability level for student-facing UI (never shows exact counts)
   AvailabilityLevel get availabilityLevel {
@@ -111,6 +120,7 @@ class MenuItem {
   /// Student-facing badge text — NEVER shows exact stock numbers.
   /// 🟢 Available / 🟡 Few left / 🔴 Sold out
   String get badgeText {
+    if (!isValid) return 'Unavailable';
     if (isCooked) {
       if (!available) return 'Sold out';
       return '~$prepMinutes min';
@@ -126,7 +136,11 @@ class MenuItem {
   }
 
   factory MenuItem.fromFirestore(String docId, Map<String, dynamic> data) {
-    final isAvail = data['available'] ?? true;
+    final rawName = (data['name'] as String?)?.trim() ?? '';
+    final rawPrice = (data['price'] as num?)?.toDouble() ?? 0.0;
+    final isDefensivelyValid = docId.trim().isNotEmpty && rawName.isNotEmpty && rawPrice > 0;
+
+    final isAvail = (data['available'] ?? true) && isDefensivelyValid;
     final availabilityStatus = data['availabilityStatus'] as String?;
     final isExplicitlySoldOut = availabilityStatus == 'OUT_OF_STOCK' || data['isOrderable'] == false;
     final type = data['type'] ?? 'instant';
@@ -141,7 +155,7 @@ class MenuItem {
     final reservedStock = rawReserved.toInt().clamp(0, 999999);
     final effectiveAvailable = type == 'cooked' ? 100 : (stockOnHand - reservedStock).clamp(0, 999999);
 
-    final finalAvailable = !isArchived && isAvail && !isExplicitlySoldOut && (type != 'instant' || effectiveAvailable > 0);
+    final finalAvailable = isDefensivelyValid && !isArchived && isAvail && !isExplicitlySoldOut && (type != 'instant' || effectiveAvailable > 0);
 
     final category = data['category'] ?? '';
     final parentCategory = data['parentCategory'] as String?;

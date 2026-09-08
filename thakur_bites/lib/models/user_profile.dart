@@ -170,8 +170,68 @@ class UserProfile {
     return (parts.first[0] + parts.last[0]).toUpperCase();
   }
 
+  /// Cleans and formats raw display names (strips college roll/branch prefixes,
+  /// deduplicates repeated words, and standardizes casing).
+  static String cleanName(String raw) {
+    if (raw.trim().isEmpty) return 'Customer';
+    var text = raw.trim();
+
+    // 1. If email address was used as name, format username nicely
+    if (text.contains('@')) {
+      final username = text.split('@').first;
+      if (username.startsWith('student_')) return 'TCET Student';
+      text = username.replaceAll(RegExp(r'[._]'), ' ');
+    }
+
+    // 2. Strip leading institutional prefixes like "17_CSE_CS_A_", "17_CSE_", "17_"
+    if (text.contains('_')) {
+      final parts = text.split('_');
+      final nameParts = parts.where((p) {
+        final cleanP = p.trim();
+        if (cleanP.isEmpty) return false;
+        final upper = cleanP.toUpperCase();
+        if (RegExp(r'^\d+$').hasMatch(cleanP)) return false;
+        if (RegExp(r'^[A-Z]$').hasMatch(cleanP)) return false;
+        if (const {'CSE', 'IT', 'CMPN', 'INFT', 'EXTC', 'ETRX', 'AIDS', 'AIML', 'IOT', 'CIVIL', 'MECH', 'MCA', 'CS'}.contains(upper)) return false;
+        return true;
+      }).toList();
+
+      if (nameParts.isNotEmpty) {
+        text = nameParts.join(' ');
+      }
+    }
+
+    // 3. Strip leading roll numbers (e.g. "13 Namdev Bhoge...")
+    text = text.replaceFirst(RegExp(r'^\d+[\s_-]+'), '');
+
+    // 4. Strip trailing branch/department tokens if appended (e.g. "...CSE cs", "...CMPN")
+    text = text.replaceAll(RegExp(r'\b(CSE|IT|CMPN|INFT|EXTC|ETRX|AIDS|AIML|IOT|CIVIL|MECH|MCA|CS)\b', caseSensitive: false), '').trim();
+
+    // 5. Deduplicate repeated consecutive words (e.g. "Bodake Bodake" -> "Bodake")
+    final words = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    final deduped = <String>[];
+    for (final w in words) {
+      if (deduped.isEmpty || deduped.last.toLowerCase() != w.toLowerCase()) {
+        deduped.add(w);
+      }
+    }
+
+    if (deduped.isEmpty) return 'Customer';
+
+    // 6. Title case each word
+    final cleaned = deduped.map((w) {
+      if (w.length <= 1) return w.toUpperCase();
+      return w[0].toUpperCase() + w.substring(1).toLowerCase();
+    }).join(' ');
+
+    return cleaned.trim().isNotEmpty ? cleaned.trim() : 'Customer';
+  }
+
+  /// Clean display name suitable for UI presentation
+  String get cleanDisplayName => cleanName(displayName);
+
   /// Backward-compatibility getter for displayName
-  String get name => displayName;
+  String get name => cleanDisplayName;
 
   /// Safe display roll number / identifier
   String get safeRollNo => (rollNo != null && rollNo!.isNotEmpty) ? rollNo! : accountType.label;

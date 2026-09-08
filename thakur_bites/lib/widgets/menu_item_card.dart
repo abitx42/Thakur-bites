@@ -19,6 +19,9 @@ class MenuItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!item.isValid) {
+      return const SizedBox.shrink();
+    }
     final isCooked = item.isCooked;
     final inStock = item.isInStock;
     final level = item.availabilityLevel;

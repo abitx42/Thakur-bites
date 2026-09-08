@@ -1111,7 +1111,7 @@ class _MenuScreenState extends State<MenuScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                student.displayName,
+                                student.cleanDisplayName,
                                 style: AppFonts.body(
                                   fontSize: 17,
                                   fontWeight: FontWeight.w700,
@@ -1170,7 +1170,7 @@ class _MenuScreenState extends State<MenuScreen> {
                         Expanded(
                           child: _buildProfileMetaItem(
                             label: 'ROLL NO',
-                            value: (student.rollNo != null && student.rollNo!.isNotEmpty) ? student.rollNo! : 'Not set',
+                            value: (student.rollNo != null && student.rollNo!.isNotEmpty) ? student.rollNo! : '—',
                             icon: Icons.badge_outlined,
                           ),
                         ),
@@ -1178,7 +1178,7 @@ class _MenuScreenState extends State<MenuScreen> {
                         Expanded(
                           child: _buildProfileMetaItem(
                             label: 'DEPT',
-                            value: (student.department != null && student.department!.isNotEmpty) ? student.department! : 'Not set',
+                            value: (student.department != null && student.department!.isNotEmpty) ? student.department! : '—',
                             icon: Icons.school_outlined,
                           ),
                         ),
@@ -1186,7 +1186,7 @@ class _MenuScreenState extends State<MenuScreen> {
                         Expanded(
                           child: _buildProfileMetaItem(
                             label: 'PHONE',
-                            value: (student.phone != null && student.phone!.isNotEmpty) ? student.phone! : 'Not set',
+                            value: (student.phone != null && student.phone!.isNotEmpty) ? student.phone! : '—',
                             icon: Icons.phone_outlined,
                           ),
                         ),
@@ -1445,29 +1445,10 @@ class _MenuScreenState extends State<MenuScreen> {
     final student = auth.currentProfile;
     if (student == null) return;
 
-    final nameController = TextEditingController(text: student.displayName);
+    final nameController = TextEditingController(text: student.cleanDisplayName);
     final rollController = TextEditingController(text: student.rollNo ?? '');
+    final deptController = TextEditingController(text: student.department ?? '');
     final phoneController = TextEditingController(text: student.phone ?? '');
-    String selectedDept = (student.department != null && student.department!.isNotEmpty)
-        ? student.department!
-        : 'CMPN';
-
-    final departments = [
-      'CMPN',
-      'INFT',
-      'EXTC',
-      'ETRX',
-      'AIDS',
-      'AIML',
-      'IOT',
-      'CIVIL',
-      'MECH',
-      'MCA',
-      'OTHER',
-    ];
-    if (!departments.contains(selectedDept)) {
-      departments.insert(0, selectedDept);
-    }
 
     final formKey = GlobalKey<FormState>();
     bool isSaving = false;
@@ -1589,11 +1570,14 @@ class _MenuScreenState extends State<MenuScreen> {
                     ),
                     const SizedBox(height: 12),
 
-                    // Department Dropdown
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedDept,
+                    // Department Text Input (Manual, no dropdown)
+                    TextFormField(
+                      controller: deptController,
+                      maxLength: 50,
+                      textCapitalization: TextCapitalization.words,
                       decoration: InputDecoration(
-                        labelText: 'Department',
+                        labelText: 'Department (e.g. CSE, IT, EXTC)',
+                        counterText: '',
                         labelStyle: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
                         prefixIcon: const Icon(Icons.school_outlined, size: 20, color: AppColors.inkSoft),
                         filled: true,
@@ -1612,17 +1596,6 @@ class _MenuScreenState extends State<MenuScreen> {
                           borderSide: const BorderSide(color: AppColors.red, width: 1.5),
                         ),
                       ),
-                      items: departments
-                          .map((dept) => DropdownMenuItem(
-                                value: dept,
-                                child: Text(dept, style: AppFonts.body(fontSize: 14)),
-                              ))
-                          .toList(),
-                      onChanged: (val) {
-                        if (val != null) {
-                          setSheetState(() => selectedDept = val);
-                        }
-                      },
                     ),
                     const SizedBox(height: 12),
 
@@ -1666,7 +1639,7 @@ class _MenuScreenState extends State<MenuScreen> {
                                 await auth.updateProfileFields(
                                   displayName: nameController.text.trim(),
                                   rollNo: rollController.text.trim().toUpperCase(),
-                                  department: selectedDept,
+                                  department: deptController.text.trim(),
                                   phone: phoneController.text.trim(),
                                 );
 

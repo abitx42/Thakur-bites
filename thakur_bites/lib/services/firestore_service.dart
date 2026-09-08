@@ -27,6 +27,7 @@ class FirestoreService {
         .map(
           (snapshot) => snapshot.docs
               .map((doc) => MenuItem.fromFirestore(doc.id, doc.data()))
+              .where((item) => item.isValid)
               .toList(),
         );
   }
@@ -38,6 +39,7 @@ class FirestoreService {
     return _cachedAllMenuItemsStream ??= _menuItems.snapshots().map(
       (snapshot) => snapshot.docs
           .map((doc) => MenuItem.fromFirestore(doc.id, doc.data()))
+          .where((item) => item.isValid)
           .toList(),
     ).asBroadcastStream();
   }
