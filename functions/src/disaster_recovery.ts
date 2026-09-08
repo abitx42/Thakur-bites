@@ -484,62 +484,69 @@ export const adminRestoreOperationalMode = onCall<{
       // the race where two admins approve the same request concurrently
       const requestDocRef = db.collection('recoveryApprovalRequests').doc(recoveryRequestId);
 
-      const txnResult = await db.runTransaction(async (transaction) => {
-        const requestSnap = await transaction.get(requestDocRef);
+      let txnResult: { requestedBy: string };
+      try {
+        txnResult = await db.runTransaction(async (transaction) => {
+          const requestSnap = await transaction.get(requestDocRef);
 
-        if (!requestSnap.exists) {
-          throw new HttpsError(
-            'not-found',
-            `Recovery approval request ${recoveryRequestId} not found.`
-          );
-        }
+          if (!requestSnap.exists) {
+            throw new HttpsError(
+              'not-found',
+              `Recovery approval request ${recoveryRequestId} not found.`
+            );
+          }
 
-        const requestData = requestSnap.data() as RecoveryApprovalRequest;
+          const requestData = requestSnap.data() as RecoveryApprovalRequest;
 
-        // Verify request is still pending
-        if (requestData.status !== 'PENDING_APPROVAL') {
-          throw new HttpsError(
-            'failed-precondition',
-            `Recovery request ${recoveryRequestId} is no longer pending (current status: ${requestData.status}).`
-          );
-        }
+          // Verify request is still pending
+          if (requestData.status !== 'PENDING_APPROVAL') {
+            throw new HttpsError(
+              'failed-precondition',
+              `Recovery request ${recoveryRequestId} is no longer pending (current status: ${requestData.status}).`
+            );
+          }
 
-        // Verify request has not expired
-        const txnNow = Timestamp.now();
-        if (txnNow.toMillis() > requestData.expiresAt.toMillis()) {
-          transaction.update(requestDocRef, { status: 'EXPIRED' });
-          throw new HttpsError(
-            'failed-precondition',
-            `Recovery request ${recoveryRequestId} has expired.`
-          );
-        }
+          // Verify request has not expired
+          const txnNow = Timestamp.now();
+          if (txnNow.toMillis() > requestData.expiresAt.toMillis()) {
+            throw new HttpsError(
+              'failed-precondition',
+              `Recovery request ${recoveryRequestId} has expired.`
+            );
+          }
 
-        // CRITICAL: Verify approver is a DIFFERENT person than the requester
-        // The requestedBy field was SERVER-SET when the request was created — not client input
-        if (requestData.requestedBy === approvingAdminUid) {
-          throw new HttpsError(
-            'failed-precondition',
-            'Four-eyes principle violated: The approving administrator must be a different person than the requesting administrator. You cannot approve your own recovery request.'
-          );
-        }
+          // CRITICAL: Verify approver is a DIFFERENT person than the requester
+          // The requestedBy field was SERVER-SET when the request was created — not client input
+          if (requestData.requestedBy === approvingAdminUid) {
+            throw new HttpsError(
+              'failed-precondition',
+              'Four-eyes principle violated: The approving administrator must be a different person than the requesting administrator. You cannot approve your own recovery request.'
+            );
+          }
 
-        // Verify the target mode matches
-        if (requestData.targetMode !== targetMode) {
-          throw new HttpsError(
-            'invalid-argument',
-            `Target mode mismatch: request specifies ${requestData.targetMode}, but ${targetMode} was provided.`
-          );
-        }
+          // Verify the target mode matches
+          if (requestData.targetMode !== targetMode) {
+            throw new HttpsError(
+              'invalid-argument',
+              `Target mode mismatch: request specifies ${requestData.targetMode}, but ${targetMode} was provided.`
+            );
+          }
 
-        // All checks pass — atomically approve within the transaction
-        transaction.update(requestDocRef, {
-          status: 'APPROVED',
-          approvedBy: approvingAdminUid,
-          approvedAt: Timestamp.now(),
+          // All checks pass — atomically approve within the transaction
+          transaction.update(requestDocRef, {
+            status: 'APPROVED',
+            approvedBy: approvingAdminUid,
+            approvedAt: Timestamp.now(),
+          });
+
+          return { requestedBy: requestData.requestedBy };
         });
-
-        return { requestedBy: requestData.requestedBy };
-      });
+      } catch (err: any) {
+        if (err.message?.includes('has expired')) {
+          await requestDocRef.update({ status: 'EXPIRED' }).catch(() => {});
+        }
+        throw err;
+      }
 
       fourEyesApproved = true;
       requestedByUid = txnResult.requestedBy;

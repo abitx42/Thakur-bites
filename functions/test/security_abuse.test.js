@@ -5076,8 +5076,16 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
 
     const gitDir = path.resolve(__dirname, '../../.git');
     if (fs.existsSync(gitDir)) {
+      let isShallow = false;
+      try {
+        isShallow = execSync('git rev-parse --is-shallow-repository', { encoding: 'utf8' }).trim() === 'true';
+      } catch (e) {}
       const totalCommits = parseInt(execSync('git rev-list --count --all', { encoding: 'utf8' }).trim(), 10);
-      assert.ok(totalCommits >= 169, `Must scan all commits in repository history (found ${totalCommits})`);
+      if (!isShallow) {
+        assert.ok(totalCommits >= 169, `Must scan all commits in repository history (found ${totalCommits})`);
+      } else {
+        assert.ok(totalCommits >= 1, `Must scan commits in repository history (shallow clone found ${totalCommits})`);
+      }
     } else {
       // Standalone release archive without .git directory
       const rootDir = path.resolve(__dirname, '../..');

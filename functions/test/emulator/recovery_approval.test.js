@@ -179,13 +179,15 @@ describe('Real Firebase Emulator — Recovery Approval Transaction Tests', () =>
         const data = snap.data();
         const now = Date.now();
         if (now > data.expiresAt.toMillis()) {
-          transaction.update(requestDocRef, { status: 'EXPIRED' });
           throw new Error('REQUEST_EXPIRED');
         }
         transaction.update(requestDocRef, { status: 'APPROVED', approvedBy: 'admin_bob' });
       });
     } catch (err) {
       rejected = err.message.includes('REQUEST_EXPIRED');
+      if (rejected) {
+        await requestDocRef.update({ status: 'EXPIRED' });
+      }
     }
 
     assert.ok(rejected, 'Expired request must be rejected');

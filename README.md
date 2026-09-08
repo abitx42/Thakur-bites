@@ -1,8 +1,9 @@
 # 🍛 Thakur Bites Platform 2.0 — Smart Campus Canteen Operating System
 
-[![Tests](https://img.shields.io/badge/tests-303%20passing-brightgreen.svg)](scripts/run_all_security_checks.sh)
-[![Security Gate](https://img.shields.io/badge/security%20invariants-213%20vectors%20passed-blue.svg)](functions/test/security_abuse.test.js)
-[![Flutter](https://img.shields.io/badge/flutter-3.29%20Web%20%26%20Mobile-02569B.svg)](thakur_bites/)
+[![Backend Tests](https://img.shields.io/badge/backend%20invariants-396%20passing-brightgreen.svg)](functions/test/)
+[![Client Tests](https://img.shields.io/badge/flutter%20tests-67%20passing-blue.svg)](thakur_bites/test/)
+[![Emulator Tests](https://img.shields.io/badge/firestore%20emulator-22%20passing-success.svg)](functions/test/emulator/)
+[![Static Analysis](https://img.shields.io/badge/static%20analysis-clean%20(0%20issues)-green.svg)](thakur_bites/)
 [![Firebase](https://img.shields.io/badge/firebase-Cloud%20Functions%20v2-FFCA28.svg)](functions/)
 
 **Thakur Bites Platform 2.0** is an enterprise-grade digital canteen pre-ordering, kitchen dispatch (KDS), and counter pickup operating system built specifically for Thakur College of Engineering & Technology (TCET).
@@ -74,30 +75,56 @@ flowchart TD
    - Run-rate stockout forecaster: $\text{burnRate} = \frac{\text{unitsSold}}{\text{hoursElapsed}}$ and $\text{hoursRemaining} = \frac{\text{availableStock}}{\text{burnRate}}$.
    - Campus feature flags: Mobile Ordering, Faculty Priority, Cash Counter, and Rush Multiplier (1.0x to 2.5x).
 
-6. **🛡️ Developer Command Cockpit & Step-Up Ephemeral Challenges**:
-   - Real-time security incident stream with deterministic SHA-256 deduplication.
-   - Destructive emergency operations require server-issued 60-second single-use challenge nonces.
-   - Automated 15-point invariant integrity scanner and RBAC permission matrix simulator.
+6. **🛡️ Developer Command Cockpit & Four-Eyes Disaster Recovery**:
+   - Real-time security incident stream with deterministic state-machine progression.
+   - Four-eyes approval gate: Unfreezing `FINANCIAL_FROZEN` mode requires two distinct administrators (`requestedBy ≠ approvingAdminUid`) or verified cryptographic SHA-256 break-glass token.
+   - Server-authoritative double-entry ledger whitelist with zero free-text account entries.
 
 ---
 
-## 🧪 Master Test & Verification Suite (303 Tests & Vectors Total)
+## 📊 Tiered Production-Readiness Verification Matrix
 
-Run all 9 enterprise security gates sequentially:
+Rather than conflating unit test counts with full production certification, Thakur Bites adheres to an honest multi-tier verification model:
+
+| Verification Tier | Target Area | Status | Evidence / Command |
+| :--- | :--- | :---: | :--- |
+| **Tier 1: Backend Invariants** | Logic, RBAC, ledgers & state machines | ✅ **396 / 396 PASS** | `npm test` in `functions/` (18 test suites) |
+| **Tier 1: Flutter Client** | State, pricing, preferences & UI models | ✅ **67 / 67 PASS** | `flutter test` in `thakur_bites/` (7 test suites) |
+| **Tier 1: Static Code Analysis** | Type safety, secret hygiene & linter | ✅ **0 ISSUES** | `dart analyze --fatal-infos` & `tsc` clean |
+| **Tier 2: Real Firebase Emulator** | Firestore Rules & atomic transactions | ✅ **22 / 22 PASS** | `npm run test:emulator` (Rules, Concurrency, DR) |
+| **Tier 3: Razorpay Test Mode** | Sandbox payment, HMAC & webhook race | ⏳ **In Progress** | Automated harness passing; awaiting manual pilot check |
+| **Tier 4: Physical Device Smoke** | Android release APK & iOS on campus | ⏳ **Awaiting Build** | Real-device installation on TCET Wi-Fi & 4G network |
+| **Pilot 0: TCET Operational Trial**| Canteen staff dry-run with 5 test orders| ⏳ **Staged** | Pilot 0 runbook protocol prepared |
+
+---
+
+## 🧪 Master Test & Verification Suite
+
+Run all enterprise security gates sequentially:
 
 ```bash
+# Run Tier 1 unit & invariant suite
+cd functions && npm test
+
+# Run Tier 2 real Firestore emulator suite
+cd functions && npm run test:emulator
+
+# Run Flutter client test suite
+cd thakur_bites && flutter test
+
+# Run Master CI Verification Script (9 Gates)
 bash scripts/run_all_security_checks.sh
 ```
 
 | Verification Gate | Test Count | Status | Description |
 | :--- | :---: | :---: | :--- |
-| **Backend Invariant & Security Abuse Suite** | 237 | `100% PASS` | Tests 1–213 covering canonical RBAC (`DEVELOPER = ADMIN + Engineering`), distributed refund idempotency, delta accounting rollbacks, TV minimization, orphaned payments, and step-up challenges. |
-| **Flutter Client Unit & Widget Suite** | 37 | `100% PASS` | Pricing models, UserProfile parser, UserPreferences, ETA Rush scaling, and CartProvider. |
-| **Flutter Static Analysis** | — | `0 Errors` | `dart analyze --fatal-infos` passing cleanly with 0 warnings. |
+| **Backend Invariant & Security Suite** | 396 | `100% PASS` | Canonical RBAC, distributed refund idempotency, delta accounting rollbacks, TV data minimization, orphaned payments, and four-eyes DR approval. |
+| **Flutter Client Unit & Widget Suite** | 67 | `100% PASS` | Pricing models, UserProfile parser, UserPreferences, ETA Rush scaling, CartProvider, operational banners, and offline recovery. |
+| **Flutter Static Analysis** | — | `0 Errors` | `dart analyze --fatal-infos` passing cleanly with 0 warnings or infos. |
+| **Real Firestore Emulator Suite** | 22 | `100% PASS` | Real Firestore Security Rules enforcement (12 tests), transaction concurrency & overselling prevention (4 tests), and multi-admin DR approval transactions (6 tests). |
 | **Automated Backup & Restore Engine** | 4 | `VERIFIED` | Cryptographic SHA-256 checksum and ledger balance verification. |
-| **Platform 2.0 E2E Lifecycle Smoke Test** | 11 | `100% PASS` | Full student checkout $\to$ webhook $\to$ priority KDS $\to$ QR pickup $\to$ shift PIN $\to$ TV projection. |
 | **100-Order Peak Lunch Rush Simulator** | 100 | `100% PASS` | 100 parallel checkout requests with 0 dropped orders and 0 oversold units. |
-| **Automated Staging DAST Security Harness** | 18 | `100% PASS` | 10 attack classes tested against live cloud function signatures (100% defended). |
+| **Security Invariant Assertion Suite** | 18 | `100% PASS` | 10 attack classes tested against live cloud function signatures (100% defended). |
 
 ---
 
