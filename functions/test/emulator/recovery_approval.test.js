@@ -32,18 +32,15 @@ let db;
 describe('Real Firebase Emulator — Recovery Approval Transaction Tests', () => {
 
   before(async () => {
-    process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
-
-    if (admin.apps.length === 0) {
-      app = admin.initializeApp({ projectId: PROJECT_ID });
-    } else {
-      app = admin.apps[0];
-    }
-    db = admin.firestore();
+    process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
+    app = admin.apps.find(a => a.name === 'recovery_app') || admin.initializeApp({ projectId: PROJECT_ID }, 'recovery_app');
+    db = admin.firestore(app);
   });
 
   after(async () => {
-    delete process.env.FIRESTORE_EMULATOR_HOST;
+    if (app) {
+      await app.delete().catch(() => {});
+    }
   });
 
   // ─── Two-Admin Approval: Transaction Race ────────────────────

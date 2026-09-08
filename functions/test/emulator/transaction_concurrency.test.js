@@ -29,18 +29,15 @@ describe('Real Firebase Emulator — Transaction Concurrency Tests (Real Functio
 
   before(async () => {
     // Connect to the real Firestore emulator
-    process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
-
-    if (admin.apps.length === 0) {
-      app = admin.initializeApp({ projectId: PROJECT_ID });
-    } else {
-      app = admin.apps[0];
-    }
-    db = admin.firestore();
+    process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
+    app = admin.apps.find(a => a.name === 'concurrency_app') || admin.initializeApp({ projectId: PROJECT_ID }, 'concurrency_app');
+    db = admin.firestore(app);
   });
 
   after(async () => {
-    delete process.env.FIRESTORE_EMULATOR_HOST;
+    if (app) {
+      await app.delete().catch(() => {});
+    }
   });
 
   // ─── Scenario A: Last-Item Race (Real reserveInventoryInTransaction) ───
