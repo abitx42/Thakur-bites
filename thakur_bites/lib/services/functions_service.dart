@@ -68,8 +68,11 @@ class FunctionsService {
     final callable = _getCallable('verifyPayment');
     final result = await callable.call({
       'orderId': orderId,
-      'razorpayPaymentId': razorpayPaymentId,
+      'gatewayOrderId': razorpayOrderId,
+      'gatewayPaymentId': razorpayPaymentId,
+      'gatewaySignature': razorpaySignature,
       'razorpayOrderId': razorpayOrderId,
+      'razorpayPaymentId': razorpayPaymentId,
       'razorpaySignature': razorpaySignature,
       'appVersion': _appVersion,
     });

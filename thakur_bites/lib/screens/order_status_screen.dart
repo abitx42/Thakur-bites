@@ -4,9 +4,11 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/order.dart' as app;
 import '../models/menu_item.dart';
+import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
 import '../services/firestore_service.dart';
 import '../services/functions_service.dart';
+import '../services/payment_service.dart';
 import '../services/eta_service.dart';
 import '../theme/app_theme.dart';
 import 'cart_screen.dart';
@@ -31,10 +33,12 @@ class OrderStatusScreen extends StatefulWidget {
 
 class _OrderStatusScreenState extends State<OrderStatusScreen> {
   final FunctionsService _functions = FunctionsService();
+  late final Stream<app.Order?> _orderStream;
   Timer? _countdownTimer;
 
   bool _isCancelling = false;
   bool _isReconciling = false;
+  bool _isPaying = false;
 
   int _selectedStars = 5;
   final Set<String> _selectedFeedbackTags = {'🔥 Crispy & Fresh', '⚡️ Fast Service'};
@@ -50,6 +54,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   @override
   void initState() {
     super.initState();
+    // Cache stream once so 1-second countdown timer rebuilds do NOT reconnect to Firestore every second
+    _orderStream = FirestoreService().orderStream(widget.orderId);
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -63,8 +69,6 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final firestore = FirestoreService();
-
     return Scaffold(
       backgroundColor: AppColors.surface,
       body: SafeArea(
@@ -103,7 +107,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
             // Body — stream builder
             Expanded(
               child: StreamBuilder<app.Order?>(
-                stream: firestore.orderStream(widget.orderId),
+                stream: _orderStream,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(
@@ -481,7 +485,34 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
           ),
           const SizedBox(height: 14),
 
-          // Action Buttons: Reconcile Payment + Cancel Order
+          // Action Buttons: Pay Now (for online orders) + Reconcile + Cancel
+          if (order.isOnlinePayment && !isExpired) ...[
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isPaying ? null : () => _handlePayNow(order),
+                icon: _isPaying
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.payment_rounded, size: 18),
+                label: Text(
+                  _isPaying ? 'Processing Payment...' : 'Pay Now · ₹${order.totalAmount.toInt()}',
+                  style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w700),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+
           Row(
             children: [
               Expanded(
@@ -938,25 +969,63 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     }
   }
 
+  Future<void> _handlePayNow(app.Order order) async {
+    if (_isPaying) return;
+    setState(() => _isPaying = true);
+    final auth = context.read<AuthProvider>();
+    final student = auth.currentStudent;
+    try {
+      final paymentService = PaymentService();
+      final result = await paymentService.initiateOnlinePayment(
+        orderId: order.id,
+        totalAmountRs: order.totalAmount,
+        studentName: student?.displayName ?? order.studentName ?? 'Student',
+        studentEmail: student?.email ?? 'student@tcetmumbai.in',
+      );
+      if (mounted) {
+        if (result.isSuccess) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Payment verified! Order confirmed.'),
+              backgroundColor: AppColors.green,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Payment error: ${e.toString().replaceAll('PaymentException:', '').replaceAll('Exception:', '').trim()}'),
+            backgroundColor: AppColors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isPaying = false);
+    }
+  }
+
   Future<void> _handleReconcilePayment(app.Order order) async {
     setState(() => _isReconciling = true);
     try {
       final res = await _functions.reconcileOrderPayment(orderId: order.id);
-      final reconciled = res['reconciled'] == true;
-      final status = res['status'] as String?;
+      final isReconciled = res['isReconciled'] == true || res['reconciled'] == true;
+      final paymentStatus = res['paymentStatus'] as String? ?? res['orderStatus'] as String? ?? res['status'] as String? ?? 'pending';
+      final message = res['message'] as String? ?? 'Payment status checked.';
 
       if (mounted) {
-        if (reconciled) {
+        if (isReconciled) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ Payment verified authoritatively! Order confirmed.'),
-              backgroundColor: Color(0xFF16A34A),
+            SnackBar(
+              content: Text('✅ $message'),
+              backgroundColor: const Color(0xFF16A34A),
             ),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Status: $status. If you paid, it will reconcile automatically.'),
+              content: Text('Status: $paymentStatus. If you completed payment, it will reconcile automatically.'),
               backgroundColor: const Color(0xFFD97706),
             ),
           );

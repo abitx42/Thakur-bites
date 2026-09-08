@@ -76,12 +76,19 @@ class CheckoutService {
           throw InsufficientStockException(itemId, itemName, available);
         case 'unavailable':
           final rawMsg = e.message ?? '';
+          final lower = rawMsg.toLowerCase();
+          if (lower.contains('network') ||
+              lower.contains('connection') ||
+              lower.contains('socket') ||
+              lower.contains('offline') ||
+              lower.contains('failed host lookup') ||
+              lower.contains('the service is currently unavailable')) {
+            throw const CheckoutException('Network connection issue. Please check your internet and retry.');
+          }
           if (rawMsg.isNotEmpty) {
             throw CanteenPausedException(rawMsg);
           }
-          throw const CanteenPausedException(
-            'Sorry for the inconvenience! The canteen has temporarily paused accepting online orders. Please visit the counter.',
-          );
+          throw const CheckoutException('Network connection issue. Please check your internet and retry.');
         case 'failed-precondition':
           final rawMsg = e.message ?? '';
           if (rawMsg.toLowerCase().contains('paused') ||

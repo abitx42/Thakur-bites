@@ -145,13 +145,20 @@ class FirestoreService {
         );
   }
 
+  Stream<CanteenOperationalStatus>? _cachedOperationalStatusStream;
+
   /// Real-time stream of public operational status (e.g. NORMAL, DEGRADED, FINANCIAL_FROZEN, EMERGENCY_HALT)
   Stream<CanteenOperationalStatus> operationalStatusStream() {
-    return _db.collection('publicSystemStatus').doc('global').snapshots().map((doc) {
-      if (!doc.exists || doc.data() == null) {
-        return CanteenOperationalStatus.normal();
-      }
-      return CanteenOperationalStatus.fromMap(doc.data()!);
-    });
+    return _cachedOperationalStatusStream ??= _db
+        .collection('publicSystemStatus')
+        .doc('global')
+        .snapshots()
+        .map((doc) {
+          if (!doc.exists || doc.data() == null) {
+            return CanteenOperationalStatus.normal();
+          }
+          return CanteenOperationalStatus.fromMap(doc.data()!);
+        })
+        .asBroadcastStream();
   }
 }

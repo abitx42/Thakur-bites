@@ -68,9 +68,12 @@ class PaymentService {
     try {
       // Step 1: Create a Razorpay order on the server
       final sessionData = await _functions.createPaymentSession(orderId: orderId);
-      final razorpayOrderId = sessionData['razorpayOrderId'] as String;
-      final amountPaise = sessionData['amount'] as int;
-      final keyId = sessionData['keyId'] as String;
+      final razorpayOrderId = (sessionData['gatewayOrderId'] ?? sessionData['razorpayOrderId']) as String;
+      final amountPaise = (sessionData['amountPaise'] as num?)?.toInt() ??
+          ((sessionData['amount'] as num?) != null
+              ? ((sessionData['amount'] as num) * 100).round()
+              : (totalAmountRs * 100).round());
+      final keyId = (sessionData['keyId'] as String?) ?? 'rzp_test_tcet_canteen';
 
       // Step 2: Launch Razorpay SDK and collect payment confirmation
       final paymentDetails = await _launchRazorpayCheckout(

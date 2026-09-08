@@ -122,6 +122,7 @@ class _MenuScreenState extends State<MenuScreen> {
     return Column(
       children: [
         _buildHeader(),
+        _buildActiveOrderSection(),
         StreamBuilder<CanteenOperationalStatus>(
           stream: _firestore.operationalStatusStream(),
           builder: (context, snapshot) {
@@ -821,9 +822,57 @@ class _MenuScreenState extends State<MenuScreen> {
 
   Widget _buildOrdersTab() {
     final student = context.watch<AuthProvider>().currentStudent;
-    final stream = student != null
-        ? _firestore.studentOrdersStream(student.uid)
-        : _firestore.ordersStream();
+    if (student == null) {
+      return Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: AppColors.line, width: 1)),
+            ),
+            child: Row(
+              children: [
+                Text('Your orders', style: AppFonts.display(fontSize: 22)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.lock_outline_rounded, size: 56, color: AppColors.inkSoft.withAlpha(120)),
+                    const SizedBox(height: 16),
+                    Text('Sign In to View Orders', style: AppFonts.display(fontSize: 18)),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Please sign in with your Google account to view your past orders, active tickets, and receipts.',
+                      style: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    ElevatedButton(
+                      onPressed: () => LoginSheet.show(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.red,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      ),
+                      child: const Text('Sign In Now'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final stream = _firestore.studentOrdersStream(student.uid);
 
     return Column(
       children: [
@@ -837,18 +886,17 @@ class _MenuScreenState extends State<MenuScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('Your orders', style: AppFonts.display(fontSize: 22)),
-              if (student != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface2,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    student.safeRollNo,
-                    style: AppFonts.mono(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.inkSoft),
-                  ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.surface2,
+                  borderRadius: BorderRadius.circular(999),
                 ),
+                child: Text(
+                  student.safeRollNo,
+                  style: AppFonts.mono(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.inkSoft),
+                ),
+              ),
             ],
           ),
         ),
@@ -1826,6 +1874,30 @@ class _MenuScreenState extends State<MenuScreen> {
       ),
     );
   }
+
+  Widget _buildActiveOrderSection() {
+    final student = context.watch<AuthProvider>().currentStudent;
+    if (student == null) {
+      return const SizedBox.shrink();
+    }
+
+    return StreamBuilder<List<app.Order>>(
+      stream: _firestore.studentOrdersStream(student.uid),
+      builder: (context, snapshot) {
+        final orders = snapshot.data ?? [];
+        if (orders.isEmpty) return const SizedBox.shrink();
+
+        // Find the most recent active order that is not collected or cancelled
+        final activeOrder = orders.where((o) {
+          return !o.isCollected && o.status != 'cancelled';
+        }).firstOrNull;
+
+        if (activeOrder == null) return const SizedBox.shrink();
+
+        return _ActiveOrderBanner(order: activeOrder);
+      },
+    );
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2181,5 +2253,134 @@ class _OrderCard extends StatelessWidget {
     final m = dt.minute.toString().padLeft(2, '0');
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
     return '$h:$m $ampm';
+  }
+}
+
+/// Floating persistent card displayed on MenuScreen showing live status of in-flight orders
+class _ActiveOrderBanner extends StatelessWidget {
+  final app.Order order;
+
+  const _ActiveOrderBanner({required this.order});
+
+  @override
+  Widget build(BuildContext context) {
+    final isReady = order.isReady;
+    final isPaymentPending = order.isPaymentPending;
+    final isPreparing = order.isPreparing;
+
+    final Color bgColor = isReady
+        ? const Color(0xFFDCFCE7)
+        : isPaymentPending
+            ? const Color(0xFFFEF3C7)
+            : const Color(0xFFEFF6FF);
+
+    final Color borderColor = isReady
+        ? const Color(0xFF86EFAC)
+        : isPaymentPending
+            ? const Color(0xFFFCD34D)
+            : const Color(0xFFBFDBFE);
+
+    final Color textColor = isReady
+        ? const Color(0xFF15803D)
+        : isPaymentPending
+            ? const Color(0xFFB45309)
+            : const Color(0xFF1D4ED8);
+
+    final String title = isReady
+        ? '🎉 Token #${order.tokenNumber} is READY!'
+        : isPaymentPending
+            ? '⚠️ Token #${order.tokenNumber} · Payment Pending'
+            : isPreparing
+                ? '🔥 Token #${order.tokenNumber} · Cooking in Kitchen'
+                : '⏳ Token #${order.tokenNumber} · Order Confirmed';
+
+    final String subtitle = isReady
+        ? 'Show Pickup PIN: ${order.pinCode} at counter'
+        : isPaymentPending
+            ? 'Tap to complete payment before timer expires'
+            : 'Estimated: ~${order.estimatedMinutes} mins · Tap to track';
+
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.lightImpact();
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => OrderStatusScreen(orderId: order.id, order: order),
+          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(18, 4, 18, 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: borderColor, width: 1.5),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(color: borderColor, width: 1),
+              ),
+              child: Center(
+                child: Text(
+                  isReady
+                      ? '⚡'
+                      : isPaymentPending
+                          ? '💳'
+                          : '🍳',
+                  style: const TextStyle(fontSize: 18),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: AppFonts.body(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: textColor,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: AppFonts.body(
+                      fontSize: 11.5,
+                      fontWeight: isReady ? FontWeight.w700 : FontWeight.normal,
+                      color: textColor.withAlpha(220),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: textColor,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                isReady ? 'Pickup PIN' : 'Track →',
+                style: AppFonts.body(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

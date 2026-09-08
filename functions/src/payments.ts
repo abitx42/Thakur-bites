@@ -233,6 +233,7 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
   const response: PaymentSessionResponse = {
     orderId,
     gatewayOrderId,
+    razorpayOrderId: gatewayOrderId, // Backward compatibility alias
     amount: totalPaise / 100,
     amountPaise: totalPaise,
     currency,
@@ -258,7 +259,12 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
     throw new HttpsError('unauthenticated', 'Student must be authenticated.');
   }
 
-  const { orderId, gatewayOrderId, gatewayPaymentId, gatewaySignature } = request.data;
+  const rawData = (request.data || {}) as any;
+  const orderId = rawData.orderId;
+  const gatewayOrderId = rawData.gatewayOrderId || rawData.razorpayOrderId;
+  const gatewayPaymentId = rawData.gatewayPaymentId || rawData.razorpayPaymentId;
+  const gatewaySignature = rawData.gatewaySignature || rawData.razorpaySignature;
+
   if (!orderId || !gatewayOrderId || !gatewayPaymentId || !gatewaySignature) {
     throw new HttpsError('invalid-argument', 'All payment verification arguments are required.');
   }

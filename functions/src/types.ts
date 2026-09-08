@@ -141,6 +141,7 @@ export interface PaymentSessionRequest {
 export interface PaymentSessionResponse {
   orderId: string;
   gatewayOrderId: string;
+  razorpayOrderId?: string;
   amount: number;
   amountPaise: number;
   currency: string;

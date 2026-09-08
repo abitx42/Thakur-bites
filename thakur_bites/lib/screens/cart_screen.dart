@@ -2,14 +2,17 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/canteen_operational_status.dart';
 import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
 import '../services/firestore_service.dart';
 import '../services/checkout_service.dart';
+import '../services/payment_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/canteen_status_banner.dart';
 import 'login_sheet.dart';
+import 'order_status_screen.dart';
 import 'ticket_screen.dart';
 
 /// Cart screen — stock is checked ONLY at checkout, not at cart level.
@@ -702,7 +705,51 @@ class _CartSummaryState extends State<_CartSummary> {
         authProvider.incrementOrderCount();
       }
 
-      // 4. Clear cart & show confirmation ticket
+      // Persist active_order_id in SharedPreferences for crash/kill recovery
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('active_order_id', order.id);
+      } catch (_) {}
+
+      // 4. Online Payment vs Counter Cash
+      if (_selectedPaymentMethod == 'online') {
+        try {
+          final paymentService = PaymentService();
+          await paymentService.initiateOnlinePayment(
+            orderId: order.id,
+            totalAmountRs: order.totalAmount,
+            studentName: student?.displayName ?? order.studentName ?? 'Student',
+            studentEmail: student?.email ?? 'student@tcetmumbai.in',
+          );
+        } on PaymentException catch (pe) {
+          // Payment dismissed, declined, or timed out.
+          // DO NOT wipe the cart! Keep items so student can retry or change payment method.
+          setState(() => _isProcessing = false);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(pe.message),
+                backgroundColor: AppColors.red,
+                duration: const Duration(seconds: 5),
+                action: SnackBarAction(
+                  label: 'View Order',
+                  textColor: Colors.white,
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => OrderStatusScreen(order: order),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            );
+          }
+          return;
+        }
+      }
+
+      // 5. Payment verified or Counter Cash selected — clear cart & show ticket
       cart.clear();
 
       if (mounted) {
@@ -738,8 +785,26 @@ class _CartSummaryState extends State<_CartSummary> {
     } catch (e) {
       setState(() => _isProcessing = false);
       final errStr = e.toString().toLowerCase();
-      if (errStr.contains('unavailable') ||
-          errStr.contains('paused') ||
+      // Intercept local network and connectivity dropouts
+      if (errStr.contains('socket') ||
+          errStr.contains('network') ||
+          errStr.contains('failed host lookup') ||
+          errStr.contains('connection refused') ||
+          errStr.contains('connection timed out') ||
+          errStr.contains('clientexception') ||
+          errStr.contains('os error')) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('⚠️ Network connection issue. Please check your connection and retry.'),
+              backgroundColor: AppColors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+      if (errStr.contains('paused') ||
           errStr.contains('degraded') ||
           errStr.contains('counter') ||
           errStr.contains('closed') ||
