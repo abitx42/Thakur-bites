@@ -49,6 +49,19 @@ jobs:
         working-directory: functions
         run: npm test
 
+      - name: Setup Java (required for Firebase Emulator)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Run Real Firebase Emulator Test Suite
+        working-directory: functions
+        run: firebase emulators:exec --only firestore 'node --test test/emulator/*.test.js' --project ${{ secrets.FIREBASE_PROJECT_ID || 'thakur-bites-test' }}
+
       - name: Install Flutter Client Dependencies
         working-directory: thakur_bites
         run: flutter pub get

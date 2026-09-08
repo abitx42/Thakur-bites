@@ -55,7 +55,7 @@ describe('Real Firebase Emulator — Firestore Security Rules Tests', () => {
     // Seed the order document with Admin SDK context
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await context.firestore().collection('orders').doc('order_001').set({
-        userId: studentUid,
+        studentId: studentUid,
         status: 'confirmed',
         totalPaise: 12500,
       });
@@ -73,7 +73,7 @@ describe('Real Firebase Emulator — Firestore Security Rules Tests', () => {
     const attackerUid = 'student_attacker';
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await context.firestore().collection('orders').doc('order_002').set({
-        userId: 'student_victim',
+        studentId: 'student_victim',
         status: 'confirmed',
         totalPaise: 8000,
       });
@@ -122,7 +122,7 @@ describe('Real Firebase Emulator — Firestore Security Rules Tests', () => {
   it('5. Kitchen staff can read orders (for preparation)', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await context.firestore().collection('orders').doc('order_kitchen').set({
-        userId: 'student_003',
+        studentId: 'student_003',
         status: 'confirmed',
         totalPaise: 5000,
       });

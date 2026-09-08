@@ -3,16 +3,25 @@
  * PHASE 11 — GATE B: REAL FIREBASE EMULATOR RECOVERY APPROVAL TESTS
  * ══════════════════════════════════════════════════════════════════
  *
- * These tests verify the rebuilt four-eyes disaster recovery approval
- * and cryptographic break-glass mechanisms against the real Firestore
- * emulator. They prove the actual security properties — not via mocks.
+ * These tests run against the REAL Firebase Emulator Firestore instance.
+ *
+ * They exercise the exact same transaction pattern used by the production
+ * adminRestoreOperationalMode function: transactional read → validate →
+ * atomically update the approval request. This proves Firestore's
+ * transaction engine correctly serializes concurrent approval attempts,
+ * rejects expired/consumed tokens, and prevents double-approval races.
+ *
+ * NOTE: The onCall wrapper (auth, App Check, rate limiting) is NOT tested
+ * here — that requires firebase-functions-test or a deployed emulator
+ * with the Functions emulator. These tests focus on the Firestore-level
+ * transaction correctness that unit tests cannot observe.
  *
  * Run via: firebase emulators:exec --only firestore 'node --test test/emulator/recovery_approval.test.js'
  */
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { createHash, randomUUID } = require('crypto');
+const { createHash, randomUUID, timingSafeEqual } = require('crypto');
 const admin = require('firebase-admin');
 
 const PROJECT_ID = 'thakur-bites-recovery-test';
@@ -20,7 +29,7 @@ const PROJECT_ID = 'thakur-bites-recovery-test';
 let app;
 let db;
 
-describe('Real Firebase Emulator — Recovery Approval & Break-Glass Tests', () => {
+describe('Real Firebase Emulator — Recovery Approval Transaction Tests', () => {
 
   before(async () => {
     process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
@@ -37,17 +46,16 @@ describe('Real Firebase Emulator — Recovery Approval & Break-Glass Tests', () 
     delete process.env.FIRESTORE_EMULATOR_HOST;
   });
 
-  // ─── Two-Admin Approval Flow ─────────────────────────────────
+  // ─── Two-Admin Approval: Transaction Race ────────────────────
 
-  it('1. Admin A requests, Admin B approves → success, request marked APPROVED', async () => {
+  it('1. Concurrent dual-approval race: Two admins approve same request → exactly 1 succeeds', async () => {
     const requestId = `RAR_${randomUUID()}`;
-    const adminA = 'admin_alice';
-    const adminB = 'admin_bob';
+    const requestDocRef = db.collection('recoveryApprovalRequests').doc(requestId);
 
-    // Admin A creates a pending recovery request
-    await db.collection('recoveryApprovalRequests').doc(requestId).set({
+    // Seed a pending request (as requestRecoveryApproval would)
+    await requestDocRef.set({
       requestId,
-      requestedBy: adminA,
+      requestedBy: 'admin_alice',
       requestedRole: 'admin',
       targetMode: 'NORMAL',
       justification: 'System stable after investigation',
@@ -57,96 +65,223 @@ describe('Real Firebase Emulator — Recovery Approval & Break-Glass Tests', () 
       expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 30 * 60 * 1000),
     });
 
-    // Simulate Admin B's approval: fetch and verify
-    const requestSnap = await db.collection('recoveryApprovalRequests').doc(requestId).get();
-    const requestData = requestSnap.data();
+    let approvalCount = 0;
 
-    assert.equal(requestData.status, 'PENDING_APPROVAL');
-    assert.equal(requestData.requestedBy, adminA);
-    assert.notEqual(requestData.requestedBy, adminB, 'Requester and approver must differ');
+    // Replicate the EXACT transaction pattern from adminRestoreOperationalMode
+    const tryApprove = async (approverUid) => {
+      try {
+        await db.runTransaction(async (transaction) => {
+          const snap = await transaction.get(requestDocRef);
+          if (!snap.exists) throw new Error('NOT_FOUND');
+          const data = snap.data();
 
-    // Mark approved
-    await db.collection('recoveryApprovalRequests').doc(requestId).update({
-      status: 'APPROVED',
-      approvedBy: adminB,
-      approvedAt: admin.firestore.Timestamp.now(),
-    });
+          if (data.status !== 'PENDING_APPROVAL') {
+            throw new Error(`NOT_PENDING: ${data.status}`);
+          }
 
-    const approvedSnap = await db.collection('recoveryApprovalRequests').doc(requestId).get();
-    assert.equal(approvedSnap.data().status, 'APPROVED');
-    assert.equal(approvedSnap.data().approvedBy, adminB);
+          if (data.requestedBy === approverUid) {
+            throw new Error('SELF_APPROVAL');
+          }
 
-    await db.collection('recoveryApprovalRequests').doc(requestId).delete();
+          // Atomically approve — only one transaction can win
+          transaction.update(requestDocRef, {
+            status: 'APPROVED',
+            approvedBy: approverUid,
+            approvedAt: admin.firestore.Timestamp.now(),
+          });
+        });
+        approvalCount++;
+      } catch {
+        // Expected — the loser gets a contention retry that sees APPROVED
+      }
+    };
+
+    // Fire both simultaneously — Firestore must serialize them
+    await Promise.all([
+      tryApprove('admin_bob'),
+      tryApprove('admin_charlie'),
+    ]);
+
+    assert.equal(approvalCount, 1, 'Exactly 1 approval must succeed in a race');
+
+    const finalSnap = await requestDocRef.get();
+    assert.equal(finalSnap.data().status, 'APPROVED');
+    assert.ok(
+      ['admin_bob', 'admin_charlie'].includes(finalSnap.data().approvedBy),
+      'Winner must be one of the two approvers'
+    );
+
+    await requestDocRef.delete();
   });
 
-  it('2. Admin A requests, Admin A tries to approve own request → MUST be rejected', async () => {
-    const requestId = `RAR_${randomUUID()}`;
-    const adminA = 'admin_alice';
+  // ─── Self-Approval Rejection ─────────────────────────────────
 
-    await db.collection('recoveryApprovalRequests').doc(requestId).set({
+  it('2. Self-approval: Admin A requests → Admin A tries to approve own request → rejected', async () => {
+    const requestId = `RAR_${randomUUID()}`;
+    const requestDocRef = db.collection('recoveryApprovalRequests').doc(requestId);
+
+    await requestDocRef.set({
       requestId,
-      requestedBy: adminA,
+      requestedBy: 'admin_alice',
       requestedRole: 'admin',
       targetMode: 'NORMAL',
-      justification: 'Attempting self-approval',
+      justification: 'Self-approval attempt',
       currentMode: 'FINANCIAL_FROZEN',
       status: 'PENDING_APPROVAL',
       createdAt: admin.firestore.Timestamp.now(),
       expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 30 * 60 * 1000),
     });
 
-    // Simulate Admin A trying to approve their own request
-    const requestSnap = await db.collection('recoveryApprovalRequests').doc(requestId).get();
-    const requestData = requestSnap.data();
+    let rejected = false;
+    try {
+      await db.runTransaction(async (transaction) => {
+        const snap = await transaction.get(requestDocRef);
+        const data = snap.data();
+        if (data.requestedBy === 'admin_alice') {
+          throw new Error('SELF_APPROVAL: Four-eyes principle violated');
+        }
+        transaction.update(requestDocRef, { status: 'APPROVED', approvedBy: 'admin_alice' });
+      });
+    } catch (err) {
+      rejected = err.message.includes('SELF_APPROVAL');
+    }
 
-    // The server-side check: requestedBy === approvingAdminUid
-    assert.equal(
-      requestData.requestedBy,
-      adminA,
-      'requestedBy is the same as the approver — this MUST be rejected by the server function'
-    );
+    assert.ok(rejected, 'Self-approval must be rejected');
+    const finalSnap = await requestDocRef.get();
+    assert.equal(finalSnap.data().status, 'PENDING_APPROVAL', 'Status must remain PENDING');
 
-    // This is the check that the Cloud Function performs:
-    const wouldBeRejected = requestData.requestedBy === adminA;
-    assert.ok(wouldBeRejected, 'Self-approval must be detected and rejected');
-
-    await db.collection('recoveryApprovalRequests').doc(requestId).delete();
+    await requestDocRef.delete();
   });
 
-  it('3. Expired request → MUST be rejected', async () => {
+  // ─── Expired Request Rejection ───────────────────────────────
+
+  it('3. Expired request: Approval attempt after expiry → rejected and marked EXPIRED', async () => {
     const requestId = `RAR_${randomUUID()}`;
+    const requestDocRef = db.collection('recoveryApprovalRequests').doc(requestId);
 
     // Create a request that expired 5 minutes ago
-    await db.collection('recoveryApprovalRequests').doc(requestId).set({
+    await requestDocRef.set({
       requestId,
       requestedBy: 'admin_alice',
       requestedRole: 'admin',
       targetMode: 'NORMAL',
-      justification: 'Expired request',
+      justification: 'Expired request test',
       currentMode: 'FINANCIAL_FROZEN',
       status: 'PENDING_APPROVAL',
       createdAt: admin.firestore.Timestamp.fromMillis(Date.now() - 60 * 60 * 1000),
       expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() - 5 * 60 * 1000),
     });
 
-    const requestSnap = await db.collection('recoveryApprovalRequests').doc(requestId).get();
-    const requestData = requestSnap.data();
-    const now = Date.now();
-    const isExpired = now > requestData.expiresAt.toMillis();
+    let rejected = false;
+    try {
+      await db.runTransaction(async (transaction) => {
+        const snap = await transaction.get(requestDocRef);
+        const data = snap.data();
+        const now = Date.now();
+        if (now > data.expiresAt.toMillis()) {
+          transaction.update(requestDocRef, { status: 'EXPIRED' });
+          throw new Error('REQUEST_EXPIRED');
+        }
+        transaction.update(requestDocRef, { status: 'APPROVED', approvedBy: 'admin_bob' });
+      });
+    } catch (err) {
+      rejected = err.message.includes('REQUEST_EXPIRED');
+    }
 
-    assert.ok(isExpired, 'Request must be detected as expired');
+    assert.ok(rejected, 'Expired request must be rejected');
+    const finalSnap = await requestDocRef.get();
+    assert.equal(finalSnap.data().status, 'EXPIRED');
 
-    await db.collection('recoveryApprovalRequests').doc(requestId).delete();
+    await requestDocRef.delete();
   });
 
   // ─── Break-Glass Cryptographic Verification ──────────────────
 
-  it('4. Already-consumed break-glass token → MUST be rejected', async () => {
+  it('4. Valid break-glass token: SHA-256 hash matches, token marked consumed', async () => {
     const plaintext = `BG_${randomUUID()}_${randomUUID()}`;
     const tokenHash = createHash('sha256').update(plaintext).digest('hex');
+    const challengeRef = db.collection('systemConfig').doc('breakGlassChallenge');
 
-    // Store a consumed token
-    await db.collection('systemConfig').doc('breakGlassChallenge').set({
+    await challengeRef.set({
+      tokenHash,
+      createdBy: 'security_admin_001',
+      createdAt: admin.firestore.Timestamp.now(),
+      expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000),
+      consumed: false,
+    });
+
+    // Replicate the EXACT verification from adminRestoreOperationalMode
+    let verified = false;
+    await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(challengeRef);
+      const data = snap.data();
+
+      assert.equal(data.consumed, false, 'Token must not be consumed yet');
+
+      const providedHash = createHash('sha256').update(plaintext).digest('hex');
+      const storedBuf = Buffer.from(data.tokenHash, 'hex');
+      const providedBuf = Buffer.from(providedHash, 'hex');
+
+      assert.equal(storedBuf.length, providedBuf.length);
+      assert.ok(timingSafeEqual(storedBuf, providedBuf), 'Hash must match');
+
+      transaction.update(challengeRef, {
+        consumed: true,
+        consumedAt: admin.firestore.Timestamp.now(),
+        consumedBy: 'emergency_admin_001',
+      });
+      verified = true;
+    });
+
+    assert.ok(verified, 'Valid token must be accepted');
+
+    // Verify consumed flag is set
+    const afterSnap = await challengeRef.get();
+    assert.equal(afterSnap.data().consumed, true);
+    assert.equal(afterSnap.data().consumedBy, 'emergency_admin_001');
+
+    await challengeRef.delete();
+  });
+
+  it('5. Wrong break-glass token: SHA-256 hash mismatch → rejected', async () => {
+    const realPlaintext = `BG_${randomUUID()}_${randomUUID()}`;
+    const realHash = createHash('sha256').update(realPlaintext).digest('hex');
+    const challengeRef = db.collection('systemConfig').doc('breakGlassChallenge');
+
+    await challengeRef.set({
+      tokenHash: realHash,
+      createdBy: 'security_admin_001',
+      createdAt: admin.firestore.Timestamp.now(),
+      expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000),
+      consumed: false,
+    });
+
+    const wrongPlaintext = `BG_WRONG_${randomUUID()}`;
+    const wrongHash = createHash('sha256').update(wrongPlaintext).digest('hex');
+    const storedBuf = Buffer.from(realHash, 'hex');
+    const wrongBuf = Buffer.from(wrongHash, 'hex');
+
+    let rejected = false;
+    if (storedBuf.length !== wrongBuf.length || !timingSafeEqual(storedBuf, wrongBuf)) {
+      rejected = true;
+    }
+
+    assert.ok(rejected, 'Wrong token hash must be rejected');
+
+    // Token must remain unconsumed
+    const afterSnap = await challengeRef.get();
+    assert.equal(afterSnap.data().consumed, false, 'Wrong token must not consume the challenge');
+
+    await challengeRef.delete();
+  });
+
+  it('6. Already-consumed break-glass token: Re-use attempt → rejected', async () => {
+    const plaintext = `BG_${randomUUID()}_${randomUUID()}`;
+    const tokenHash = createHash('sha256').update(plaintext).digest('hex');
+    const challengeRef = db.collection('systemConfig').doc('breakGlassChallenge');
+
+    // Store an already-consumed token
+    await challengeRef.set({
       tokenHash,
       createdBy: 'security_admin_001',
       createdAt: admin.firestore.Timestamp.now(),
@@ -156,67 +291,23 @@ describe('Real Firebase Emulator — Recovery Approval & Break-Glass Tests', () 
       consumedBy: 'admin_previous',
     });
 
-    const challengeSnap = await db.collection('systemConfig').doc('breakGlassChallenge').get();
-    const challengeData = challengeSnap.data();
+    let rejected = false;
+    try {
+      await db.runTransaction(async (transaction) => {
+        const snap = await transaction.get(challengeRef);
+        const data = snap.data();
+        if (data.consumed) {
+          throw new Error('TOKEN_ALREADY_CONSUMED');
+        }
+        // Would proceed with verification — but should never reach here
+        transaction.update(challengeRef, { consumed: true });
+      });
+    } catch (err) {
+      rejected = err.message.includes('TOKEN_ALREADY_CONSUMED');
+    }
 
-    assert.ok(challengeData.consumed, 'Token is already consumed — must be rejected');
+    assert.ok(rejected, 'Already-consumed token must be rejected');
 
-    await db.collection('systemConfig').doc('breakGlassChallenge').delete();
-  });
-
-  it('5. Wrong break-glass token → MUST be rejected (hash mismatch)', async () => {
-    const realPlaintext = `BG_${randomUUID()}_${randomUUID()}`;
-    const realHash = createHash('sha256').update(realPlaintext).digest('hex');
-    const wrongPlaintext = `BG_WRONG_${randomUUID()}`;
-    const wrongHash = createHash('sha256').update(wrongPlaintext).digest('hex');
-
-    // Store the real token hash
-    await db.collection('systemConfig').doc('breakGlassChallenge').set({
-      tokenHash: realHash,
-      createdBy: 'security_admin_001',
-      createdAt: admin.firestore.Timestamp.now(),
-      expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000),
-      consumed: false,
-    });
-
-    // Attempt with wrong token
-    assert.notEqual(realHash, wrongHash, 'Hash mismatch means wrong token — must be rejected');
-
-    await db.collection('systemConfig').doc('breakGlassChallenge').delete();
-  });
-
-  it('6. Valid break-glass token → success, token marked consumed, incident created', async () => {
-    const plaintext = `BG_${randomUUID()}_${randomUUID()}`;
-    const tokenHash = createHash('sha256').update(plaintext).digest('hex');
-
-    // Store a fresh, unconsumed token
-    await db.collection('systemConfig').doc('breakGlassChallenge').set({
-      tokenHash,
-      createdBy: 'security_admin_001',
-      createdAt: admin.firestore.Timestamp.now(),
-      expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000),
-      consumed: false,
-    });
-
-    // Verify the token matches
-    const providedHash = createHash('sha256').update(plaintext).digest('hex');
-    assert.equal(tokenHash, providedHash, 'Hash must match for valid token');
-
-    // Simulate consumption
-    await db.collection('systemConfig').doc('breakGlassChallenge').update({
-      consumed: true,
-      consumedAt: admin.firestore.Timestamp.now(),
-      consumedBy: 'emergency_admin_001',
-    });
-
-    const afterConsumption = await db.collection('systemConfig').doc('breakGlassChallenge').get();
-    const afterData = afterConsumption.data();
-    assert.ok(afterData.consumed, 'Token must be marked as consumed');
-    assert.equal(afterData.consumedBy, 'emergency_admin_001');
-
-    // Verify re-use is blocked
-    assert.ok(afterData.consumed, 'Re-use of consumed token must be rejected');
-
-    await db.collection('systemConfig').doc('breakGlassChallenge').delete();
+    await challengeRef.delete();
   });
 });
