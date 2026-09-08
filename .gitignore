@@ -12,3 +12,5 @@ firebase-debug.log
 firebase-export/
 .cursor/
 .vscode/
+*.apk
+apks/
