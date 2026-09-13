@@ -178,6 +178,39 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                           const SizedBox(height: 24),
                           _buildCancelOrderButton(order),
                         ],
+                        if (order.isPreparing && !order.isCancelled) ...[
+                          const SizedBox(height: 16),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFFBEB),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFFFCD34D), width: 1.2),
+                            ),
+                            child: Row(
+                              children: [
+                                const Text('🍳', style: TextStyle(fontSize: 18)),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Kitchen is actively preparing your order',
+                                        style: AppFonts.body(fontSize: 12.5, fontWeight: FontWeight.w700, color: const Color(0xFF92400E)),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Orders cannot be cancelled once cooking has started.',
+                                        style: AppFonts.body(fontSize: 11, color: const Color(0xFFB45309)),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                         if (order.isCollected) ...[
                           const SizedBox(height: 28),
                           _buildPostPickupCard(order),
@@ -862,7 +895,9 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Are you sure you want to cancel token #${order.tokenNumber}? Once kitchen starts preparing food, cancellation is locked.',
+                    order.paymentStatus == 'paid'
+                        ? 'Are you sure you want to cancel token #${order.tokenNumber}? A full refund of ₹${order.totalAmount.toInt()} will be credited back to your original payment method.\n\n⚠️ Once the kitchen begins preparing food, cancellation will be locked.'
+                        : 'Are you sure you want to cancel token #${order.tokenNumber}? Your reserved items will be released back to canteen stock.',
                     style: AppFonts.body(fontSize: 12.5, color: AppColors.inkSoft),
                   ),
                   const SizedBox(height: 14),
@@ -946,6 +981,17 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   }
 
   Future<void> _handleCancelOrder(app.Order order, String reason) async {
+    // Defense: Pre-check if order is already preparing or further
+    if (order.isPreparing || order.isReady || order.isCollected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🍳 Food is already being prepared. Orders cannot be cancelled.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+
     setState(() => _isCancelling = true);
     try {
       try {
@@ -961,18 +1007,23 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
         return;
       } on FirebaseFunctionsException catch (e) {
         if (e.code == 'not-found' || e.code == 'unavailable') {
+          final isPaid = order.paymentStatus == 'paid';
           // Direct fallback when Cloud Functions are not deployed
           await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
             'status': 'cancelled',
-            'paymentStatus': 'failed',
+            if (!isPaid) 'paymentStatus': 'failed',
             'cancelReason': reason,
+            'cancelledAt': FieldValue.serverTimestamp(),
             'updatedAt': FieldValue.serverTimestamp(),
+            if (isPaid) 'refundStatus': 'initiated',
           });
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Order cancelled successfully.'),
-                backgroundColor: Color(0xFF16A34A),
+              SnackBar(
+                content: Text(isPaid
+                    ? '✅ Order cancelled! A full refund of ₹${order.totalAmount.toInt()} has been initiated to your original payment method.'
+                    : 'Order cancelled. Your reserved items were returned to stock.'),
+                backgroundColor: const Color(0xFF16A34A),
               ),
             );
           }

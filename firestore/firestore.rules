@@ -85,19 +85,28 @@ service cloud.firestore {
         && request.resource.data.studentId == request.auth.uid
         && request.resource.data.paymentMethod == 'online'
         && request.resource.data.totalAmount is number && request.resource.data.totalAmount > 0;
-      // Allow students to update payment status of their own order upon gateway payment success
-      // Invariant: Orders must be in payment_pending state; paid requires confirmed status + valid gatewayPaymentId
+      // Allow students to update their own order:
+      // 1. Pay for order: payment_pending -> confirmed
+      // 2. Cancel order BEFORE cooking: payment_pending or confirmed -> cancelled
+      // STRICT INVARIANT: Cancellation is strictly BLOCKED once kitchen moves order to preparing, ready, or collected!
       allow update: if (isAuthenticated() && resource.data.studentId == request.auth.uid
-        && resource.data.status == 'payment_pending'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentStatus', 'status', 'gatewayPaymentId', 'gatewayOrderId', 'gatewaySignature', 'paidAt', 'updatedAt'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'paymentStatus', 'status', 'gatewayPaymentId', 'gatewayOrderId',
+          'gatewaySignature', 'paidAt', 'updatedAt', 'cancelReason', 'cancelledAt', 'refundStatus'
+        ])
         && (
-          (request.resource.data.paymentStatus == 'paid'
+          (resource.data.status == 'payment_pending'
+           && request.resource.data.paymentStatus == 'paid'
            && request.resource.data.status == 'confirmed'
            && request.resource.data.gatewayPaymentId is string
            && request.resource.data.gatewayPaymentId.size() >= 6)
           ||
-          (request.resource.data.paymentStatus == 'failed'
+          (resource.data.status == 'payment_pending'
+           && request.resource.data.paymentStatus == 'failed'
            && request.resource.data.status in ['payment_pending', 'cancelled'])
+          ||
+          (resource.data.status == 'confirmed'
+           && request.resource.data.status == 'cancelled')
         )
       ) || isOperationalStaff();
       allow delete: if isOperationalStaff();
