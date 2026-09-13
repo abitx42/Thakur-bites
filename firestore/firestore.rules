@@ -199,6 +199,15 @@ service cloud.firestore {
     }
 
     // ─── Internal System Tables ─────────────────────────────────
+    match /counters/dailyTokenCounter {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated()
+        && request.resource.data.keys().hasOnly(['lastToken', 'date', 'updatedAt'])
+        && request.resource.data.lastToken is number
+        && request.resource.data.lastToken >= 100
+        && request.resource.data.lastToken <= 999;
+    }
+
     match /counters/{counterId} {
       allow read, write: if false;
     }

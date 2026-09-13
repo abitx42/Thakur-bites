@@ -1,8 +1,9 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../models/order.dart' as app;
 import '../models/canteen_operational_status.dart';
 import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
@@ -632,6 +633,7 @@ class _CartSummaryState extends State<_CartSummary> {
   final FirestoreService _firestore = FirestoreService();
   final CheckoutService _checkoutService = CheckoutService();
   String? _currentIdempotencyKey;
+  app.Order? _activePendingOrder;
   bool _isProcessing = false;
   final String _selectedPaymentMethod = 'online';
 
@@ -686,20 +688,43 @@ class _CartSummaryState extends State<_CartSummary> {
 
       // ──────────────────────────────────────────────────────────────
       // 3. TRUSTED CHECKOUT & INVENTORY RESERVATION ENGINE
-      //    Idempotency key prevents duplicate orders/billing on retry.
+      //    Reuse existing pending order session on payment retry to prevent
+      //    creating duplicate orphaned orders in Firestore.
       // ──────────────────────────────────────────────────────────────
-      _currentIdempotencyKey ??= 'tb_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999999)}';
+      app.Order order;
       final student = authProvider.currentStudent;
 
-      final order = await _checkoutService.createCheckout(
-        idempotencyKey: _currentIdempotencyKey!,
-        entries: cart.entries,
-        paymentMethod: _selectedPaymentMethod,
-        readyMadePreference: cart.isOnlyReadyMade ? cart.readyMadePreferenceSummary : null,
-        student: student,
-      );
+      if (_activePendingOrder != null &&
+          _activePendingOrder!.totalAmount == cart.totalPrice &&
+          !_activePendingOrder!.isCancelled) {
+        // Reuse current pending order session
+        order = _activePendingOrder!;
+      } else {
+        // Cancel prior pending order if cart items or totals changed
+        if (_activePendingOrder != null) {
+          FirebaseFirestore.instance
+              .collection('orders')
+              .doc(_activePendingOrder!.id)
+              .update({
+            'status': 'cancelled',
+            'paymentStatus': 'failed',
+            'cancelReason': 'Cart modified before payment retry',
+            'updatedAt': FieldValue.serverTimestamp(),
+          }).catchError((_) {});
+          _activePendingOrder = null;
+        }
 
-      _currentIdempotencyKey = null;
+        _currentIdempotencyKey ??= generateIdempotencyKey();
+
+        order = await _checkoutService.createCheckout(
+          idempotencyKey: _currentIdempotencyKey!,
+          entries: cart.entries,
+          paymentMethod: _selectedPaymentMethod,
+          readyMadePreference: cart.isOnlyReadyMade ? cart.readyMadePreferenceSummary : null,
+          student: student,
+        );
+        _activePendingOrder = order;
+      }
 
       if (student != null) {
         authProvider.incrementOrderCount();
@@ -747,7 +772,9 @@ class _CartSummaryState extends State<_CartSummary> {
         return;
       }
 
-      // 5. Payment verified — clear cart & show ticket
+      // 5. Payment verified — clear pending session, clear cart & show ticket
+      _activePendingOrder = null;
+      _currentIdempotencyKey = null;
       cart.clear();
 
       final confirmedOrder = order.copyWith(

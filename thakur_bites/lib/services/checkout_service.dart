@@ -191,7 +191,31 @@ class CheckoutService {
         .map((b) => b.toRadixString(16).padLeft(2, '0'))
         .join();
     final orderId = 'ord_${now.millisecondsSinceEpoch}_$randomHex';
-    final tokenNumber = 'TB-${100 + secureRng.nextInt(900)}';
+
+    // Atomic Daily Sequential Token Generation (TB-100 to TB-999)
+    int tokenSeq = 100;
+    try {
+      final counterRef = _db.collection('counters').doc('dailyTokenCounter');
+      tokenSeq = await _db.runTransaction((tx) async {
+        final snap = await tx.get(counterRef);
+        final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+        int next = 100;
+        if (snap.exists && snap.data()?['date'] == todayStr) {
+          next = ((snap.data()?['lastToken'] as num?)?.toInt() ?? 99) + 1;
+          if (next > 999) next = 100;
+        }
+        tx.set(counterRef, {
+          'lastToken': next,
+          'date': todayStr,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        return next;
+      });
+    } catch (_) {
+      // Resilient fallback strictly matching TB-\d{3} pattern
+      tokenSeq = 100 + (((now.hour * 60 + now.minute) + secureRng.nextInt(60)) % 899);
+    }
+    final tokenNumber = 'TB-${tokenSeq.toString().padLeft(3, '0')}';
     final pinCode = '${1000 + secureRng.nextInt(9000)}';
 
     double totalAmount = 0.0;
@@ -215,6 +239,8 @@ class CheckoutService {
         ? student.rollNo.toString()
         : '';
 
+    final reservationExpiresAt = now.add(const Duration(minutes: 15));
+
     final order = Order(
       id: orderId,
       tokenNumber: tokenNumber,
@@ -227,6 +253,7 @@ class CheckoutService {
       paymentMethod: 'online',
       createdAt: now,
       readyAt: now.add(Duration(minutes: isOnlyReadyMade ? 2 : 12)),
+      reservationExpiresAt: reservationExpiresAt,
       estimatedMinutes: isOnlyReadyMade ? 2 : 12,
       totalAmount: totalAmount,
       totalAmountPaise: (totalAmount * 100).round(),
