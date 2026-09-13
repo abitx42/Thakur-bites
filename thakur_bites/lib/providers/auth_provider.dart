@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart' show User;
 import 'package:flutter/foundation.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
@@ -6,6 +8,7 @@ import '../services/auth_service.dart';
 /// Backed by Platform 2.0 Universal Identity Model.
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService;
+  StreamSubscription<User?>? _authSub;
 
   UserProfile? _currentUserProfile;
   bool _isLoading = true;
@@ -59,7 +62,7 @@ class AuthProvider extends ChangeNotifier {
       notifyListeners();
     }
 
-    _authService.authStateChanges.listen((user) async {
+    _authSub = _authService.authStateChanges.listen((user) async {
       if (user == null) {
         _currentUserProfile = null;
       } else {
@@ -174,5 +177,11 @@ class AuthProvider extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
   }
 }

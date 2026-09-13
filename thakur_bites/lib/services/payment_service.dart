@@ -54,7 +54,10 @@ class PaymentService {
     final amountPaise = (totalAmountRs * 100).round();
 
     String razorpayOrderId = '';
-    String keyId = 'rzp_test_tcet_canteen';
+    String keyId = const String.fromEnvironment(
+      'RAZORPAY_KEY_ID',
+      defaultValue: 'rzp_test_tcet_canteen',
+    );
 
     // Step 1: Attempt server-side Razorpay order creation if Cloud Functions are deployed
     try {
@@ -66,7 +69,9 @@ class PaymentService {
         throw PaymentException('Payment session creation failed: ${e.message}');
       }
       debugPrint('[PaymentService] Backend function notice: ${e.message}. Launching direct gateway.');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[PaymentService] Payment session creation notice: $e');
+    }
 
     // Step 2: Launch Razorpay SDK and collect payment confirmation
     final paymentDetails = await _launchRazorpayCheckout(
@@ -77,9 +82,14 @@ class PaymentService {
       studentEmail: studentEmail,
     );
 
-    final paymentId = (paymentDetails['razorpay_payment_id'] as String?) ?? 'pay_${now.millisecondsSinceEpoch}';
+    final paymentId = (paymentDetails['razorpay_payment_id'] as String?)?.trim() ?? '';
     final confirmedOrderId = (paymentDetails['razorpay_order_id'] as String?) ?? razorpayOrderId;
     final signature = (paymentDetails['razorpay_signature'] as String?) ?? '';
+
+    // Invariant: paymentId MUST be a valid non-empty string received from gateway
+    if (paymentId.isEmpty || paymentId.length < 6) {
+      throw const PaymentException('Payment was incomplete: invalid or missing gateway payment ID.');
+    }
 
     // Step 3: Attempt server-side HMAC verification if Cloud Functions deployed
     try {
@@ -89,7 +99,15 @@ class PaymentService {
         razorpayOrderId: confirmedOrderId,
         razorpaySignature: signature,
       );
-    } catch (_) {}
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code != 'not-found' && e.code != 'unavailable') {
+        // Backend actively rejected HMAC verification
+        throw PaymentException('Payment verification rejected by server: ${e.message}');
+      }
+      debugPrint('[PaymentService] Server verifyPayment unavailable: ${e.message}');
+    } catch (e) {
+      debugPrint('[PaymentService] Payment verification check notice: $e');
+    }
 
     // Step 4: Confirm payment status on the order in Firestore
     try {
@@ -103,7 +121,8 @@ class PaymentService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
     } catch (e) {
-      debugPrint('[PaymentService] Order status update notice: $e');
+      debugPrint('[PaymentService] Order status update failed: $e');
+      throw PaymentException('Payment succeeded ($paymentId) but saving order status failed. Please contact counter with your payment ID.');
     }
 
     return PaymentResult(

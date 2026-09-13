@@ -172,8 +172,8 @@ class MenuItem {
 
     return MenuItem(
       id: docId,
-      name: data['name'] ?? '',
-      price: (data['price'] ?? 0).toDouble(),
+      name: rawName,
+      price: rawPrice,
       category: category,
       parentCategory: parentCategory,
       subCategory: subCategory,

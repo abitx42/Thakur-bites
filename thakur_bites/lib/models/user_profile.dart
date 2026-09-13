@@ -313,6 +313,19 @@ class UserProfile {
     };
   }
 
+  /// Generates a safe update map containing strictly client-permitted fields (TB-006 / firestore.rules compliant).
+  Map<String, dynamic> toSafeUpdateMap() {
+    return {
+      'displayName': displayName.trim(),
+      if (photoURL != null) 'photoURL': photoURL,
+      if (department != null) 'department': department!.trim(),
+      if (year != null) 'year': year,
+      if (rollNo != null) 'rollNo': rollNo!.trim().toUpperCase(),
+      if (phone != null) 'phone': phone!.trim(),
+      'updatedAt': Timestamp.now(),
+    };
+  }
+
   UserProfile copyWith({
     String? email,
     String? displayName,

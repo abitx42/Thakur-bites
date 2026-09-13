@@ -86,10 +86,20 @@ service cloud.firestore {
         && request.resource.data.paymentMethod == 'online'
         && request.resource.data.totalAmount is number && request.resource.data.totalAmount > 0;
       // Allow students to update payment status of their own order upon gateway payment success
+      // Invariant: Orders must be in payment_pending state; paid requires confirmed status + valid gatewayPaymentId
       allow update: if (isAuthenticated() && resource.data.studentId == request.auth.uid
+        && resource.data.status == 'payment_pending'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentStatus', 'status', 'gatewayPaymentId', 'gatewayOrderId', 'gatewaySignature', 'paidAt', 'updatedAt'])
-        && request.resource.data.paymentStatus in ['paid', 'pending', 'failed'])
-        || isOperationalStaff();
+        && (
+          (request.resource.data.paymentStatus == 'paid'
+           && request.resource.data.status == 'confirmed'
+           && request.resource.data.gatewayPaymentId is string
+           && request.resource.data.gatewayPaymentId.size() >= 6)
+          ||
+          (request.resource.data.paymentStatus == 'failed'
+           && request.resource.data.status in ['payment_pending', 'cancelled'])
+        )
+      ) || isOperationalStaff();
       allow delete: if isOperationalStaff();
     }
 

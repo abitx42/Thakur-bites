@@ -186,9 +186,13 @@ class CheckoutService {
     dynamic student,
   }) async {
     final now = DateTime.now();
-    final orderId = 'ord_${now.millisecondsSinceEpoch}_${Random().nextInt(9999)}';
-    final tokenNumber = 'TB-${100 + Random().nextInt(900)}';
-    final pinCode = '${1000 + Random().nextInt(9000)}';
+    final secureRng = Random.secure();
+    final randomHex = List<int>.generate(8, (_) => secureRng.nextInt(256))
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    final orderId = 'ord_${now.millisecondsSinceEpoch}_$randomHex';
+    final tokenNumber = 'TB-${100 + secureRng.nextInt(900)}';
+    final pinCode = '${1000 + secureRng.nextInt(9000)}';
 
     double totalAmount = 0.0;
     final orderItems = entries.map((e) {

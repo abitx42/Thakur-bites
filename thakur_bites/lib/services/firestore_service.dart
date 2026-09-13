@@ -100,6 +100,7 @@ class FirestoreService {
   /// If stock is insufficient, transaction aborts completely with zero partial writes.
   /// Place an order via trusted authoritative checkout engine.
   /// (Deprecated: Prefer calling CheckoutService().createCheckout directly)
+  @Deprecated('Use CheckoutService().createCheckout directly')
   Future<app.Order> placeOrder(
     CartProvider cart, {
     Student? student,

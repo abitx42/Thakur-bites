@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/menu_item.dart';
@@ -24,9 +25,14 @@ class CartEntry {
 /// Stock is checked ONLY at checkout time by the backend (Firestore).
 /// First student to successfully place the order gets the stock.
 class CartProvider extends ChangeNotifier {
-  static const String _storageKey = 'offline_cart_v1';
+  String? _userId;
+  String get _storageKey => _userId != null && _userId!.isNotEmpty
+      ? 'offline_cart_v1_$_userId'
+      : 'offline_cart_v1_guest';
+
   final FirestoreService? _firestore;
   StreamSubscription? _menuSub;
+  StreamSubscription? _authSub;
 
   /// Map of item ID → CartEntry for O(1) lookups
   final Map<String, CartEntry> _entries = {};
@@ -40,12 +46,45 @@ class CartProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  CartProvider({FirestoreService? firestoreService, bool listenToLiveStock = true})
-      : _firestore = firestoreService {
+  CartProvider({
+    FirestoreService? firestoreService,
+    bool listenToLiveStock = true,
+    bool listenToAuth = true,
+    String? userId,
+  })  : _firestore = firestoreService {
+    if (userId != null) {
+      _userId = userId;
+    }
     _loadPersistedCart();
     if (listenToLiveStock) {
       _initLiveStockListener();
     }
+    if (listenToAuth) {
+      _initAuthListener();
+    }
+  }
+
+  void _initAuthListener() {
+    try {
+      _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+        final uid = user?.uid;
+        if (uid != _userId) {
+          switchUser(uid);
+        }
+      });
+    } catch (_) {
+      // Safely ignore in headless unit tests
+    }
+  }
+
+  /// Switch the active user session for cart isolation.
+  Future<void> switchUser(String? newUserId) async {
+    if (_userId == newUserId) return;
+    _userId = newUserId;
+    _entries.clear();
+    _priceChangeAlerts.clear();
+    await _loadPersistedCart();
+    notifyListeners();
   }
 
   /// Load cached wishlist from local device storage upon app startup/reconnect
@@ -59,11 +98,12 @@ class CartProvider extends ChangeNotifier {
           final m = Map<String, dynamic>.from(entry as Map);
           final itemId = m['itemId'] as String? ?? '';
           final qty = (m['qty'] as num?)?.toInt() ?? 1;
-          if (itemId.isNotEmpty && qty > 0) {
+          final cachedPrice = (m['cachedPrice'] as num?)?.toDouble() ?? 0.0;
+          if (itemId.isNotEmpty && qty > 0 && cachedPrice > 0) {
             final item = MenuItem(
               id: itemId,
               name: m['cachedName'] as String? ?? 'Item',
-              price: (m['cachedPrice'] as num?)?.toDouble() ?? 0.0,
+              price: cachedPrice,
               parentCategory: m['cachedParentCategory'] as String? ?? 'Food',
               category: m['cachedCategory'] as String? ?? 'general',
               available: true,
@@ -130,6 +170,7 @@ class CartProvider extends ChangeNotifier {
   @override
   void dispose() {
     _menuSub?.cancel();
+    _authSub?.cancel();
     super.dispose();
   }
 
