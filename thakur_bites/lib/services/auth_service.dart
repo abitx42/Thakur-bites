@@ -212,7 +212,7 @@ class AuthService {
     final email = user.email ?? '';
     final accountType = getIdentityHintFromEmail(email);
 
-    return UserProfile(
+    final profile = UserProfile(
       uid: user.uid,
       email: email,
       displayName: cleanName,
@@ -227,6 +227,18 @@ class AuthService {
       phone: initialPhone ?? user.phoneNumber,
       createdAt: DateTime.now(),
     );
+
+    // Persist synthesized profile to Firestore so subsequent app boots find it immediately
+    try {
+      await _users.doc(user.uid).set(
+            profile.toInitialCreateMap(),
+            SetOptions(merge: true),
+          );
+    } catch (e) {
+      debugPrint('[AuthService] Profile auto-creation notice: $e');
+    }
+
+    return profile;
   }
 
   /// Translates Firebase Auth error codes into human-readable messages

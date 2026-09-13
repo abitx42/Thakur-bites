@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/canteen_operational_status.dart';
 import '../models/menu_item.dart';
 import '../models/order.dart' as app;
@@ -80,6 +81,35 @@ class _MenuScreenState extends State<MenuScreen> {
   int _currentNavIndex = 0; // 0=Menu, 1=Orders, 2=Profile
 
   final TextEditingController _searchController = TextEditingController();
+  app.Order? _recoveredActiveOrder;
+
+  @override
+  void initState() {
+    super.initState();
+    _recoverActiveOrder();
+  }
+
+  Future<void> _recoverActiveOrder() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final orderId = prefs.getString('active_order_id');
+      if (orderId != null && orderId.isNotEmpty) {
+        final order = await _firestore.getOrder(orderId);
+        if (order != null && !order.isCollected && order.status != 'cancelled') {
+          if (mounted) {
+            setState(() {
+              _recoveredActiveOrder = order;
+            });
+          }
+        } else {
+          // If order is completed or cancelled, clean up stored order ID
+          await prefs.remove('active_order_id');
+        }
+      }
+    } catch (e) {
+      debugPrint('[MenuScreen] Active order recovery notice: $e');
+    }
+  }
 
   @override
   void dispose() {
@@ -821,8 +851,9 @@ class _MenuScreenState extends State<MenuScreen> {
   // ═══════════════════════════════════════════════════════════════════
 
   Widget _buildOrdersTab() {
-    final student = context.watch<AuthProvider>().currentStudent;
-    if (student == null) {
+    final auth = context.watch<AuthProvider>();
+    final profile = auth.currentProfile;
+    if (profile == null || auth.isGuest) {
       return Column(
         children: [
           Container(
@@ -872,7 +903,7 @@ class _MenuScreenState extends State<MenuScreen> {
       );
     }
 
-    final stream = _firestore.studentOrdersStream(student.uid);
+    final stream = _firestore.userOrdersStream(profile.uid);
 
     return Column(
       children: [
@@ -893,7 +924,7 @@ class _MenuScreenState extends State<MenuScreen> {
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
-                  student.safeRollNo,
+                  profile.safeRollNo,
                   style: AppFonts.mono(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.inkSoft),
                 ),
               ),
@@ -1876,27 +1907,73 @@ class _MenuScreenState extends State<MenuScreen> {
   }
 
   Widget _buildActiveOrderSection() {
-    final student = context.watch<AuthProvider>().currentStudent;
-    if (student == null) {
-      return const SizedBox.shrink();
+    final profile = context.watch<AuthProvider>().currentProfile;
+
+    if (profile != null) {
+      return StreamBuilder<List<app.Order>>(
+        stream: _firestore.userOrdersStream(profile.uid),
+        builder: (context, snapshot) {
+          final orders = snapshot.data ?? [];
+          if (orders.isNotEmpty) {
+            // Find the most recent active order that is not collected or cancelled
+            final activeOrder = orders.where((o) {
+              return !o.isCollected && o.status != 'cancelled';
+            }).firstOrNull;
+
+            if (activeOrder != null) {
+              // Sync persistent recovery ID
+              SharedPreferences.getInstance().then((prefs) {
+                prefs.setString('active_order_id', activeOrder.id);
+              }).catchError((_) {});
+              return _ActiveOrderBanner(order: activeOrder);
+            } else {
+              // No active orders in list; clear stored active_order_id
+              SharedPreferences.getInstance().then((prefs) {
+                prefs.remove('active_order_id');
+              }).catchError((_) {});
+            }
+          }
+
+          // Fallback to recovered active order if stream is empty or still loading
+          if (_recoveredActiveOrder != null &&
+              !_recoveredActiveOrder!.isCollected &&
+              _recoveredActiveOrder!.status != 'cancelled') {
+            return StreamBuilder<app.Order?>(
+              stream: _firestore.orderStream(_recoveredActiveOrder!.id),
+              initialData: _recoveredActiveOrder,
+              builder: (context, orderSnap) {
+                final order = orderSnap.data ?? _recoveredActiveOrder!;
+                if (order.isCollected || order.status == 'cancelled') {
+                  return const SizedBox.shrink();
+                }
+                return _ActiveOrderBanner(order: order);
+              },
+            );
+          }
+
+          return const SizedBox.shrink();
+        },
+      );
     }
 
-    return StreamBuilder<List<app.Order>>(
-      stream: _firestore.studentOrdersStream(student.uid),
-      builder: (context, snapshot) {
-        final orders = snapshot.data ?? [];
-        if (orders.isEmpty) return const SizedBox.shrink();
+    // Guest browsing or unauthenticated session with an active cached order
+    if (_recoveredActiveOrder != null &&
+        !_recoveredActiveOrder!.isCollected &&
+        _recoveredActiveOrder!.status != 'cancelled') {
+      return StreamBuilder<app.Order?>(
+        stream: _firestore.orderStream(_recoveredActiveOrder!.id),
+        initialData: _recoveredActiveOrder,
+        builder: (context, orderSnap) {
+          final order = orderSnap.data ?? _recoveredActiveOrder!;
+          if (order.isCollected || order.status == 'cancelled') {
+            return const SizedBox.shrink();
+          }
+          return _ActiveOrderBanner(order: order);
+        },
+      );
+    }
 
-        // Find the most recent active order that is not collected or cancelled
-        final activeOrder = orders.where((o) {
-          return !o.isCollected && o.status != 'cancelled';
-        }).firstOrNull;
-
-        if (activeOrder == null) return const SizedBox.shrink();
-
-        return _ActiveOrderBanner(order: activeOrder);
-      },
-    );
+    return const SizedBox.shrink();
   }
 }
 
@@ -2035,14 +2112,25 @@ class _OrderCard extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color: AppColors.surface2,
+                      color: isReady
+                          ? const Color(0xFFDCFCE7)
+                          : AppColors.surface2,
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
-                      'PIN: ${order.pinCode}',
+                      isReady
+                          ? 'PIN: ${order.pinCode}'
+                          : isCollected
+                              ? 'PIN: Collected'
+                              : order.status == 'cancelled'
+                                  ? 'PIN: Cancelled'
+                                  : 'PIN: Locked until food ready',
                       style: AppFonts.mono(
                         fontSize: 11,
-                        color: AppColors.inkSoft,
+                        fontWeight: isReady ? FontWeight.w700 : FontWeight.w500,
+                        color: isReady
+                            ? const Color(0xFF15803D)
+                            : AppColors.inkSoft,
                       ),
                     ),
                   ),

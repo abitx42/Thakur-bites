@@ -115,6 +115,17 @@ class FirestoreService {
     );
   }
 
+  /// Single fetch of an order by ID (used for app-kill recovery and status checks)
+  Future<app.Order?> getOrder(String orderId) async {
+    try {
+      final doc = await _orders.doc(orderId).get();
+      if (doc.exists && doc.data() != null) {
+        return app.Order.fromFirestore(doc.id, doc.data()!);
+      }
+    } catch (_) {}
+    return null;
+  }
+
   /// Real-time stream of a single order by ID
   Stream<app.Order?> orderStream(String orderId) {
     return _orders.doc(orderId).snapshots().map((doc) {
@@ -147,6 +158,10 @@ class FirestoreService {
               .toList(),
         );
   }
+
+  /// Real-time stream of orders for any user profile (Universal Platform 2.0)
+  Stream<List<app.Order>> userOrdersStream(String userId) =>
+      studentOrdersStream(userId);
 
   Stream<CanteenOperationalStatus>? _cachedOperationalStatusStream;
 

@@ -136,5 +136,28 @@ void main() {
       expect(cart.isEmpty, isTrue);
       expect(cart.totalPrice, equals(0.0));
     });
+
+    test('Handover PIN exposure rule: PIN only unlocked when status is ready', () {
+      String getDisplayPin(Order o) {
+        if (o.status == 'ready') return 'PIN: ${o.pinCode}';
+        if (o.isCollected) return 'PIN: Collected';
+        if (o.status == 'cancelled') return 'PIN: Cancelled';
+        return 'PIN: Locked until food ready';
+      }
+
+      final pending = basePendingOrder.copyWith(status: 'payment_pending');
+      final confirmed = basePendingOrder.copyWith(status: 'confirmed');
+      final preparing = basePendingOrder.copyWith(status: 'preparing');
+      final ready = basePendingOrder.copyWith(status: 'ready');
+      final collected = basePendingOrder.copyWith(status: 'collected');
+      final cancelled = basePendingOrder.copyWith(status: 'cancelled');
+
+      expect(getDisplayPin(pending), equals('PIN: Locked until food ready'));
+      expect(getDisplayPin(confirmed), equals('PIN: Locked until food ready'));
+      expect(getDisplayPin(preparing), equals('PIN: Locked until food ready'));
+      expect(getDisplayPin(ready), equals('PIN: 7890'));
+      expect(getDisplayPin(collected), equals('PIN: Collected'));
+      expect(getDisplayPin(cancelled), equals('PIN: Cancelled'));
+    });
   });
 }

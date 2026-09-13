@@ -313,6 +313,32 @@ class UserProfile {
     };
   }
 
+  /// Generates the payload to safely initialize a user profile on Spark plan
+  /// conforming to firestore.rules least-privilege create restrictions.
+  Map<String, dynamic> toInitialCreateMap() {
+    return {
+      'uid': uid,
+      'email': email,
+      'displayName': cleanDisplayName,
+      if (photoURL != null) 'photoURL': photoURL,
+      'accountType': accountType.toDbString(),
+      'verificationStatus': verificationStatus.toDbString(),
+      'priorityLevel': 0,
+      if (department != null && department!.trim().isNotEmpty) 'department': department!.trim(),
+      if (designation != null && designation!.trim().isNotEmpty) 'designation': designation!.trim(),
+      if (year != null && year!.trim().isNotEmpty) 'year': year!.trim(),
+      if (rollNo != null && rollNo!.trim().isNotEmpty) 'rollNo': rollNo!.trim().toUpperCase(),
+      if (phone != null && phone!.trim().isNotEmpty) 'phone': phone!.trim(),
+      'isVerified': false,
+      'accountDisabled': false,
+      'totalOrders': 0,
+      'totalSpentPaise': 0,
+      'averageOrderPaise': 0,
+      'createdAt': Timestamp.fromDate(createdAt),
+      'updatedAt': Timestamp.now(),
+    };
+  }
+
   /// Generates a safe update map containing strictly client-permitted fields (TB-006 / firestore.rules compliant).
   Map<String, dynamic> toSafeUpdateMap() {
     return {

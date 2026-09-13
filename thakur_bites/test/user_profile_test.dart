@@ -74,5 +74,37 @@ void main() {
       expect(profile.hasPriorityAccess, isFalse);
       expect(profile.initials, equals('GC'));
     });
+
+    test('toInitialCreateMap produces safe unprivileged payload conforming to firestore.rules', () {
+      final profile = UserProfile(
+        uid: 'user_123',
+        email: 'user@tcetmumbai.in',
+        displayName: '17_CSE_CS_A_Aditya Bodake',
+        accountType: AccountType.student,
+        verificationStatus: VerificationStatus.pending,
+        priorityLevel: 0,
+        department: 'IT',
+        rollNo: '1032251174',
+        createdAt: DateTime(2026, 9, 14),
+      );
+
+      final map = profile.toInitialCreateMap();
+
+      expect(map['uid'], equals('user_123'));
+      expect(map['email'], equals('user@tcetmumbai.in'));
+      expect(map['displayName'], equals('Aditya Bodake'));
+      expect(map['priorityLevel'], equals(0));
+      expect(map['isVerified'], isFalse);
+      expect(map['accountDisabled'], isFalse);
+      expect(map['totalOrders'], equals(0));
+      expect(map['totalSpentPaise'], equals(0));
+      expect(map['averageOrderPaise'], equals(0));
+      expect(map['accountType'], equals('STUDENT'));
+      expect(map['verificationStatus'], equals('PENDING'));
+      expect(map['rollNo'], equals('1032251174'));
+      expect(map['department'], equals('IT'));
+      expect(map['createdAt'], isNotNull);
+      expect(map['updatedAt'], isNotNull);
+    });
   });
 }

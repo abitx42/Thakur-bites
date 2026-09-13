@@ -266,7 +266,18 @@ service cloud.firestore {
     // ─── Universal Users (Platform 2.0) ──────────────────────────
     match /users/{userId} {
       allow read: if isOwner(userId) || isManagerOrAdmin();
-      allow create: if false; // Server-Authoritative via Cloud Functions Admin SDK only (TB-NEW-001/002)
+      // Allow authenticated owner to create their initial profile document matching their auth UID
+      // INVARIANT: Unprivileged defaults only (priorityLevel == 0, isVerified == false, accountDisabled == false)
+      allow create: if isOwner(userId)
+        && request.resource.data.uid == userId
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 2
+        && request.resource.data.displayName.size() <= 100
+        && request.resource.data.priorityLevel == 0
+        && request.resource.data.accountType in ['STUDENT', 'TEACHER', 'VISITOR', 'COLLEGE_STAFF']
+        && request.resource.data.verificationStatus in ['NOT_REQUIRED', 'PENDING', 'UNDER_REVIEW']
+        && request.resource.data.isVerified == false
+        && request.resource.data.accountDisabled == false;
       allow update: if isOwner(userId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phone', 'rollNo', 'department', 'year', 'photoURL', 'preferences', 'updatedAt'])
         && request.resource.data.displayName is string && request.resource.data.displayName.size() >= 2 && request.resource.data.displayName.size() <= 100
