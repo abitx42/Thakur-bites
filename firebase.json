@@ -68,7 +68,13 @@
         "functions/**",
         "thakur_bites/**",
         "scripts/**",
-        "docs/**"
+        "docs/**",
+        "apks/**",
+        "reports/**",
+        "firestore/**",
+        "*.log",
+        "*.apk",
+        "server_no_cache.py"
       ],
       "headers": [
         {
