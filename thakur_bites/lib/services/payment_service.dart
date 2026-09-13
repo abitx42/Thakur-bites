@@ -74,34 +74,13 @@ class PaymentService {
     }
 
     // Step 2: Launch Razorpay SDK and collect payment confirmation
-    Map<String, dynamic> paymentDetails;
-    try {
-      paymentDetails = await _launchRazorpayCheckout(
-        razorpayOrderId: razorpayOrderId,
-        amountPaise: amountPaise,
-        keyId: keyId,
-        studentName: studentName,
-        studentEmail: studentEmail,
-      );
-    } catch (e) {
-      final errMsg = e.toString().toLowerCase();
-      if (errMsg.contains('cancelled') || errMsg.contains('closed by user')) {
-        rethrow;
-      }
-      // If testing with a sandbox key (e.g. placeholder rzp_test_tcet_canteen not yet registered on Razorpay API),
-      // complete the test transaction so developers can verify the full order lifecycle on device:
-      if (keyId.startsWith('rzp_test_')) {
-        debugPrint('[PaymentService] Razorpay test notice for ($keyId): $e. Completing sandbox test payment.');
-        final mockPaymentId = 'pay_test_${DateTime.now().millisecondsSinceEpoch}';
-        paymentDetails = {
-          'razorpay_payment_id': mockPaymentId,
-          'razorpay_order_id': razorpayOrderId.isNotEmpty ? razorpayOrderId : 'order_test_$orderId',
-          'razorpay_signature': 'test_sig_${DateTime.now().millisecondsSinceEpoch}',
-        };
-      } else {
-        rethrow;
-      }
-    }
+    final paymentDetails = await _launchRazorpayCheckout(
+      razorpayOrderId: razorpayOrderId,
+      amountPaise: amountPaise,
+      keyId: keyId,
+      studentName: studentName,
+      studentEmail: studentEmail,
+    );
 
     final paymentId = (paymentDetails['razorpay_payment_id'] as String?)?.trim() ?? '';
     final confirmedOrderId = (paymentDetails['razorpay_order_id'] as String?) ?? razorpayOrderId;
@@ -215,9 +194,17 @@ class PaymentService {
     });
 
     razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, (PaymentFailureResponse response) {
-      completer.completeError(
-        PaymentException(response.message ?? 'Payment was declined or failed.'),
-      );
+      final msg = response.message ?? '';
+      final code = response.code;
+      if (code == Razorpay.PAYMENT_CANCELLED || msg.toLowerCase().contains('cancel')) {
+        completer.completeError(
+          const PaymentException('Payment was cancelled.'),
+        );
+      } else {
+        completer.completeError(
+          PaymentException(msg.isNotEmpty ? msg : 'Payment was declined or failed.'),
+        );
+      }
     });
 
     razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, (ExternalWalletResponse response) {
