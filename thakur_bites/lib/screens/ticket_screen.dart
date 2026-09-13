@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
+import 'package:qr_flutter/qr_flutter.dart';
 import '../models/order.dart' as app;
 import '../theme/app_theme.dart';
 import 'order_status_screen.dart';
@@ -403,18 +404,27 @@ class _TicketScreenState extends State<TicketScreen>
 
                 const SizedBox(height: 14),
 
-                // Verified QR Code Container
+                // Verified Scannable QR Code Container
                 Container(
-                  width: 80,
-                  height: 80,
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     border: Border.all(color: AppColors.line, width: 1.5),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Center(
-                    child: Icon(Icons.qr_code_2_rounded,
-                        size: 64, color: AppColors.ink),
+                  child: QrImageView(
+                    data: 'TB:${order.id}:${order.tokenNumber}:${order.pinCode}',
+                    version: QrVersions.auto,
+                    size: 96,
+                    backgroundColor: Colors.white,
+                    eyeStyle: const QrEyeStyle(
+                      eyeShape: QrEyeShape.square,
+                      color: AppColors.ink,
+                    ),
+                    dataModuleStyle: const QrDataModuleStyle(
+                      dataModuleShape: QrDataModuleShape.square,
+                      color: AppColors.ink,
+                    ),
                   ),
                 ),
 

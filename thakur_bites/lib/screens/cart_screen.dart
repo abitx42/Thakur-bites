@@ -375,27 +375,47 @@ class _CartItemRow extends StatelessWidget {
                       style: AppFonts.mono(fontSize: 12.5, color: AppColors.ink),
                     ),
                   ),
-                  // Plus — freely add, no stock limits at cart level
-                  GestureDetector(
-                    onTap: () {
-                      HapticFeedback.selectionClick();
-                      context.read<CartProvider>().addItem(item);
-                    },
-                    child: Container(
-                      width: 28,
-                      height: 28,
-                      decoration: const BoxDecoration(
-                        color: AppColors.ink,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Center(
-                        child: Text('+',
-                            style: TextStyle(
-                                color: Colors.white,
+                  // Plus — guarded by live available stock
+                  Builder(
+                    builder: (btnContext) {
+                      final isMaxStock = entry.qty >= item.availableStock;
+                      return GestureDetector(
+                        onTap: () {
+                          if (isMaxStock) {
+                            HapticFeedback.lightImpact();
+                            ScaffoldMessenger.of(btnContext).hideCurrentSnackBar();
+                            ScaffoldMessenger.of(btnContext).showSnackBar(
+                              SnackBar(
+                                content: Text('Only ${item.availableStock} ${item.name} available in stock.'),
+                                duration: const Duration(milliseconds: 1500),
+                              ),
+                            );
+                          } else {
+                            HapticFeedback.selectionClick();
+                            context.read<CartProvider>().addItem(item);
+                          }
+                        },
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: isMaxStock ? AppColors.surface2 : AppColors.ink,
+                            shape: BoxShape.circle,
+                            border: isMaxStock ? Border.all(color: AppColors.line) : null,
+                          ),
+                          child: Center(
+                            child: Text(
+                              '+',
+                              style: TextStyle(
+                                color: isMaxStock ? AppColors.inkSoft.withAlpha(120) : Colors.white,
                                 fontSize: 14,
-                                fontWeight: FontWeight.w500)),
-                      ),
-                    ),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),

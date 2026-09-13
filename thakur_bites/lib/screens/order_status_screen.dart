@@ -13,7 +13,9 @@ import '../services/eta_service.dart';
 import '../theme/app_theme.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'cart_screen.dart';
+import 'ticket_screen.dart';
 
 /// Phase 4 & Phase 8 — Advanced Real-time order status screen with dynamic ETA,
 /// 5-stage tracker, reservation countdown, payment reconciliation, atomic cancellation,
@@ -41,6 +43,36 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   bool _isCancelling = false;
   bool _isReconciling = false;
   bool _isPaying = false;
+  bool _isExpiring = false;
+
+  void _checkAndHandleExpiry(app.Order order) {
+    if (_isExpiring) return;
+    _isExpiring = true;
+    _expirePendingOrder(order);
+  }
+
+  Future<void> _expirePendingOrder(app.Order order) async {
+    try {
+      try {
+        await _functions.cancelOrder(
+          orderId: order.id,
+          reason: 'Reservation window expired (15 mins)',
+        );
+        return;
+      } catch (_) {}
+
+      // Direct Firestore fallback
+      await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
+        'status': 'cancelled',
+        'paymentStatus': 'expired',
+        'cancelReason': 'Reservation window expired (15 mins)',
+        'cancelledAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('[OrderStatusScreen] Auto-expiry notice: $e');
+    }
+  }
 
   int _selectedStars = 5;
   final Set<String> _selectedFeedbackTags = {'🔥 Crispy & Fresh', '⚡️ Fast Service'};
@@ -468,6 +500,12 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     final mins = (totalSeconds ~/ 60).toString().padLeft(2, '0');
     final secs = (totalSeconds % 60).toString().padLeft(2, '0');
 
+    if (isExpired && order.isPaymentPending && order.status == 'payment_pending') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _checkAndHandleExpiry(order);
+      });
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -631,6 +669,36 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
           ),
           const SizedBox(height: 14),
 
+          // Dynamic Hardware Scannable QR Code
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+            ),
+            child: QrImageView(
+              data: 'TB:${order.id}:${order.tokenNumber}:${order.pinCode}',
+              version: QrVersions.auto,
+              size: 130,
+              backgroundColor: Colors.white,
+              eyeStyle: const QrEyeStyle(
+                eyeShape: QrEyeShape.square,
+                color: Color(0xFF15803D),
+              ),
+              dataModuleStyle: const QrDataModuleStyle(
+                dataModuleShape: QrDataModuleShape.square,
+                color: Color(0xFF166534),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Scan QR code at counter scanner or read PIN',
+            style: AppFonts.body(fontSize: 11, color: const Color(0xFF166534)),
+          ),
+          const SizedBox(height: 12),
+
           // PIN Container
           GestureDetector(
             onTap: () {
@@ -679,6 +747,33 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
           Text(
             'Show this 4-digit PIN to the canteen staff at handover',
             style: AppFonts.body(fontSize: 11, color: const Color(0xFF166534)),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => TicketScreen(order: order),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.receipt_long_rounded, size: 16, color: Color(0xFF15803D)),
+              label: Text(
+                'View Full Digital Ticket',
+                style: AppFonts.body(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF15803D),
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFF4ADE80)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
           ),
         ],
       ),

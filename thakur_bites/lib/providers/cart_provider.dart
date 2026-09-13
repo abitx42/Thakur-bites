@@ -288,19 +288,23 @@ class CartProvider extends ChangeNotifier {
 
   // ─── Mutations ────────────────────────────────────────────────
 
-  /// Add one of this item to cart. Cart is a wishlist — bounded to 99 items per entry.
-  void addItem(MenuItem item) {
-    if (!item.isInStock) return; // Only block completely unavailable items
+  /// Add one of this item to cart. Cart is a wishlist — bounded by live available stock and 99 max.
+  bool addItem(MenuItem item) {
+    if (!item.isInStock) return false;
 
     if (_entries.containsKey(item.id)) {
-      if (_entries[item.id]!.qty < maxQuantityPerItem) {
-        _entries[item.id]!.qty++;
+      final currentQty = _entries[item.id]!.qty;
+      if (currentQty >= item.availableStock || currentQty >= maxQuantityPerItem) {
+        return false;
       }
+      _entries[item.id]!.qty++;
     } else {
+      if (item.availableStock <= 0) return false;
       _entries[item.id] = CartEntry(item: item);
     }
     _persistCartLocally();
     notifyListeners();
+    return true;
   }
 
   /// Remove one of this item from cart (removes entry if qty reaches 0)

@@ -83,5 +83,26 @@ void main() {
       expect(cart.getQty(dosa.id), 0);
       expect(cart.isEmpty, isTrue);
     });
+
+    test('Live availableStock limit prevents incrementing beyond stockOnHand', () {
+      final limitedItem = MenuItem(
+        id: 'bisleri_1',
+        name: 'Bisleri 500ml',
+        price: 10,
+        category: 'beverages',
+        type: 'instant',
+        prepMinutes: 0,
+        stockCount: 3,
+        available: true,
+      );
+
+      final cart = CartProvider(listenToLiveStock: false);
+      expect(cart.addItem(limitedItem), isTrue); // qty = 1
+      expect(cart.addItem(limitedItem), isTrue); // qty = 2
+      expect(cart.addItem(limitedItem), isTrue); // qty = 3
+      expect(cart.addItem(limitedItem), isFalse); // blocked at 3!
+      expect(cart.getQty(limitedItem.id), equals(3));
+      expect(cart.totalPrice, equals(30.0));
+    });
   });
 }

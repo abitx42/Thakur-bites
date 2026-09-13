@@ -102,7 +102,7 @@ service cloud.firestore {
            && request.resource.data.gatewayPaymentId.size() >= 6)
           ||
           (resource.data.status == 'payment_pending'
-           && request.resource.data.paymentStatus == 'failed'
+           && request.resource.data.paymentStatus in ['failed', 'expired', 'cancelled']
            && request.resource.data.status in ['payment_pending', 'cancelled'])
           ||
           (resource.data.status == 'confirmed'

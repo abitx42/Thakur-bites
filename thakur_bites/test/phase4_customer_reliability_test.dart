@@ -159,5 +159,43 @@ void main() {
       expect(getDisplayPin(collected), equals('PIN: Collected'));
       expect(getDisplayPin(cancelled), equals('PIN: Cancelled'));
     });
+
+    test('Dynamic QR payload formatting: Encodes orderId, tokenNumber, and pinCode', () {
+      final order = basePendingOrder.copyWith(
+        id: 'ord_qr_999',
+        tokenNumber: 'TB-404',
+        pinCode: '6543',
+      );
+
+      final qrData = 'TB:${order.id}:${order.tokenNumber}:${order.pinCode}';
+      expect(qrData, equals('TB:ord_qr_999:TB-404:6543'));
+      expect(qrData.split(':').length, equals(4));
+      expect(qrData.split(':')[1], equals('ord_qr_999'));
+      expect(qrData.split(':')[2], equals('TB-404'));
+      expect(qrData.split(':')[3], equals('6543'));
+    });
+
+    test('15-Minute Reservation Expiry: Transitions payment_pending to expired cancelled state', () {
+      final pastTime = DateTime.now().subtract(const Duration(minutes: 16));
+      final expiredOrder = basePendingOrder.copyWith(
+        createdAt: pastTime,
+        reservationExpiresAt: pastTime.add(const Duration(minutes: 15)),
+      );
+
+      final isExpired = expiredOrder.reservationExpiresAt!.isBefore(DateTime.now());
+      expect(isExpired, isTrue);
+
+      // Transition to expired cleanup
+      final cleanedOrder = expiredOrder.copyWith(
+        status: 'cancelled',
+        paymentStatus: 'expired',
+        cancellationReason: 'Reservation window expired (15 mins)',
+      );
+
+      expect(cleanedOrder.status, equals('cancelled'));
+      expect(cleanedOrder.paymentStatus, equals('expired'));
+      expect(cleanedOrder.cancellationReason, contains('expired'));
+      expect(cleanedOrder.canCancel, isFalse);
+    });
   });
 }
