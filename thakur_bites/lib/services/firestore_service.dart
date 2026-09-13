@@ -135,6 +135,7 @@ class FirestoreService {
   }
 
   /// Get all orders (most recent first)
+  @Deprecated('Staff-only operational stream. For customer orders, use userOrdersStream(userId)')
   Stream<List<app.Order>> ordersStream() {
     return _orders
         .orderBy('createdAt', descending: true)
