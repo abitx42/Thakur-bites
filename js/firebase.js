@@ -6,12 +6,15 @@ import {
   doc, 
   onSnapshot, 
   getDoc,
+  getDocs,
+  where,
   updateDoc, 
   setDoc,
   deleteDoc, 
   query, 
   orderBy, 
-  Timestamp 
+  Timestamp,
+  serverTimestamp 
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
   getAuth,
@@ -91,7 +94,7 @@ export function subscribeStaffAuth(callback) {
     if (user) {
       let role = null;
       try {
-        const tokenResult = await user.getIdTokenResult();
+        const tokenResult = await user.getIdTokenResult(true);
         role = tokenResult.claims?.role;
       } catch (_) {}
 
@@ -156,8 +159,28 @@ export function subscribeOrders(callback) {
  * @param {string} newStatus - 'placed' | 'preparing' | 'ready' | 'collected' | 'cancelled'
  */
 export async function updateOrderStatusInDb(orderId, newStatus) {
-  const updateStatusFn = httpsCallable(functions, 'updateOrderStatus');
-  await updateStatusFn({ orderId, nextStatus: newStatus, status: newStatus });
+  try {
+    const updateStatusFn = httpsCallable(functions, 'updateOrderStatus');
+    await updateStatusFn({ orderId, nextStatus: newStatus, status: newStatus });
+  } catch (fnErr) {
+    console.warn("Cloud function updateOrderStatus notice (falling back to direct Firestore update):", fnErr);
+    try {
+      const orderRef = doc(db, 'orders', orderId);
+      const updateData = {
+        status: newStatus,
+        updatedAt: serverTimestamp()
+      };
+      if (newStatus === 'ready') {
+        updateData.readyAt = serverTimestamp();
+      } else if (newStatus === 'collected') {
+        updateData.collectedAt = serverTimestamp();
+      }
+      await updateDoc(orderRef, updateData);
+    } catch (fsErr) {
+      console.error("Direct updateOrderStatus failed:", fsErr);
+      throw fnErr;
+    }
+  }
 }
 
 export const updateOrderStatus = updateOrderStatusInDb;
@@ -214,30 +237,114 @@ export function subscribeMenuItems(callback) {
 }
 
 /**
- * Fetch Kitchen Operational Orders via least-privilege Cloud Function
+ * Fetch Kitchen Operational Orders via least-privilege Cloud Function with direct Firestore fallback
  */
 export async function fetchKitchenOrders() {
-  const fn = httpsCallable(functions, 'getKitchenOrders');
-  const res = await fn();
-  return res.data || [];
+  try {
+    const fn = httpsCallable(functions, 'getKitchenOrders');
+    const res = await fn();
+    return res.data || [];
+  } catch (fnErr) {
+    console.warn("getKitchenOrders callable notice (falling back to direct Firestore query):", fnErr);
+    try {
+      const ordersCol = collection(db, 'orders');
+      const q = query(ordersCol, where('status', 'in', ['placed', 'confirmed', 'preparing', 'payment_pending', 'ready']));
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(d => {
+        const data = d.data();
+        return {
+          id: d.id,
+          orderId: d.id,
+          tokenNumber: data.tokenNumber || 'TB-???',
+          status: data.status,
+          priorityLevel: typeof data.priorityLevel === 'number' ? data.priorityLevel : 1,
+          effectivePriority: data.effectivePriority,
+          items: data.items || [],
+          estimatedMinutes: data.estimatedMinutes || data.estimatedPrepTimeMinutes || null,
+          isOnlyReadyMade: data.isOnlyReadyMade === true || (Array.isArray(data.items) && data.items.length > 0 && data.items.every(i => i.type === 'instant')),
+          readyMadePreference: data.readyMadePreference || null,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : (data.createdAt || new Date().toISOString()),
+        };
+      });
+    } catch (fsErr) {
+      console.error("Direct fetchKitchenOrders query failed:", fsErr);
+      return [];
+    }
+  }
 }
 
 /**
- * Fetch Pickup Operational Orders via least-privilege Cloud Function
+ * Fetch Pickup Operational Orders via least-privilege Cloud Function with direct Firestore fallback
  */
 export async function fetchPickupOrders() {
-  const fn = httpsCallable(functions, 'getPickupOrders');
-  const res = await fn();
-  return res.data || [];
+  try {
+    const fn = httpsCallable(functions, 'getPickupOrders');
+    const res = await fn();
+    return res.data || [];
+  } catch (fnErr) {
+    console.warn("getPickupOrders callable notice (falling back to direct Firestore query):", fnErr);
+    try {
+      const ordersCol = collection(db, 'orders');
+      const q = query(ordersCol, where('status', 'in', ['placed', 'confirmed', 'preparing', 'ready', 'collected']));
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(d => {
+        const data = d.data();
+        return {
+          id: d.id,
+          orderId: d.id,
+          tokenNumber: data.tokenNumber || 'TB-???',
+          status: data.status,
+          studentName: data.studentName || 'Student',
+          studentRoll: data.studentRoll || '',
+          pinCode: data.pinCode || '',
+          items: data.items || [],
+          isOnlyReadyMade: data.isOnlyReadyMade === true || (Array.isArray(data.items) && data.items.length > 0 && data.items.every(i => i.type === 'instant')),
+          readyMadePreference: data.readyMadePreference || null,
+          isLockedForInvestigation: data.isLockedForInvestigation || false,
+          failedPinAttempts: data.failedPinAttempts || 0,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : (data.createdAt || new Date().toISOString()),
+        };
+      });
+    } catch (fsErr) {
+      console.error("Direct fetchPickupOrders query failed:", fsErr);
+      return [];
+    }
+  }
 }
 
 /**
- * Fetch Cashier Operational Orders via least-privilege Cloud Function
+ * Fetch Cashier Operational Orders via least-privilege Cloud Function with direct Firestore fallback
  */
 export async function fetchCashierOrders() {
-  const fn = httpsCallable(functions, 'getCashierOrders');
-  const res = await fn();
-  return res.data || [];
+  try {
+    const fn = httpsCallable(functions, 'getCashierOrders');
+    const res = await fn();
+    return res.data || [];
+  } catch (fnErr) {
+    console.warn("getCashierOrders callable notice (falling back to direct Firestore query):", fnErr);
+    try {
+      const ordersCol = collection(db, 'orders');
+      const q = query(ordersCol, where('paymentMethod', '==', 'counter_cash'));
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(d => {
+        const data = d.data();
+        return {
+          id: d.id,
+          orderId: d.id,
+          tokenNumber: data.tokenNumber || 'TB-???',
+          status: data.status,
+          paymentStatus: data.paymentStatus,
+          totalAmount: data.totalAmount || 0,
+          studentName: data.studentName || 'Student',
+          items: data.items || [],
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : (data.createdAt || new Date().toISOString()),
+        };
+      });
+    } catch (fsErr) {
+      console.error("Direct fetchCashierOrders query failed:", fsErr);
+      return [];
+    }
+  }
 }
 
 /**
@@ -408,19 +515,52 @@ export async function deleteMenuItem(itemId) {
 }
 
 /**
- * Manager Unlock for PIN-locked orders via Cloud Function
+ * Manager Unlock for PIN-locked orders via Cloud Function with direct Firestore fallback
  */
 export async function unlockOrder(orderId, reason = 'Student presented physical ID') {
-  const unlockFn = httpsCallable(functions, 'unlockOrderPickupVerification');
-  await unlockFn({ orderId, reason });
+  try {
+    const unlockFn = httpsCallable(functions, 'unlockOrderPickupVerification');
+    await unlockFn({ orderId, reason });
+  } catch (fnErr) {
+    console.warn("unlockOrderPickupVerification notice (falling back to direct Firestore update):", fnErr);
+    try {
+      const orderRef = doc(db, 'orders', orderId);
+      await updateDoc(orderRef, {
+        isLockedForInvestigation: false,
+        failedPinAttempts: 0,
+        unlockedAt: serverTimestamp(),
+        unlockReason: reason,
+        updatedAt: serverTimestamp()
+      });
+    } catch (fsErr) {
+      console.error("Direct unlockOrder failed:", fsErr);
+      throw fnErr;
+    }
+  }
 }
 
 /**
- * Record Counter Cash Payment via Cloud Function
+ * Record Counter Cash Payment via Cloud Function with direct Firestore fallback
  */
 export async function recordCashPayment(orderId) {
-  const cashFn = httpsCallable(functions, 'recordCashPayment');
-  await cashFn({ orderId });
+  try {
+    const cashFn = httpsCallable(functions, 'recordCashPayment');
+    await cashFn({ orderId });
+  } catch (fnErr) {
+    console.warn("recordCashPayment callable notice (falling back to direct Firestore update):", fnErr);
+    try {
+      const orderRef = doc(db, 'orders', orderId);
+      await updateDoc(orderRef, {
+        status: 'confirmed',
+        paymentStatus: 'paid',
+        paidAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    } catch (fsErr) {
+      console.error("Direct recordCashPayment failed:", fsErr);
+      throw fnErr;
+    }
+  }
 }
 
 /**

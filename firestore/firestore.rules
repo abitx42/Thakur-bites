@@ -364,7 +364,7 @@ service cloud.firestore {
     // ─── TV Ephemeral Public Projection (Single Document Isolation) ─
     match /publicLiveQueue/current {
       allow read: if true;
-      allow write: if false;
+      allow write: if isOperationalStaff();
     }
 
     match /publicLiveQueue/{otherDoc} {

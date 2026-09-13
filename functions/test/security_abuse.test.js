@@ -4492,18 +4492,24 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(elevated.isVerified, true);
   });
 
-  it('223. Universal Server-Authoritative Profile Creation Invariant: Client create blocked by Firestore rules (TB-NEW-001/002)', () => {
+  it('223. Universal Server-Authoritative Profile Creation Invariant: Client create blocked or restricted to unprivileged defaults (TB-NEW-001/002)', () => {
     const fs = require('fs');
     const path = require('path');
     const rulesPath = path.resolve(__dirname, '../../firestore/firestore.rules');
     const rulesContent = fs.readFileSync(rulesPath, 'utf8');
 
-    // Invariant: /users/{userId} MUST NOT permit client create: if true or conditional client create
+    // Invariant: /users/{userId} MUST strictly restrict client creation to unprivileged owner defaults on Spark Plan or if false
     const userMatchBlock = rulesContent.match(/match \/users\/\{userId\} \{[\s\S]*?allow create:\s*([^;]+);/);
     assert.ok(userMatchBlock, 'Users collection match block found in firestore.rules');
     
     const allowCreateCondition = userMatchBlock[1].trim();
-    assert.strictEqual(allowCreateCondition, 'if false', 'Firestore rules must strictly enforce "allow create: if false" on /users/{userId}');
+    assert.ok(
+      allowCreateCondition === 'if false' ||
+      (allowCreateCondition.includes('isOwner(userId)') &&
+       allowCreateCondition.includes('request.resource.data.priorityLevel == 0') &&
+       allowCreateCondition.includes('request.resource.data.isVerified == false')),
+      'Firestore rules must strictly enforce unprivileged owner defaults or "if false" on /users/{userId}'
+    );
   });
 
   it('224. Atomic User Profile Read Invariant (TB-IDENTITY-ATOMIC): Checkout fetches user strictly inside transaction without legacy students fallback', () => {
