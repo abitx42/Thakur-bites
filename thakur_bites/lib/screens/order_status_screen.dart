@@ -447,10 +447,10 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
             order.cancellationReason ?? 'Cancelled before kitchen preparation began.',
             style: AppFonts.body(fontSize: 13, color: const Color(0xFF7F1D1D)),
           ),
-          if (order.isOnlinePayment && order.paymentStatus != 'pending') ...[
+          if (order.isOnlinePayment) ...[
             const SizedBox(height: 10),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(8),
@@ -458,12 +458,12 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.currency_rupee_rounded, size: 14, color: Color(0xFFB91C1C)),
+                  const Icon(Icons.currency_rupee_rounded, size: 15, color: Color(0xFFB91C1C)),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'Refund initiated: Funds will return to original payment method.',
-                      style: AppFonts.body(fontSize: 11.5, color: const Color(0xFF991B1B)),
+                      'If money was deducted, it will be refunded to your account in 1–2 days.',
+                      style: AppFonts.body(fontSize: 12, fontWeight: FontWeight.w600, color: const Color(0xFF991B1B)),
                     ),
                   ),
                 ],
@@ -991,8 +991,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                 children: [
                   Text(
                     order.paymentStatus == 'paid'
-                        ? 'Are you sure you want to cancel token #${order.tokenNumber}? A full refund of ₹${order.totalAmount.toInt()} will be credited back to your original payment method.\n\n⚠️ Once the kitchen begins preparing food, cancellation will be locked.'
-                        : 'Are you sure you want to cancel token #${order.tokenNumber}? Your reserved items will be released back to canteen stock.',
+                        ? 'Cancel token #${order.tokenNumber}? If money was deducted, it will be refunded to your account in 1–2 days.\n\n⚠️ Once the kitchen begins preparing food, cancellation is locked.'
+                        : 'Cancel token #${order.tokenNumber}? If any money was deducted, it will be refunded to your account in 1–2 days.',
                     style: AppFonts.body(fontSize: 12.5, color: AppColors.inkSoft),
                   ),
                   const SizedBox(height: 14),
@@ -1116,8 +1116,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(isPaid
-                    ? '✅ Order cancelled! A full refund of ₹${order.totalAmount.toInt()} has been initiated to your original payment method.'
-                    : 'Order cancelled. Your reserved items were returned to stock.'),
+                    ? '✅ Order cancelled. If money was deducted, it will be refunded in 1–2 days.'
+                    : 'Order cancelled. If money was deducted, it will be refunded in 1–2 days.'),
                 backgroundColor: const Color(0xFF16A34A),
               ),
             );
