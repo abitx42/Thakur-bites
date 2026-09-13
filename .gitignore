@@ -14,3 +14,7 @@ firebase-export/
 .vscode/
 *.apk
 apks/
+.DS_Store
+*.keystore
+*.jks
+*.p12
