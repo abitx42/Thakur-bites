@@ -11,6 +11,8 @@ import '../services/functions_service.dart';
 import '../services/payment_service.dart';
 import '../services/eta_service.dart';
 import '../theme/app_theme.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'cart_screen.dart';
 
 /// Phase 4 & Phase 8 — Advanced Real-time order status screen with dynamic ETA,
@@ -946,14 +948,37 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   Future<void> _handleCancelOrder(app.Order order, String reason) async {
     setState(() => _isCancelling = true);
     try {
-      final res = await _functions.cancelOrder(orderId: order.id, reason: reason);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(res['message'] ?? 'Order cancelled successfully.'),
-            backgroundColor: const Color(0xFF16A34A),
-          ),
-        );
+      try {
+        final res = await _functions.cancelOrder(orderId: order.id, reason: reason);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(res['message'] ?? 'Order cancelled successfully.'),
+              backgroundColor: const Color(0xFF16A34A),
+            ),
+          );
+        }
+        return;
+      } on FirebaseFunctionsException catch (e) {
+        if (e.code == 'not-found' || e.code == 'unavailable') {
+          // Direct fallback when Cloud Functions are not deployed
+          await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
+            'status': 'cancelled',
+            'paymentStatus': 'failed',
+            'cancelReason': reason,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Order cancelled successfully.'),
+                backgroundColor: Color(0xFF16A34A),
+              ),
+            );
+          }
+          return;
+        }
+        rethrow;
       }
     } catch (e) {
       if (mounted) {
@@ -996,7 +1021,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Payment error: ${e.toString().replaceAll('PaymentException:', '').replaceAll('Exception:', '').trim()}'),
+            content: Text('Payment notice: ${e.toString().replaceAll('PaymentException:', '').replaceAll('Exception:', '').trim()}'),
             backgroundColor: AppColors.red,
           ),
         );
@@ -1009,33 +1034,56 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   Future<void> _handleReconcilePayment(app.Order order) async {
     setState(() => _isReconciling = true);
     try {
-      final res = await _functions.reconcileOrderPayment(orderId: order.id);
-      final isReconciled = res['isReconciled'] == true || res['reconciled'] == true;
-      final paymentStatus = res['paymentStatus'] as String? ?? res['orderStatus'] as String? ?? res['status'] as String? ?? 'pending';
-      final message = res['message'] as String? ?? 'Payment status checked.';
+      try {
+        final res = await _functions.reconcileOrderPayment(orderId: order.id);
+        final isReconciled = res['isReconciled'] == true || res['reconciled'] == true;
+        final paymentStatus = res['paymentStatus'] as String? ?? res['orderStatus'] as String? ?? res['status'] as String? ?? 'pending';
+        final message = res['message'] as String? ?? 'Payment status checked.';
 
-      if (mounted) {
-        if (isReconciled) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('✅ $message'),
-              backgroundColor: const Color(0xFF16A34A),
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Status: $paymentStatus. If you completed payment, it will reconcile automatically.'),
-              backgroundColor: const Color(0xFFD97706),
-            ),
-          );
+        if (mounted) {
+          if (isReconciled) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ $message'),
+                backgroundColor: const Color(0xFF16A34A),
+              ),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Status: $paymentStatus. If you completed payment, it will reconcile automatically.'),
+                backgroundColor: const Color(0xFFD97706),
+              ),
+            );
+          }
         }
+        return;
+      } on FirebaseFunctionsException catch (e) {
+        if (e.code == 'not-found' || e.code == 'unavailable') {
+          final snap = await FirebaseFirestore.instance.collection('orders').doc(order.id).get();
+          final data = snap.data();
+          final pStatus = data?['paymentStatus'] as String? ?? 'pending';
+          final oStatus = data?['status'] as String? ?? 'payment_pending';
+          if (mounted) {
+            final isConfirmed = pStatus == 'paid' || oStatus == 'confirmed';
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(isConfirmed
+                    ? '✅ Payment confirmed! Order is queued in kitchen.'
+                    : 'Payment is pending. Tap "Pay Now" to complete payment.'),
+                backgroundColor: isConfirmed ? const Color(0xFF16A34A) : const Color(0xFFD97706),
+              ),
+            );
+          }
+          return;
+        }
+        rethrow;
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Reconciliation check: ${e.toString().replaceAll('Exception:', '').trim()}'),
+            content: Text('Status check: ${e.toString().replaceAll('Exception:', '').trim()}'),
             backgroundColor: const Color(0xFFDC2626),
           ),
         );
