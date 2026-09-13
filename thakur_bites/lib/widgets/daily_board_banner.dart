@@ -117,6 +117,12 @@ class DailyBoardBanner extends StatelessWidget {
                       _buildPill('🍛 ${board.sabji2}', const Color(0xFFFEF3C7), const Color(0xFF92400E)),
                     if (board.sweetOfTheDay.isNotEmpty)
                       _buildPill('🍯 ${board.sweetOfTheDay}', const Color(0xFFFEE2E2), const Color(0xFF991B1B)),
+                    if (!board.rotiAvailable && board.puriAvailable)
+                      _buildPill('⚠️ Chapati Over · Pooris Active', const Color(0xFFFEF3C7), const Color(0xFFB45309)),
+                    if (board.rotiAvailable && !board.puriAvailable)
+                      _buildPill('⚠️ Puri Over · Rotis Active', const Color(0xFFFEF3C7), const Color(0xFFB45309)),
+                    if (!board.hasAnyBread)
+                      _buildPill('❌ Breads Finished Today', const Color(0xFFFEE2E2), const Color(0xFF991B1B)),
                   ],
                 ),
 
@@ -262,6 +268,20 @@ class _DailyBoardDetailModal extends StatelessWidget {
               '• Sweet of the day: ${board.sweetOfTheDay}',
               '• Bread: 4 Tawa Rotis or 4 Fresh Puris (Free choice)',
             ],
+          ),
+          const SizedBox(height: 10),
+
+          // Live Bread Status
+          _buildSection(
+            title: 'LIVE BREAD STATUS',
+            icon: '🍞',
+            content: [
+              '• Chapati / Roti: ${board.rotiAvailable ? "In Stock (Fresh Tawa Rotis)" : "Finished for Today ❌"}',
+              '• Poori / Puri: ${board.puriAvailable ? "In Stock (Fresh Golden Puris)" : "Finished for Today ❌"}',
+              if (board.breadShortageNotice != null)
+                '👉 Notice: ${board.breadShortageNotice!}',
+            ],
+            isHighlight: !board.bothBreadsAvailable,
           ),
           const SizedBox(height: 10),
 

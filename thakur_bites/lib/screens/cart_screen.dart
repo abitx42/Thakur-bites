@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/order.dart' as app;
 import '../models/canteen_operational_status.dart';
+import '../models/daily_board.dart';
 import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
 import '../services/firestore_service.dart';
@@ -179,15 +180,22 @@ class _CartScreenState extends State<CartScreen> {
                   final bool showReadyMadeCard = cart.isOnlyReadyMade;
                   final itemCount = cart.entries.length + (showReadyMadeCard ? 1 : 0);
 
-                  return ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                    itemCount: itemCount,
-                    itemBuilder: (context, index) {
-                      if (index < cart.entries.length) {
-                        final entry = cart.entries[index];
-                        return _CartItemRow(entry: entry);
-                      }
-                      return ReadyMadePreferenceCard(cart: cart);
+                  return StreamBuilder<DailyBoard>(
+                    stream: _firestore.dailyBoardStream(),
+                    builder: (context, boardSnap) {
+                      final dailyBoard = boardSnap.data ?? DailyBoard.defaultForDay(DateTime.now());
+
+                      return ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                        itemCount: itemCount,
+                        itemBuilder: (context, index) {
+                          if (index < cart.entries.length) {
+                            final entry = cart.entries[index];
+                            return _CartItemRow(entry: entry, dailyBoard: dailyBoard);
+                          }
+                          return ReadyMadePreferenceCard(cart: cart);
+                        },
+                      );
                     },
                   );
                 },
@@ -240,8 +248,9 @@ class _CartScreenState extends State<CartScreen> {
 
 class _CartItemRow extends StatelessWidget {
   final CartEntry entry;
+  final DailyBoard? dailyBoard;
 
-  const _CartItemRow({required this.entry});
+  const _CartItemRow({required this.entry, this.dailyBoard});
 
   @override
   Widget build(BuildContext context) {
@@ -304,6 +313,47 @@ class _CartItemRow extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (dailyBoard != null &&
+                      entry.customization!.contains('Rotis') &&
+                      !dailyBoard!.rotiAvailable) ...[
+                    const SizedBox(height: 3),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF3C7),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: const Color(0xFFFDE68A), width: 0.8),
+                      ),
+                      child: Text(
+                        '⚠️ Chapatis finished: Kitchen will fulfill with fresh puris',
+                        style: AppFonts.body(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF92400E),
+                        ),
+                      ),
+                    ),
+                  ] else if (dailyBoard != null &&
+                      entry.customization!.contains('Puris') &&
+                      !dailyBoard!.puriAvailable) ...[
+                    const SizedBox(height: 3),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF3C7),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: const Color(0xFFFDE68A), width: 0.8),
+                      ),
+                      child: Text(
+                        '⚠️ Puris finished: Kitchen will fulfill with fresh tawa rotis',
+                        style: AppFonts.body(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF92400E),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
                 const SizedBox(height: 2),
                 if (!isAvailable) ...[

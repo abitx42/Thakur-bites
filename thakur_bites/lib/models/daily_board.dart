@@ -61,6 +61,31 @@ class DailyBoard {
     return 'Served with fresh daily sabji & salad';
   }
 
+  /// True if both bread choices are in stock
+  bool get bothBreadsAvailable => rotiAvailable && puriAvailable;
+
+  /// True if any bread choice is in stock
+  bool get hasAnyBread => rotiAvailable || puriAvailable;
+
+  /// Friendly upfront notice if one of the bread options has run out
+  String? get breadShortageNotice {
+    if (!rotiAvailable && puriAvailable) {
+      return 'Fresh Chapatis are finished for today! Your meal will be served with Fresh Hot Puris.';
+    } else if (rotiAvailable && !puriAvailable) {
+      return 'Fresh Puris are finished for today! Your meal will be served with Fresh Tawa Rotis.';
+    } else if (!rotiAvailable && !puriAvailable) {
+      return 'All breads are finished for today. Please check at counter or try Rice dishes.';
+    }
+    return null;
+  }
+
+  /// The default bread option based on current staff availability
+  String get defaultBreadChoice {
+    if (rotiAvailable) return '4 Tawa Rotis';
+    if (puriAvailable) return '4 Fresh Puris';
+    return 'Standard Serving';
+  }
+
   factory DailyBoard.fromFirestore(Map<String, dynamic> data) {
     return DailyBoard(
       date: data['date'] as String? ?? '',

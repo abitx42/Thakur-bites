@@ -35,13 +35,27 @@ class MenuItemCard extends StatelessWidget {
     if (board == null) return null;
     final lowerName = item.name.toLowerCase();
     final lowerSub = item.subCategory.toLowerCase();
+    final isMeal = lowerName.contains('thali') ||
+        lowerSub.contains('thali') ||
+        lowerName.contains('roti') ||
+        lowerName.contains('puri') ||
+        item.category.toLowerCase().contains('rotibhaji');
+
+    if (!isMeal) return null;
+
+    // Bread shortage notification alerts students upfront to prevent cancellations
+    if (!board.rotiAvailable && board.puriAvailable) {
+      return '⚠️ Chapati Over · Served with Fresh Puris';
+    } else if (board.rotiAvailable && !board.puriAvailable) {
+      return '⚠️ Puri Over · Served with Tawa Rotis';
+    } else if (!board.hasAnyBread) {
+      return '⚠️ Breads Sold Out for Today';
+    }
+
     if (lowerName.contains('thali') || lowerSub.contains('thali')) {
       return board.formatThaliSummary();
     }
-    if (lowerName.contains('roti') || lowerName.contains('puri') || item.category.toLowerCase().contains('rotibhaji')) {
-      return board.formatRotiBhajiSummary();
-    }
-    return null;
+    return board.formatRotiBhajiSummary();
   }
 
   @override
@@ -203,7 +217,11 @@ class MenuItemCard extends StatelessWidget {
                     style: AppFonts.body(
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.mustardInk,
+                      color: (dailyBoard != null && !dailyBoard!.hasAnyBread)
+                          ? AppColors.red
+                          : (dailyBoard != null && !dailyBoard!.bothBreadsAvailable)
+                              ? const Color(0xFFB45309)
+                              : AppColors.mustardInk,
                     ),
                     textAlign: TextAlign.center,
                     maxLines: 1,

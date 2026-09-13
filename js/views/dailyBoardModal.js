@@ -209,15 +209,49 @@ export function renderDailyBoardModal(container, onClose) {
           </div>
 
           <!-- Bread Availability Toggles (Roti & Puri) -->
-          <div style="display: flex; gap: 16px; background: #F8FAFC; border: 1.5px solid #E2E8F0; padding: 12px 16px; border-radius: 12px;">
-            <label style="display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; color: #334155; cursor: pointer;">
-              <input type="checkbox" id="board-roti-toggle" ${currentBoard.rotiAvailable !== false ? 'checked' : ''} style="width: 18px; height: 18px;">
-              🫓 Roti Available
-            </label>
-            <label style="display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; color: #334155; cursor: pointer;">
-              <input type="checkbox" id="board-puri-toggle" ${currentBoard.puriAvailable !== false ? 'checked' : ''} style="width: 18px; height: 18px;">
-              🟡 Puri Available
-            </label>
+          <div style="background: #F8FAFC; border: 1.5px solid #E2E8F0; padding: 14px 16px; border-radius: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-primary);">
+                🍞 LIVE BREAD STOCK CONTROLS (CHAPATI & POORI)
+              </label>
+              <span style="font-family: var(--font-mono); font-size: 0.72rem; color: #64748B;">
+                Real-time sync to student apps
+              </span>
+            </div>
+            <p style="font-family: var(--font-sans); font-size: 0.78rem; color: #475569; margin: 0 0 10px 0; line-height: 1.3;">
+              When Chapati or Poori gets over (mostly Chapati during lunch rush), toggle it OFF here. Student app automatically pre-selects the available bread &amp; alerts students upfront to prevent cancellations!
+            </p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <!-- Chapati Card -->
+              <div id="modal-roti-card" style="background: #FFF; border: 1.5px solid ${currentBoard.rotiAvailable !== false ? '#86EFAC' : '#FCA5A5'}; border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <div style="font-family: var(--font-sans); font-size: 0.9rem; font-weight: 700; color: #1E293B;">
+                    🫓 Chapati / Roti
+                  </div>
+                  <div id="modal-roti-status" style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: ${currentBoard.rotiAvailable !== false ? '#16A34A' : '#DC2626'}; margin-top: 2px;">
+                    ${currentBoard.rotiAvailable !== false ? '● IN STOCK' : '✕ OVER / SOLD OUT'}
+                  </div>
+                </div>
+                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; margin: 0;">
+                  <input type="checkbox" id="board-roti-toggle" ${currentBoard.rotiAvailable !== false ? 'checked' : ''} style="width: 20px; height: 20px; cursor: pointer; accent-color: #16A34A;">
+                </label>
+              </div>
+
+              <!-- Puri Card -->
+              <div id="modal-puri-card" style="background: #FFF; border: 1.5px solid ${currentBoard.puriAvailable !== false ? '#86EFAC' : '#FCA5A5'}; border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <div style="font-family: var(--font-sans); font-size: 0.9rem; font-weight: 700; color: #1E293B;">
+                    🟡 Poori / Puri
+                  </div>
+                  <div id="modal-puri-status" style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: ${currentBoard.puriAvailable !== false ? '#16A34A' : '#DC2626'}; margin-top: 2px;">
+                    ${currentBoard.puriAvailable !== false ? '● IN STOCK' : '✕ OVER / SOLD OUT'}
+                  </div>
+                </div>
+                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; margin: 0;">
+                  <input type="checkbox" id="board-puri-toggle" ${currentBoard.puriAvailable !== false ? 'checked' : ''} style="width: 20px; height: 20px; cursor: pointer; accent-color: #16A34A;">
+                </label>
+              </div>
+            </div>
           </div>
 
           <!-- Announcement -->
@@ -265,6 +299,31 @@ export function renderDailyBoardModal(container, onClose) {
           modalOverlay.querySelector('#board-special-input').value = val;
         }
       });
+    });
+
+    // Live feedback on bread checkbox toggles
+    const rotiCheckbox = modalOverlay.querySelector('#board-roti-toggle');
+    const rotiCard = modalOverlay.querySelector('#modal-roti-card');
+    const rotiStatus = modalOverlay.querySelector('#modal-roti-status');
+    rotiCheckbox?.addEventListener('change', () => {
+      const isOk = rotiCheckbox.checked;
+      if (rotiCard) rotiCard.style.borderColor = isOk ? '#86EFAC' : '#FCA5A5';
+      if (rotiStatus) {
+        rotiStatus.style.color = isOk ? '#16A34A' : '#DC2626';
+        rotiStatus.textContent = isOk ? '● IN STOCK' : '✕ OVER / SOLD OUT';
+      }
+    });
+
+    const puriCheckbox = modalOverlay.querySelector('#board-puri-toggle');
+    const puriCard = modalOverlay.querySelector('#modal-puri-card');
+    const puriStatus = modalOverlay.querySelector('#modal-puri-status');
+    puriCheckbox?.addEventListener('change', () => {
+      const isOk = puriCheckbox.checked;
+      if (puriCard) puriCard.style.borderColor = isOk ? '#86EFAC' : '#FCA5A5';
+      if (puriStatus) {
+        puriStatus.style.color = isOk ? '#16A34A' : '#DC2626';
+        puriStatus.textContent = isOk ? '● IN STOCK' : '✕ OVER / SOLD OUT';
+      }
     });
 
     // Reset button

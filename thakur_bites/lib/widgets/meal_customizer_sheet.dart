@@ -52,15 +52,22 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
       widget.item.subCategory.toLowerCase().contains('thali');
 
   @override
+  @override
   void initState() {
     super.initState();
-    // Default bread is Roti (unless staff turned off roti)
-    if (widget.dailyBoard.rotiAvailable) {
+    final board = widget.dailyBoard;
+    // Auto-selection rule:
+    // If both available: ask student, default selection is 4 Tawa Rotis
+    // If only Puri available (Chapatis finished): automatically pre-select 4 Fresh Puris
+    // If only Roti available (Puris finished): automatically pre-select 4 Tawa Rotis
+    if (board.rotiAvailable && board.puriAvailable) {
       _selectedBread = '4 Tawa Rotis';
-    } else if (widget.dailyBoard.puriAvailable) {
+    } else if (board.puriAvailable) {
       _selectedBread = '4 Fresh Puris';
+    } else if (board.rotiAvailable) {
+      _selectedBread = '4 Tawa Rotis';
     } else {
-      _selectedBread = 'Standard Serving';
+      _selectedBread = 'No Breads Available';
     }
 
     // Default gravy
@@ -92,6 +99,98 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
       parts.add(note);
     }
     return parts.join(' • ');
+  }
+
+  Widget _buildBreadNoticeBanner(DailyBoard board) {
+    final notice = board.breadShortageNotice;
+    if (notice == null) return const SizedBox.shrink();
+
+    final isChapatiOver = !board.rotiAvailable && board.puriAvailable;
+    final isPuriOver = board.rotiAvailable && !board.puriAvailable;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFDE68A), width: 1.5),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(5),
+            decoration: const BoxDecoration(
+              color: Color(0xFFFEF3C7),
+              shape: BoxShape.circle,
+            ),
+            child: Text(
+              isChapatiOver ? '🫓' : (isPuriOver ? '🟡' : '⚠️'),
+              style: const TextStyle(fontSize: 16),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      isChapatiOver
+                          ? 'CHAPATIS FINISHED'
+                          : (isPuriOver ? 'PURIS FINISHED' : 'BREADS SOLD OUT'),
+                      style: AppFonts.mono(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF92400E),
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEE2E2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        'STOCK UPDATE',
+                        style: AppFonts.mono(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF991B1B),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  notice,
+                  style: AppFonts.body(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF78350F),
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Order will be prepared with the available bread so there is no delay at pickup.',
+                  style: AppFonts.body(
+                    fontSize: 11,
+                    color: const Color(0xFFB45309),
+                    height: 1.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -183,7 +282,10 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
             ),
           ),
 
-          const Divider(color: AppColors.line, height: 16),
+          // Upfront Bread Stock Notice Banner
+          _buildBreadNoticeBanner(board),
+
+          const Divider(color: AppColors.line, height: 12),
 
           // Customization Options List
           Flexible(
@@ -193,37 +295,82 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
               children: [
                 // 1. Bread Selection
                 Text(
-                  'CHOOSE YOUR BREAD',
+                  board.bothBreadsAvailable
+                      ? 'CHOOSE YOUR BREAD'
+                      : (!board.rotiAvailable && board.puriAvailable)
+                          ? 'BREAD SELECTION (Chapatis Finished · Puris Auto-Selected)'
+                          : (board.rotiAvailable && !board.puriAvailable)
+                              ? 'BREAD SELECTION (Puris Finished · Rotis Auto-Selected)'
+                              : 'BREAD SELECTION (All Breads Sold Out)',
                   style: AppFonts.mono(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.inkSoft,
+                    color: !board.hasAnyBread
+                        ? AppColors.red
+                        : (!board.bothBreadsAvailable ? const Color(0xFFB45309) : AppColors.inkSoft),
                     letterSpacing: 0.5,
                   ),
                 ),
                 const SizedBox(height: 8),
 
-                if (board.rotiAvailable)
-                  _buildOptionTile(
-                    title: '4 Tawa Rotis',
-                    subtitle: 'Fresh hot whole-wheat tawa rotis',
-                    badge: 'Same Price',
-                    icon: '🫓',
-                    isSelected: _selectedBread == '4 Tawa Rotis',
-                    onTap: () => setState(() => _selectedBread = '4 Tawa Rotis'),
-                  ),
+                _buildOptionTile(
+                  title: '4 Tawa Rotis',
+                  subtitle: board.rotiAvailable
+                      ? 'Fresh hot whole-wheat tawa rotis'
+                      : 'Finished for today · Stock exhausted',
+                  badge: board.rotiAvailable ? 'Same Price' : 'OVER / SOLD OUT ❌',
+                  icon: '🫓',
+                  isEnabled: board.rotiAvailable,
+                  isSelected: _selectedBread == '4 Tawa Rotis',
+                  onTap: () {
+                    if (board.rotiAvailable) {
+                      setState(() => _selectedBread = '4 Tawa Rotis');
+                    } else {
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Chapatis are finished for today! Your meal will be served with fresh puris.',
+                            style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                          backgroundColor: const Color(0xFFB45309),
+                          duration: const Duration(seconds: 3),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    }
+                  },
+                ),
 
-                if (board.puriAvailable) ...[
-                  const SizedBox(height: 6),
-                  _buildOptionTile(
-                    title: '4 Fresh Puris',
-                    subtitle: 'Golden, freshly fried hot puris',
-                    badge: 'Same Price',
-                    icon: '🟡',
-                    isSelected: _selectedBread == '4 Fresh Puris',
-                    onTap: () => setState(() => _selectedBread = '4 Fresh Puris'),
-                  ),
-                ],
+                const SizedBox(height: 6),
+                _buildOptionTile(
+                  title: '4 Fresh Puris',
+                  subtitle: board.puriAvailable
+                      ? 'Golden, freshly fried hot puris'
+                      : 'Finished for today · Stock exhausted',
+                  badge: board.puriAvailable ? 'Same Price' : 'OVER / SOLD OUT ❌',
+                  icon: '🟡',
+                  isEnabled: board.puriAvailable,
+                  isSelected: _selectedBread == '4 Fresh Puris',
+                  onTap: () {
+                    if (board.puriAvailable) {
+                      setState(() => _selectedBread = '4 Fresh Puris');
+                    } else {
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Puris are finished for today! Your meal will be served with fresh tawa rotis.',
+                            style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                          backgroundColor: const Color(0xFFB45309),
+                          duration: const Duration(seconds: 3),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    }
+                  },
+                ),
 
                 const SizedBox(height: 16),
 
@@ -352,30 +499,34 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
             child: ElevatedButton(
-              onPressed: () {
-                final customization = _buildCustomizationSummary();
-                context.read<CartProvider>().addItem(
-                  widget.item,
-                  customization: customization,
-                );
-                Navigator.of(context).pop();
+              onPressed: !board.hasAnyBread
+                  ? null
+                  : () {
+                      final customization = _buildCustomizationSummary();
+                      context.read<CartProvider>().addItem(
+                        widget.item,
+                        customization: customization,
+                      );
+                      Navigator.of(context).pop();
 
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Added ${widget.item.name} ($customization) to cart',
-                      style: AppFonts.body(fontSize: 13, color: Colors.white),
-                    ),
-                    duration: const Duration(seconds: 2),
-                    backgroundColor: AppColors.ink,
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              },
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Added ${widget.item.name} ($customization) to cart',
+                            style: AppFonts.body(fontSize: 13, color: Colors.white),
+                          ),
+                          duration: const Duration(seconds: 2),
+                          backgroundColor: AppColors.ink,
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.ink,
                 foregroundColor: Colors.white,
+                disabledBackgroundColor: AppColors.line,
+                disabledForegroundColor: AppColors.inkSoft,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -383,11 +534,13 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                 elevation: 0,
               ),
               child: Text(
-                'Add to Cart • ₹${widget.item.price.toInt()}',
+                !board.hasAnyBread
+                    ? 'All Breads Sold Out for Today'
+                    : 'Add to Cart • ₹${widget.item.price.toInt()}',
                 style: AppFonts.body(
                   fontSize: 14.5,
                   fontWeight: FontWeight.w700,
-                  color: Colors.white,
+                  color: !board.hasAnyBread ? AppColors.inkSoft : Colors.white,
                 ),
               ),
             ),
@@ -402,9 +555,12 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
     required String subtitle,
     required String icon,
     String? badge,
+    bool isEnabled = true,
     required bool isSelected,
     required VoidCallback onTap,
   }) {
+    final effectiveSelected = isEnabled && isSelected;
+
     return GestureDetector(
       onTap: () {
         HapticFeedback.selectionClick();
@@ -414,16 +570,23 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.surface2 : AppColors.surface,
+          color: !isEnabled
+              ? const Color(0xFFF8FAFC)
+              : (effectiveSelected ? AppColors.surface2 : AppColors.surface),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? AppColors.ink : AppColors.line,
-            width: isSelected ? 1.8 : 1.0,
+            color: !isEnabled
+                ? const Color(0xFFE2E8F0)
+                : (effectiveSelected ? AppColors.ink : AppColors.line),
+            width: effectiveSelected ? 1.8 : 1.0,
           ),
         ),
         child: Row(
           children: [
-            Text(icon, style: const TextStyle(fontSize: 20)),
+            Opacity(
+              opacity: isEnabled ? 1.0 : 0.45,
+              child: Text(icon, style: const TextStyle(fontSize: 20)),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -435,8 +598,8 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                         title,
                         style: AppFonts.body(
                           fontSize: 13.5,
-                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                          color: AppColors.ink,
+                          fontWeight: effectiveSelected ? FontWeight.w700 : FontWeight.w500,
+                          color: isEnabled ? AppColors.ink : AppColors.inkSoft,
                         ),
                       ),
                       if (badge != null) ...[
@@ -444,7 +607,9 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFDCFCE7),
+                            color: !isEnabled
+                                ? const Color(0xFFFEE2E2)
+                                : const Color(0xFFDCFCE7),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
@@ -452,7 +617,9 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                             style: AppFonts.mono(
                               fontSize: 9.5,
                               fontWeight: FontWeight.w700,
-                              color: const Color(0xFF166534),
+                              color: !isEnabled
+                                  ? const Color(0xFFDC2626)
+                                  : const Color(0xFF166534),
                             ),
                           ),
                         ),
@@ -464,7 +631,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                     subtitle,
                     style: AppFonts.body(
                       fontSize: 11.5,
-                      color: AppColors.inkSoft,
+                      color: isEnabled ? AppColors.inkSoft : const Color(0xFF94A3B8),
                     ),
                   ),
                 ],
@@ -476,14 +643,20 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: isSelected ? AppColors.ink : AppColors.line,
+                  color: !isEnabled
+                      ? const Color(0xFFCBD5E1)
+                      : (effectiveSelected ? AppColors.ink : AppColors.line),
                   width: 2,
                 ),
-                color: isSelected ? AppColors.ink : Colors.transparent,
+                color: !isEnabled
+                    ? const Color(0xFFF1F5F9)
+                    : (effectiveSelected ? AppColors.ink : Colors.transparent),
               ),
-              child: isSelected
-                  ? const Icon(Icons.check, size: 13, color: Colors.white)
-                  : null,
+              child: !isEnabled
+                  ? const Center(child: Icon(Icons.block, size: 11, color: Color(0xFF94A3B8)))
+                  : (effectiveSelected
+                      ? const Icon(Icons.check, size: 13, color: Colors.white)
+                      : null),
             ),
           ],
         ),

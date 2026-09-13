@@ -91,6 +91,61 @@ void main() {
       expect(reconstructed.isRushHour, isTrue);
       expect(reconstructed.updatedBy, equals('staff_1'));
     });
+
+    test('Bread stock availability logic and shortage notice generation', () {
+      // Both available
+      final bothAvailable = DailyBoard(
+        sabji1: 'Paneer Butter Masala',
+        sabji2: 'Chana Masala',
+        canteenSpecial: '',
+        rotiAvailable: true,
+        puriAvailable: true,
+      );
+      expect(bothAvailable.bothBreadsAvailable, isTrue);
+      expect(bothAvailable.hasAnyBread, isTrue);
+      expect(bothAvailable.breadShortageNotice, isNull);
+      expect(bothAvailable.defaultBreadChoice, equals('4 Tawa Rotis'));
+
+      // Chapati over (mostly common during lunch rush)
+      final chapatiOver = DailyBoard(
+        sabji1: 'Paneer Butter Masala',
+        sabji2: 'Chana Masala',
+        canteenSpecial: '',
+        rotiAvailable: false,
+        puriAvailable: true,
+      );
+      expect(chapatiOver.bothBreadsAvailable, isFalse);
+      expect(chapatiOver.hasAnyBread, isTrue);
+      expect(chapatiOver.defaultBreadChoice, equals('4 Fresh Puris'));
+      expect(chapatiOver.breadShortageNotice, contains('Chapatis are finished'));
+      expect(chapatiOver.breadShortageNotice, contains('Fresh Hot Puris'));
+
+      // Puri over
+      final puriOver = DailyBoard(
+        sabji1: 'Paneer Butter Masala',
+        sabji2: 'Chana Masala',
+        canteenSpecial: '',
+        rotiAvailable: true,
+        puriAvailable: false,
+      );
+      expect(puriOver.bothBreadsAvailable, isFalse);
+      expect(puriOver.hasAnyBread, isTrue);
+      expect(puriOver.defaultBreadChoice, equals('4 Tawa Rotis'));
+      expect(puriOver.breadShortageNotice, contains('Puris are finished'));
+      expect(puriOver.breadShortageNotice, contains('Tawa Rotis'));
+
+      // Both over
+      final bothOver = DailyBoard(
+        sabji1: 'Paneer Butter Masala',
+        sabji2: 'Chana Masala',
+        canteenSpecial: '',
+        rotiAvailable: false,
+        puriAvailable: false,
+      );
+      expect(bothOver.hasAnyBread, isFalse);
+      expect(bothOver.defaultBreadChoice, equals('Standard Serving'));
+      expect(bothOver.breadShortageNotice, contains('All breads are finished'));
+    });
   });
 
   group('Day-Specific MenuItem Availability Tests', () {
