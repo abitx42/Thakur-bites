@@ -228,7 +228,7 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
   if (!razorpayKeyId && isProduction) {
     throw new Error('FATAL: RAZORPAY_KEY_ID is missing in production environment.');
   }
-  razorpayKeyId = razorpayKeyId || 'rzp_test_tcet_canteen';
+  razorpayKeyId = razorpayKeyId || 'rzp_test_Tbboxi8EfG7NMJ';
 
   const response: PaymentSessionResponse = {
     orderId,

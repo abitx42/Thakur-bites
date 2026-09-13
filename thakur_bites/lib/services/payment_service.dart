@@ -56,7 +56,7 @@ class PaymentService {
     String razorpayOrderId = '';
     String keyId = const String.fromEnvironment(
       'RAZORPAY_KEY_ID',
-      defaultValue: 'rzp_test_tcet_canteen',
+      defaultValue: 'rzp_test_Tbboxi8EfG7NMJ',
     );
 
     // Step 1: Attempt server-side Razorpay order creation if Cloud Functions are deployed

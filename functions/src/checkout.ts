@@ -376,7 +376,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         signedQrPayload,
         gatewayOrderId,
         amountPaise: calculatedTotalPaise,
-        keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_tcet_canteen',
+        keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_Tbboxi8EfG7NMJ',
       };
     });
 
