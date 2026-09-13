@@ -80,7 +80,17 @@ class CartProvider extends ChangeNotifier {
   /// Switch the active user session for cart isolation.
   Future<void> switchUser(String? newUserId) async {
     if (_userId == newUserId) return;
+    final previousUserId = _userId;
     _userId = newUserId;
+
+    // If migrating from guest / unauthenticated into a logged-in user,
+    // preserve any items currently in the cart wishlist!
+    if ((previousUserId == null || previousUserId.isEmpty) && _entries.isNotEmpty) {
+      await _persistCartLocally();
+      notifyListeners();
+      return;
+    }
+
     _entries.clear();
     _priceChangeAlerts.clear();
     await _loadPersistedCart();

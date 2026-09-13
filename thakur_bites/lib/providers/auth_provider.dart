@@ -21,9 +21,9 @@ class AuthProvider extends ChangeNotifier {
 
   bool get isLoggedIn => _currentUserProfile != null && !isGuest;
   bool get isGuest =>
-      (_authService.currentUser?.isAnonymous ?? false) ||
+      _currentUserProfile == null ||
       _isGuestBrowsing ||
-      (_currentUserProfile?.accountType == AccountType.visitor);
+      (_authService.currentUser?.isAnonymous ?? false);
   bool get isVerified => _currentUserProfile?.isVerified ?? false;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
@@ -45,14 +45,15 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1. Process any pending OAuth web redirect results
       final redirectProfile = await _authService.checkRedirectResult();
       if (redirectProfile != null) {
         _currentUserProfile = redirectProfile;
+        _isGuestBrowsing = false;
       } else {
         final user = _authService.currentUser;
         if (user != null) {
           _currentUserProfile = await _authService.getUserProfile(user.uid);
+          _isGuestBrowsing = false;
         }
       }
     } catch (e) {
@@ -66,6 +67,7 @@ class AuthProvider extends ChangeNotifier {
       if (user == null) {
         _currentUserProfile = null;
       } else {
+        _isGuestBrowsing = false;
         try {
           _currentUserProfile = await _authService.getUserProfile(user.uid);
         } catch (e) {
@@ -79,6 +81,7 @@ class AuthProvider extends ChangeNotifier {
   /// Sign In with Google (Google Identity Platform)
   Future<void> signInWithGoogle() async {
     _isLoading = true;
+    _isGuestBrowsing = false;
     _errorMessage = null;
     notifyListeners();
 

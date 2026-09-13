@@ -1259,7 +1259,34 @@ class _MenuScreenState extends State<MenuScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         ),
-                        onPressed: () => auth.signInWithGoogle(),
+                        onPressed: () async {
+                          try {
+                            await auth.signInWithGoogle();
+                            if (context.mounted) {
+                              final name = auth.currentProfile?.displayName ?? 'Student';
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Welcome, $name! 👋'),
+                                  backgroundColor: AppColors.green,
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                              );
+                            }
+                          } catch (e) {
+                            if (context.mounted) {
+                              final msg = e.toString().replaceAll('Exception:', '').trim();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(msg),
+                                  backgroundColor: AppColors.red,
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                              );
+                            }
+                          }
+                        },
                         child: const Text('Sign in', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
                       ),
                     ],
