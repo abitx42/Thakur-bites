@@ -49,6 +49,7 @@ export type PaymentMethod = 'online' | 'counter_cash';
 export interface CheckoutRequestItem {
   itemId: string;
   quantity: number;
+  customization?: string;
 }
 
 export interface CheckoutRequest {
@@ -69,6 +70,7 @@ export interface OrderItemSnapshot {
   subtotalPaise: number; // Integer paise representation
   type: 'cooked' | 'instant';
   station: string;
+  customization?: string;
 }
 
 export interface OrderDocument {

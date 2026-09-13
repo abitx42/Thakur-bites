@@ -584,7 +584,7 @@ function renderOrderCard(order, isReady) {
           </div>
           ${items.map(item => `
             <div style="display: flex; justify-content: space-between; font-family: var(--font-sans); font-size: 0.85rem; margin-bottom: 2px;">
-              <span>${item.quantity}x ${escapeHtml(item.name || item.itemId)}</span>
+              <span>${item.quantity}x ${escapeHtml(item.name || item.itemId)}${item.customization ? ` <span style="font-size: 0.75rem; font-weight: 700; color: #D97706;">(${escapeHtml(item.customization)})</span>` : ''}</span>
             </div>
           `).join('')}
         </div>

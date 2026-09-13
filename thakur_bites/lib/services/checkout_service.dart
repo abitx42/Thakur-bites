@@ -40,10 +40,12 @@ class CheckoutService {
       throw Exception('User must be signed in to checkout.');
     }
 
-    // Build the items list (just IDs + quantities — server re-prices from DB)
+    // Build the items list (just IDs + quantities + customization — server re-prices from DB)
     final items = entries.map((e) => {
       'itemId': e.item.id,
       'quantity': e.qty,
+      if (e.customization != null && e.customization!.isNotEmpty)
+        'customization': e.customization,
     }).toList();
 
     try {
@@ -228,6 +230,7 @@ class CheckoutService {
         quantity: e.qty,
         price: e.item.price,
         type: e.item.type,
+        customization: e.customization,
       );
     }).toList();
 

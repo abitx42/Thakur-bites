@@ -16,6 +16,7 @@ import { staffAuth } from '../auth.js?v=8';
 import { doc, onSnapshot, collection, query, where } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
+import { renderDailyBoardModal } from './dailyBoardModal.js?v=1';
 
 let unsubscribeMenu = null;
 let unsubscribeStatus = null;
@@ -186,13 +187,22 @@ export function renderAdminView(container, options = {}) {
             </p>
           </div>
 
-          <button 
-            id="open-add-modal-btn"
-            style="padding: 10px 20px; border-radius: 999px; background: var(--brand-red); color: #FFF; border: none; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(214,64,43,0.25);"
-          >
-            <span>+</span>
-            <span>Add New Dish</span>
-          </button>
+          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button 
+              id="admin-open-daily-board-btn"
+              style="padding: 10px 18px; border-radius: 999px; background: #FFFBEB; color: #92400E; border: 1.5px solid #F59E0B; font-family: var(--font-sans); font-size: 0.92rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(245,158,11,0.2);"
+            >
+              <span>🍱</span>
+              <span>Today's Daily Board</span>
+            </button>
+            <button 
+              id="open-add-modal-btn"
+              style="padding: 10px 20px; border-radius: 999px; background: var(--brand-red); color: #FFF; border: none; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(214,64,43,0.25);"
+            >
+              <span>+</span>
+              <span>Add New Dish</span>
+            </button>
+          </div>
         </div>
 
         <!-- Menu Health & KPI Statistics Bar -->
@@ -1209,6 +1219,20 @@ export function renderAdminView(container, options = {}) {
     `;
 
     // ─── Listeners & Interactions ───────────────────────────────────
+
+    // Open/Close Daily Board Modal
+    const openDailyBoardBtn = container.querySelector('#admin-open-daily-board-btn');
+    if (openDailyBoardBtn) {
+      openDailyBoardBtn.addEventListener('click', () => {
+        let modalCont = container.querySelector('#admin-daily-board-modal-container');
+        if (!modalCont) {
+          modalCont = document.createElement('div');
+          modalCont.id = 'admin-daily-board-modal-container';
+          container.appendChild(modalCont);
+        }
+        renderDailyBoardModal(modalCont);
+      });
+    }
 
     // Open/Close Add Modal
     const openAddBtn = container.querySelector('#open-add-modal-btn');

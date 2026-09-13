@@ -371,6 +371,17 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ─── Daily Menu Board & Canteen Specials ──────────────────────
+    match /canteenConfig/{configId} {
+      allow read: if true;
+      allow write: if isOperationalStaff();
+    }
+
+    match /dailyBoard/{docId} {
+      allow read: if true;
+      allow write: if isOperationalStaff();
+    }
+
     // ─── Authoritative Claims (Isolated Server State) ────────────
     match /authoritativeClaims/{uid} {
       allow read, write: if false; // Server Admin SDK only

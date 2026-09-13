@@ -226,6 +226,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
           maxPrepMinutes = prepMinutes;
         }
 
+        const originalCustom = items.find(i => i.itemId === req.itemId && i.customization)?.customization;
         orderItemSnapshots.push({
           itemId: req.itemId,
           name: menuData.name,
@@ -236,6 +237,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
           subtotalPaise,
           type,
           station: menuData.category || 'general',
+          ...(originalCustom ? { customization: String(originalCustom).substring(0, 100) } : {}),
         });
       }
 

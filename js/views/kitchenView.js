@@ -345,9 +345,12 @@ export function renderKitchenView(container) {
                             <span style="background: var(--brand-red); color: #FFF; font-size: 1.1rem; font-weight: 800; padding: 3px 9px; border-radius: 6px;">
                               ${escapeHtml(item.quantity)}x
                             </span>
-                            <span style="font-size: 1rem; font-weight: 700; color: var(--ink-primary); font-family: var(--font-sans);">
-                              ${escapeHtml(item.name)}
-                            </span>
+                            <div>
+                              <div style="font-size: 1rem; font-weight: 700; color: var(--ink-primary); font-family: var(--font-sans);">
+                                ${escapeHtml(item.name)}
+                              </div>
+                              ${item.customization ? `<div style="font-size: 0.8rem; font-weight: 700; color: #D97706; margin-top: 2px;">⚡ ${escapeHtml(item.customization)}</div>` : ''}
+                            </div>
                           </div>
                           ${item.station ? `<span style="font-size: 0.72rem; font-weight: 700; color: #64748B; text-transform: uppercase; background: #FFF; padding: 3px 8px; border-radius: 6px; border: 1px solid #CBD5E1;">${escapeHtml(item.station)}</span>` : ''}
                         </div>
@@ -524,9 +527,12 @@ export function renderKitchenView(container) {
                     <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 1.2rem;">
                       ${(order.items || []).map(item => `
                         <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-surface); padding: 8px 12px; border-radius: 8px; font-family: var(--font-mono);">
-                          <span style="font-size: 1rem; font-weight: 700; color: var(--ink-primary);">
-                            ${escapeHtml(item.quantity)}x ${escapeHtml(item.name)}
-                          </span>
+                          <div>
+                            <span style="font-size: 1rem; font-weight: 700; color: var(--ink-primary);">
+                              ${escapeHtml(item.quantity)}x ${escapeHtml(item.name)}
+                            </span>
+                            ${item.customization ? `<div style="font-size: 0.75rem; font-weight: 700; color: #D97706; margin-top: 1px;">⚡ ${escapeHtml(item.customization)}</div>` : ''}
+                          </div>
                           ${item.station ? `<span style="font-size: 0.72rem; font-weight: 700; color: var(--ink-secondary); text-transform: uppercase; background: #FFF; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-light);">${escapeHtml(item.station)}</span>` : ''}
                         </div>
                       `).join('')}

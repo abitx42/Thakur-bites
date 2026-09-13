@@ -273,7 +273,7 @@ class _CartItemRow extends StatelessWidget {
           ),
           const SizedBox(width: 12),
 
-          // Name + price
+          // Name + price + customization
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -286,6 +286,25 @@ class _CartItemRow extends StatelessWidget {
                     color: isAvailable ? AppColors.ink : AppColors.inkSoft,
                   ),
                 ),
+                if (entry.customization != null && entry.customization!.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.mustardSoft,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: AppColors.mustardInk.withAlpha(50), width: 0.8),
+                    ),
+                    child: Text(
+                      entry.customization!,
+                      style: AppFonts.body(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.mustardInk,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 2),
                 if (!isAvailable) ...[
                   Container(
@@ -315,7 +334,8 @@ class _CartItemRow extends StatelessWidget {
             GestureDetector(
               onTap: () {
                 HapticFeedback.selectionClick();
-                context.read<CartProvider>().deleteItem(item.id);
+                final entryKey = CartProvider.entryKey(item.id, entry.customization);
+                context.read<CartProvider>().deleteItem(entryKey);
               },
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -350,7 +370,8 @@ class _CartItemRow extends StatelessWidget {
                   GestureDetector(
                     onTap: () {
                       HapticFeedback.selectionClick();
-                      context.read<CartProvider>().removeItem(item.id);
+                      final entryKey = CartProvider.entryKey(item.id, entry.customization);
+                      context.read<CartProvider>().removeItem(entryKey);
                     },
                     child: Container(
                       width: 28,
@@ -392,7 +413,7 @@ class _CartItemRow extends StatelessWidget {
                             );
                           } else {
                             HapticFeedback.selectionClick();
-                            context.read<CartProvider>().addItem(item);
+                            context.read<CartProvider>().addItem(item, customization: entry.customization);
                           }
                         },
                         child: Container(

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/canteen_operational_status.dart';
+import '../models/daily_board.dart';
 import '../models/menu_item.dart';
 import '../models/order.dart' as app;
 import '../models/user_profile.dart';
@@ -18,6 +19,7 @@ import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/canteen_status_banner.dart';
 import '../widgets/category_tabs.dart';
+import '../widgets/daily_board_banner.dart';
 import '../widgets/menu_item_card.dart';
 import '../widgets/menu_shimmer.dart';
 
@@ -149,161 +151,170 @@ class _MenuScreenState extends State<MenuScreen> {
   // ═══════════════════════════════════════════════════════════════════
 
   Widget _buildMenuTab() {
-    return Column(
-      children: [
-        _buildHeader(),
-        _buildActiveOrderSection(),
-        StreamBuilder<CanteenOperationalStatus>(
-          stream: _firestore.operationalStatusStream(),
-          builder: (context, snapshot) {
-            final status = snapshot.data;
-            if (status == null || status.isNormal) return const SizedBox.shrink();
-            return CanteenStatusBanner(
-              status: status,
-              margin: const EdgeInsets.fromLTRB(18, 4, 18, 8),
-            );
-          },
-        ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18),
-            child: Column(
-              children: [
-                // Search bar and Sort / Canteen Board actions
-                _buildSearchAndSortBar(),
-                const SizedBox(height: 6),
+    return StreamBuilder<DailyBoard>(
+      stream: _firestore.dailyBoardStream(),
+      builder: (context, dailySnapshot) {
+        final dailyBoard = dailySnapshot.data ?? DailyBoard.defaultForDay(DateTime.now());
 
-                // Category tabs (2-level hierarchy: Primary + Subcategories)
-                CategoryTabs(
-                  activeParentCategory: _activeParentCategory,
-                  onParentCategorySelected: (cat) {
-                    setState(() {
-                      _activeParentCategory = cat;
-                      _activeSubCategory = 'all';
-                    });
-                  },
-                  activeSubCategory: _activeSubCategory,
-                  onSubCategorySelected: (sub) {
-                    setState(() => _activeSubCategory = sub);
-                  },
-                ),
-                const SizedBox(height: 6),
-
-                // Menu grid with live all items stream & stock sync
-                Expanded(
-                  child: StreamBuilder<List<MenuItem>>(
-                    stream: _firestore.allMenuItemsStream(),
-                    builder: (context, snapshot) {
-                      // Loading → shimmer
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const MenuShimmer();
-                      }
-
-                      // Error → message + retry
-                      if (snapshot.hasError) {
-                        return _buildErrorState(snapshot.error.toString());
-                      }
-
-                      final allItems = snapshot.data ?? [];
-                      if (allItems.isEmpty) {
-                        return _buildEmptyMenuState();
-                      }
-
-                      // Sync cart items with live catalog stock availability
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        context.read<CartProvider>().syncAvailability(allItems);
-                      });
-
-                      // Active catalog items (excluding soft-archived items)
-                      // Sold out items remain visible with sold-out badge and disabled add button
-                      final catalogItems = allItems
-                          .where((i) => !i.isArchived)
-                          .toList();
-
-                      // 1. Client-side Parent Category filter
-                      var filtered = catalogItems.where((i) {
-                        if (_activeParentCategory == 'popular') {
-                          return i.isPopular;
-                        }
-                        if (_activeParentCategory == 'all') return true;
-                        final parent = i.parentCategory.trim().toUpperCase();
-                        if (parent.isNotEmpty) {
-                          return parent == _activeParentCategory.toUpperCase();
-                        }
-                        // Fallback for legacy items without parentCategory
-                        if (_activeParentCategory == 'BEVERAGES') {
-                          return i.category.toLowerCase() == 'drinks';
-                        }
-                        if (_activeParentCategory == 'SNACKS') {
-                          return i.category.toLowerCase() == 'snacks';
-                        }
-                        if (_activeParentCategory == 'FOOD') {
-                          return i.category.toLowerCase() == 'dosa' ||
-                              i.category.toLowerCase() == 'rotibhaji';
-                        }
-                        return true;
-                      }).toList();
-
-                      // 2. Client-side Subcategory filter
-                      if (_activeSubCategory != 'all' && _activeParentCategory != 'popular') {
-                        filtered = filtered.where((i) {
-                          final sub = i.subCategory.trim().toLowerCase();
-                          final cat = i.category.trim().toLowerCase();
-                          final target = _activeSubCategory.trim().toLowerCase();
-                          return sub == target || cat == target;
-                        }).toList();
-                      }
-
-                      // 3. Search query filter (name, tags, subcategory, visualKey, description)
-                      if (_searchQuery.isNotEmpty) {
-                        final q = _searchQuery.toLowerCase();
-                        filtered = filtered.where((i) {
-                          return i.name.toLowerCase().contains(q) ||
-                              i.subCategory.toLowerCase().contains(q) ||
-                              i.parentCategory.toLowerCase().contains(q) ||
-                              i.visualKey.toLowerCase().contains(q) ||
-                              i.tags.any((t) => t.toLowerCase().contains(q)) ||
-                              i.description.toLowerCase().contains(q);
-                        }).toList();
-                      }
-
-                      // 4. Multi-tier Immutable Sorting
-                      switch (_selectedSort) {
-                        case MenuSortOption.recommended:
-                          filtered.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
-                          break;
-                        case MenuSortOption.popular:
-                          filtered.sort((a, b) {
-                            if (a.isPopular && !b.isPopular) return -1;
-                            if (!a.isPopular && b.isPopular) return 1;
-                            return a.sortOrder.compareTo(b.sortOrder);
-                          });
-                          break;
-                        case MenuSortOption.priceLowToHigh:
-                          filtered.sort((a, b) => a.pricePaise.compareTo(b.pricePaise));
-                          break;
-                        case MenuSortOption.priceHighToLow:
-                          filtered.sort((a, b) => b.pricePaise.compareTo(a.pricePaise));
-                          break;
-                        case MenuSortOption.nameAZ:
-                          filtered.sort((a, b) =>
-                              a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-                          break;
-                      }
-
-                      if (filtered.isEmpty) {
-                        return _buildEmptyCategoryState();
-                      }
-
-                      return _buildGrid(filtered);
-                    },
-                  ),
-                ),
-              ],
+        return Column(
+          children: [
+            _buildHeader(),
+            _buildActiveOrderSection(),
+            StreamBuilder<CanteenOperationalStatus>(
+              stream: _firestore.operationalStatusStream(),
+              builder: (context, snapshot) {
+                final status = snapshot.data;
+                if (status == null || status.isNormal) return const SizedBox.shrink();
+                return CanteenStatusBanner(
+                  status: status,
+                  margin: const EdgeInsets.fromLTRB(18, 4, 18, 8),
+                );
+              },
             ),
-          ),
-        ),
-      ],
+            DailyBoardBanner(board: dailyBoard),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                child: Column(
+                  children: [
+                    // Search bar and Sort / Canteen Board actions
+                    _buildSearchAndSortBar(),
+                    const SizedBox(height: 6),
+
+                    // Category tabs (2-level hierarchy: Primary + Subcategories)
+                    CategoryTabs(
+                      activeParentCategory: _activeParentCategory,
+                      onParentCategorySelected: (cat) {
+                        setState(() {
+                          _activeParentCategory = cat;
+                          _activeSubCategory = 'all';
+                        });
+                      },
+                      activeSubCategory: _activeSubCategory,
+                      onSubCategorySelected: (sub) {
+                        setState(() => _activeSubCategory = sub);
+                      },
+                    ),
+                    const SizedBox(height: 6),
+
+                    // Menu grid with live all items stream & stock sync
+                    Expanded(
+                      child: StreamBuilder<List<MenuItem>>(
+                        stream: _firestore.allMenuItemsStream(),
+                        builder: (context, snapshot) {
+                          // Loading → shimmer
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                            return const MenuShimmer();
+                          }
+
+                          // Error → message + retry
+                          if (snapshot.hasError) {
+                            return _buildErrorState(snapshot.error.toString());
+                          }
+
+                          final allItems = snapshot.data ?? [];
+                          if (allItems.isEmpty) {
+                            return _buildEmptyMenuState();
+                          }
+
+                          // Sync cart items with live catalog stock availability
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            context.read<CartProvider>().syncAvailability(allItems);
+                          });
+
+                          // Active catalog items (excluding soft-archived items)
+                          // Day-specific specials (e.g. Friday Pav Bhaji) appear on their active day
+                          // On other days they are hidden per user directive: "no need for available on fridays"
+                          final catalogItems = allItems
+                              .where((i) => !i.isArchived && i.isAvailableToday)
+                              .toList();
+
+                          // 1. Client-side Parent Category filter
+                          var filtered = catalogItems.where((i) {
+                            if (_activeParentCategory == 'popular') {
+                              return i.isPopular;
+                            }
+                            if (_activeParentCategory == 'all') return true;
+                            final parent = i.parentCategory.trim().toUpperCase();
+                            if (parent.isNotEmpty) {
+                              return parent == _activeParentCategory.toUpperCase();
+                            }
+                            // Fallback for legacy items without parentCategory
+                            if (_activeParentCategory == 'BEVERAGES') {
+                              return i.category.toLowerCase() == 'drinks';
+                            }
+                            if (_activeParentCategory == 'SNACKS') {
+                              return i.category.toLowerCase() == 'snacks';
+                            }
+                            if (_activeParentCategory == 'FOOD') {
+                              return i.category.toLowerCase() == 'dosa' ||
+                                  i.category.toLowerCase() == 'rotibhaji';
+                            }
+                            return true;
+                          }).toList();
+
+                          // 2. Client-side Subcategory filter
+                          if (_activeSubCategory != 'all' && _activeParentCategory != 'popular') {
+                            filtered = filtered.where((i) {
+                              final sub = i.subCategory.trim().toLowerCase();
+                              final cat = i.category.trim().toLowerCase();
+                              final target = _activeSubCategory.trim().toLowerCase();
+                              return sub == target || cat == target;
+                            }).toList();
+                          }
+
+                          // 3. Search query filter (name, tags, subcategory, visualKey, description)
+                          if (_searchQuery.isNotEmpty) {
+                            final q = _searchQuery.toLowerCase();
+                            filtered = filtered.where((i) {
+                              return i.name.toLowerCase().contains(q) ||
+                                  i.subCategory.toLowerCase().contains(q) ||
+                                  i.parentCategory.toLowerCase().contains(q) ||
+                                  i.visualKey.toLowerCase().contains(q) ||
+                                  i.tags.any((t) => t.toLowerCase().contains(q)) ||
+                                  i.description.toLowerCase().contains(q);
+                            }).toList();
+                          }
+
+                          // 4. Multi-tier Immutable Sorting
+                          switch (_selectedSort) {
+                            case MenuSortOption.recommended:
+                              filtered.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+                              break;
+                            case MenuSortOption.popular:
+                              filtered.sort((a, b) {
+                                if (a.isPopular && !b.isPopular) return -1;
+                                if (!a.isPopular && b.isPopular) return 1;
+                                return a.sortOrder.compareTo(b.sortOrder);
+                              });
+                              break;
+                            case MenuSortOption.priceLowToHigh:
+                              filtered.sort((a, b) => a.pricePaise.compareTo(b.pricePaise));
+                              break;
+                            case MenuSortOption.priceHighToLow:
+                              filtered.sort((a, b) => b.pricePaise.compareTo(a.pricePaise));
+                              break;
+                            case MenuSortOption.nameAZ:
+                              filtered.sort((a, b) =>
+                                  a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+                              break;
+                          }
+
+                          if (filtered.isEmpty) {
+                            return _buildEmptyCategoryState();
+                          }
+
+                          return _buildGrid(filtered, dailyBoard);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -741,7 +752,7 @@ class _MenuScreenState extends State<MenuScreen> {
 
   // ─── Grid ───────────────────────────────────────────────────────
 
-  Widget _buildGrid(List<MenuItem> items) {
+  Widget _buildGrid(List<MenuItem> items, [DailyBoard? dailyBoard]) {
     return RefreshIndicator(
       color: AppColors.red,
       backgroundColor: AppColors.surface,
@@ -760,7 +771,7 @@ class _MenuScreenState extends State<MenuScreen> {
         ),
         itemCount: items.length,
         itemBuilder: (context, index) {
-          return MenuItemCard(item: items[index]);
+          return MenuItemCard(item: items[index], dailyBoard: dailyBoard);
         },
       ),
     );

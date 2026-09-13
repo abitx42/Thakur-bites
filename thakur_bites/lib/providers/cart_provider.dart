@@ -6,12 +6,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/menu_item.dart';
 import '../services/firestore_service.dart';
 
-/// A single item in the cart, pairing a MenuItem with its quantity.
+/// A single item in the cart, pairing a MenuItem with its quantity and optional meal customization.
 class CartEntry {
   MenuItem item;
   int qty;
+  String? customization; // e.g. "4 Rotis, Paneer Sabji"
 
-  CartEntry({required this.item, this.qty = 1});
+  CartEntry({required this.item, this.qty = 1, this.customization});
 
   double get subtotal => item.price * qty;
 
@@ -97,6 +98,11 @@ class CartProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  static String entryKey(String itemId, [String? customization]) {
+    final clean = customization?.trim();
+    return (clean != null && clean.isNotEmpty) ? '$itemId::$clean' : itemId;
+  }
+
   /// Load cached wishlist from local device storage upon app startup/reconnect
   Future<void> _loadPersistedCart() async {
     try {
@@ -109,6 +115,7 @@ class CartProvider extends ChangeNotifier {
           final itemId = m['itemId'] as String? ?? '';
           final qty = (m['qty'] as num?)?.toInt() ?? 1;
           final cachedPrice = (m['cachedPrice'] as num?)?.toDouble() ?? 0.0;
+          final customization = m['customization'] as String?;
           if (itemId.isNotEmpty && qty > 0 && cachedPrice > 0) {
             final item = MenuItem(
               id: itemId,
@@ -122,7 +129,8 @@ class CartProvider extends ChangeNotifier {
               type: m['cachedType'] as String? ?? 'instant',
               iconKey: m['cachedIconKey'] as String? ?? 'dosa',
             );
-            _entries[itemId] = CartEntry(item: item, qty: qty);
+            final key = entryKey(itemId, customization);
+            _entries[key] = CartEntry(item: item, qty: qty, customization: customization);
           }
         }
         notifyListeners();
@@ -153,6 +161,7 @@ class CartProvider extends ChangeNotifier {
         'cachedParentCategory': e.item.parentCategory,
         'cachedType': e.item.type,
         'cachedPrepMinutes': e.item.prepMinutes,
+        'customization': e.customization,
       }).toList();
       await prefs.setString(_storageKey, jsonEncode(list));
     } catch (e) {
@@ -234,9 +243,16 @@ class CartProvider extends ChangeNotifier {
     return mins > 0 ? 'Ready in ~$mins min' : 'Ready now';
   }
 
-  int getQty(String itemId) => _entries[itemId]?.qty ?? 0;
+  int getQty(String itemId, {String? customization}) {
+    if (customization != null && customization.trim().isNotEmpty) {
+      final key = entryKey(itemId, customization);
+      return _entries[key]?.qty ?? 0;
+    }
+    return _entries.values.where((e) => e.item.id == itemId).fold(0, (sum, e) => sum + e.qty);
+  }
 
-  bool isAvailable(String itemId) => _entries[itemId]?.isAvailable ?? true;
+  bool isAvailable(String itemId) =>
+      _entries.values.where((e) => e.item.id == itemId).every((e) => e.isAvailable);
 
   /// True if ALL available items in the cart are ready-made (instant items like cold drinks, chips, snacks with 0 min cooking time).
   bool get isOnlyReadyMade =>
@@ -288,19 +304,21 @@ class CartProvider extends ChangeNotifier {
 
   // ─── Mutations ────────────────────────────────────────────────
 
-  /// Add one of this item to cart. Cart is a wishlist — bounded by live available stock and 99 max.
-  bool addItem(MenuItem item) {
+  /// Add one of this item to cart with optional meal customization (e.g. '4 Rotis, Paneer Sabji').
+  /// Cart is a wishlist — bounded by live available stock and 99 max.
+  bool addItem(MenuItem item, {String? customization}) {
     if (!item.isInStock) return false;
+    final key = entryKey(item.id, customization);
 
-    if (_entries.containsKey(item.id)) {
-      final currentQty = _entries[item.id]!.qty;
+    if (_entries.containsKey(key)) {
+      final currentQty = _entries[key]!.qty;
       if (currentQty >= item.availableStock || currentQty >= maxQuantityPerItem) {
         return false;
       }
-      _entries[item.id]!.qty++;
+      _entries[key]!.qty++;
     } else {
       if (item.availableStock <= 0) return false;
-      _entries[item.id] = CartEntry(item: item);
+      _entries[key] = CartEntry(item: item, customization: customization);
     }
     _persistCartLocally();
     notifyListeners();
@@ -308,47 +326,65 @@ class CartProvider extends ChangeNotifier {
   }
 
   /// Remove one of this item from cart (removes entry if qty reaches 0)
-  void removeItem(String itemId) {
-    if (!_entries.containsKey(itemId)) return;
-    _entries[itemId]!.qty--;
-    if (_entries[itemId]!.qty <= 0) {
-      _entries.remove(itemId);
-    }
-    _persistCartLocally();
-    notifyListeners();
-  }
+  void removeItem(String keyOrId, {String? customization}) {
+    final targetKey = (customization != null && customization.trim().isNotEmpty)
+        ? entryKey(keyOrId, customization)
+        : keyOrId;
 
-  /// Set exact quantity for an item (removes if qty <= 0, capped at maxQuantityPerItem)
-  void setQty(MenuItem item, int qty) {
-    if (qty <= 0) {
-      _entries.remove(item.id);
+    if (_entries.containsKey(targetKey)) {
+      _entries[targetKey]!.qty--;
+      if (_entries[targetKey]!.qty <= 0) {
+        _entries.remove(targetKey);
+      }
     } else {
-      final safeQty = qty.clamp(1, maxQuantityPerItem);
-      if (_entries.containsKey(item.id)) {
-        _entries[item.id]!.qty = safeQty;
-      } else {
-        _entries[item.id] = CartEntry(item: item, qty: safeQty);
+      final matchKey = _entries.keys.where((k) => k == targetKey || k.startsWith('$targetKey::')).firstOrNull;
+      if (matchKey != null) {
+        _entries[matchKey]!.qty--;
+        if (_entries[matchKey]!.qty <= 0) {
+          _entries.remove(matchKey);
+        }
       }
     }
     _persistCartLocally();
     notifyListeners();
   }
 
-  /// Remove an item completely by ID
-  void deleteItem(String itemId) {
-    _entries.remove(itemId);
+  /// Set exact quantity for an item (removes if qty <= 0, capped at maxQuantityPerItem)
+  void setQty(MenuItem item, int qty, {String? customization}) {
+    final key = entryKey(item.id, customization);
+    if (qty <= 0) {
+      _entries.remove(key);
+    } else {
+      final safeQty = qty.clamp(1, maxQuantityPerItem);
+      if (_entries.containsKey(key)) {
+        _entries[key]!.qty = safeQty;
+      } else {
+        _entries[key] = CartEntry(item: item, qty: safeQty, customization: customization);
+      }
+    }
+    _persistCartLocally();
+    notifyListeners();
+  }
+
+  /// Remove an item completely by key or item ID
+  void deleteItem(String keyOrId) {
+    if (_entries.containsKey(keyOrId)) {
+      _entries.remove(keyOrId);
+    } else {
+      _entries.removeWhere((k, e) => k == keyOrId || e.item.id == keyOrId);
+    }
     _persistCartLocally();
     notifyListeners();
   }
 
   /// Cap item quantity to available stock (called at checkout when backend says stock is limited)
   void capItemQuantity(String itemId, int maxAvailable) {
-    if (!_entries.containsKey(itemId)) return;
-
-    if (maxAvailable <= 0) {
-      _entries[itemId]!.item = _entries[itemId]!.item.copyWith(available: false, stockCount: 0);
-    } else if (_entries[itemId]!.qty > maxAvailable) {
-      _entries[itemId]!.qty = maxAvailable;
+    for (final entry in _entries.values.where((e) => e.item.id == itemId)) {
+      if (maxAvailable <= 0) {
+        entry.item = entry.item.copyWith(available: false, stockCount: 0);
+      } else if (entry.qty > maxAvailable) {
+        entry.qty = maxAvailable;
+      }
     }
     _persistCartLocally();
     notifyListeners();

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../models/daily_board.dart';
 import '../models/menu_item.dart';
 import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
@@ -9,13 +10,39 @@ import '../screens/login_sheet.dart';
 import '../services/preferences_service.dart';
 import '../services/menu_visual_resolver.dart';
 import '../theme/app_theme.dart';
+import 'meal_customizer_sheet.dart';
 
 /// Menu item card with availability indicators (🟢/🟡/🔴) instead of exact stock numbers.
 /// Students can freely add any quantity to cart — stock is checked only at checkout.
 class MenuItemCard extends StatelessWidget {
   final MenuItem item;
+  final DailyBoard? dailyBoard;
 
-  const MenuItemCard({super.key, required this.item});
+  const MenuItemCard({super.key, required this.item, this.dailyBoard});
+
+  bool get _isCustomizableMeal {
+    final lowerName = item.name.toLowerCase();
+    final lowerSub = item.subCategory.toLowerCase();
+    final lowerCat = item.category.toLowerCase();
+    return lowerName.contains('thali') ||
+        lowerSub.contains('thali') ||
+        lowerName.contains('roti') ||
+        lowerName.contains('puri') ||
+        lowerCat.contains('rotibhaji');
+  }
+
+  String? _dynamicDailySubtitle(DailyBoard? board) {
+    if (board == null) return null;
+    final lowerName = item.name.toLowerCase();
+    final lowerSub = item.subCategory.toLowerCase();
+    if (lowerName.contains('thali') || lowerSub.contains('thali')) {
+      return board.formatThaliSummary();
+    }
+    if (lowerName.contains('roti') || lowerName.contains('puri') || item.category.toLowerCase().contains('rotibhaji')) {
+      return board.formatRotiBhajiSummary();
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -106,7 +133,24 @@ class MenuItemCard extends StatelessWidget {
                         ],
                       ),
                     ),
-                    if (item.isPopular)
+                    if (item.todaySpecialBadge != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF2F2),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0xFFEF4444), width: 0.8),
+                        ),
+                        child: Text(
+                          item.todaySpecialBadge!,
+                          style: const TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFFDC2626),
+                          ),
+                        ),
+                      )
+                    else if (item.isPopular)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
@@ -152,6 +196,20 @@ class MenuItemCard extends StatelessWidget {
                     color: accentInk.withAlpha(217),
                   ),
                 ),
+                if (_dynamicDailySubtitle(dailyBoard) != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    _dynamicDailySubtitle(dailyBoard)!,
+                    style: AppFonts.body(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.mustardInk,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ],
             ),
           ),
@@ -248,7 +306,15 @@ class MenuItemCard extends StatelessWidget {
       child: GestureDetector(
         onTap: () {
           HapticFeedback.selectionClick();
-          context.read<CartProvider>().addItem(item);
+          if (_isCustomizableMeal) {
+            MealCustomizerSheet.show(
+              context,
+              item: item,
+              dailyBoard: dailyBoard ?? DailyBoard.defaultForDay(DateTime.now()),
+            );
+          } else {
+            context.read<CartProvider>().addItem(item);
+          }
         },
         child: Container(
           width: 44,
@@ -311,11 +377,19 @@ class MenuItemCard extends StatelessWidget {
               '$qty',
               style: AppFonts.mono(fontSize: 12.5, color: Colors.white),
             ),
-            // Plus — no stock limit on cart, student can add freely
+            // Plus — opens customizer for meal or adds standard item
             GestureDetector(
               onTap: () {
                 HapticFeedback.selectionClick();
-                context.read<CartProvider>().addItem(item);
+                if (_isCustomizableMeal) {
+                  MealCustomizerSheet.show(
+                    context,
+                    item: item,
+                    dailyBoard: dailyBoard ?? DailyBoard.defaultForDay(DateTime.now()),
+                  );
+                } else {
+                  context.read<CartProvider>().addItem(item);
+                }
               },
               child: const SizedBox(
                 width: 44,

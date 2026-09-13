@@ -3,6 +3,7 @@ import { renderKitchenView } from './views/kitchenView.js?v=6';
 import { renderPickupView } from './views/pickupView.js?v=6';
 import { renderCashierView } from './views/cashierView.js?v=1';
 import { renderAdminView } from './views/adminView.js?v=9';
+import { renderDailyBoardModal } from './views/dailyBoardModal.js?v=1';
 
 let currentStaffWorkstationView = 'kitchen'; // 'kitchen' | 'pickup' | 'cashier' | 'menu'
 
@@ -102,6 +103,9 @@ function initStaffWorkstation() {
             <button class="staff-nav-btn ${currentStaffWorkstationView === 'menu' ? 'active' : ''}" data-view="menu">
               📋 Menu & Stock (Add / Quantity)
             </button>
+            <button id="staff-open-daily-board-btn" style="background: #FFFBEB; color: #92400E; border: 1.5px solid #F59E0B; padding: 6px 12px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+              🍱 Today's Daily Board
+            </button>
           </nav>
 
           <!-- Quick Portal Actions -->
@@ -127,6 +131,13 @@ function initStaffWorkstation() {
       <!-- Modal Container -->
       <div id="staff-modal-container"></div>
     `;
+
+    root.querySelector('#staff-open-daily-board-btn')?.addEventListener('click', () => {
+      const modalCont = root.querySelector('#staff-modal-container');
+      if (modalCont) {
+        renderDailyBoardModal(modalCont);
+      }
+    });
 
     root.querySelector('#staff-enroll-hardware-btn')?.addEventListener('click', () => {
       const modalCont = root.querySelector('#staff-modal-container');

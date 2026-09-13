@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/canteen_operational_status.dart';
+import '../models/daily_board.dart';
 import '../models/menu_item.dart';
 import '../models/order.dart' as app;
 import '../models/student.dart';
@@ -18,6 +19,56 @@ class FirestoreService {
       _db.collection('menuItems');
   CollectionReference<Map<String, dynamic>> get _orders =>
       _db.collection('orders');
+
+  Stream<DailyBoard>? _cachedDailyBoardStream;
+
+  /// Real-time stream of today's canteen board (sabjis, sweet, dal, specials).
+  /// Automatically falls back to today's auto-pilot cycle if staff hasn't manually overridden it.
+  Stream<DailyBoard> dailyBoardStream() {
+    return _cachedDailyBoardStream ??= _db
+        .collection('canteenConfig')
+        .doc('dailyMenuBoard')
+        .snapshots()
+        .map((snapshot) {
+          if (!snapshot.exists || snapshot.data() == null) {
+            return DailyBoard.defaultForDay(DateTime.now());
+          }
+          final board = DailyBoard.fromFirestore(snapshot.data()!);
+          if (board.sabji1.isEmpty) {
+            return DailyBoard.defaultForDay(DateTime.now());
+          }
+          return board;
+        })
+        .handleError((error) {
+          debugPrint('Notice in dailyBoardStream: $error, falling back to weekly defaults');
+          return DailyBoard.defaultForDay(DateTime.now());
+        })
+        .asBroadcastStream();
+  }
+
+  /// Single fetch of today's DailyBoard
+  Future<DailyBoard> getDailyBoard() async {
+    try {
+      final snap = await _db.collection('canteenConfig').doc('dailyMenuBoard').get();
+      if (snap.exists && snap.data() != null) {
+        final board = DailyBoard.fromFirestore(snap.data()!);
+        if (board.sabji1.isNotEmpty) return board;
+      }
+    } catch (e) {
+      debugPrint('Error fetching daily board: $e');
+    }
+    return DailyBoard.defaultForDay(DateTime.now());
+  }
+
+  /// Update today's DailyBoard (staff operational action)
+  Future<void> updateDailyBoard(DailyBoard board) async {
+    final data = board.toFirestore();
+    await _db.collection('canteenConfig').doc('dailyMenuBoard').set(data, SetOptions(merge: true));
+    try {
+      // Legacy document sync
+      await _db.collection('dailyBoard').doc('today').set(data, SetOptions(merge: true));
+    } catch (_) {}
+  }
 
   /// Real-time stream of available menu items (for menu browsing).
   Stream<List<MenuItem>> menuItemsStream() {

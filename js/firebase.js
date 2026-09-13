@@ -579,4 +579,33 @@ export async function uploadMenuImage(itemId, file) {
   return downloadUrl;
 }
 
+// ─── Daily Canteen Menu Board & Rotating Specials ───────────────────
+
+export function subscribeDailyBoard(callback) {
+  const boardRef = doc(db, 'canteenConfig', 'dailyMenuBoard');
+  return onSnapshot(boardRef, (snap) => {
+    if (snap.exists()) {
+      callback(snap.data());
+    } else {
+      callback(null);
+    }
+  }, (err) => {
+    console.warn('[Firebase] DailyBoard subscription notice:', err);
+    callback(null);
+  });
+}
+
+export async function saveDailyBoard(boardData) {
+  const data = {
+    ...boardData,
+    updatedAt: serverTimestamp(),
+  };
+  const boardRef = doc(db, 'canteenConfig', 'dailyMenuBoard');
+  await setDoc(boardRef, data, { merge: true });
+  try {
+    const legacyRef = doc(db, 'dailyBoard', 'today');
+    await setDoc(legacyRef, data, { merge: true });
+  } catch (_) {}
+}
+
 

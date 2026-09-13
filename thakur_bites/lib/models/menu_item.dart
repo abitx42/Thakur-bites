@@ -35,8 +35,10 @@ class MenuItem {
   final String visualKey; // canonical visual family key
   final bool isPopular; // campus favorite badge
   final List<String> tags; // search keywords and aliases
-  final int displayOrder; // legacy sort weight
   final int sortOrder; // deterministic category sort weight
+  final List<String> availableDays; // e.g. ['FRIDAY'] for day-specific specials, empty = all days
+
+  int get displayOrder => sortOrder;
 
   MenuItem({
     required this.id,
@@ -63,9 +65,9 @@ class MenuItem {
     this.tags = const [],
     int? displayOrder,
     int? sortOrder,
+    this.availableDays = const [],
   })  : inventoryMode = inventoryMode ?? (type == 'cooked' ? 'MADE_TO_ORDER' : 'STOCK_TRACKED'),
         visualKey = visualKey ?? (iconKey.isNotEmpty ? iconKey : category),
-        displayOrder = displayOrder ?? (sortOrder ?? 0),
         sortOrder = sortOrder ?? (displayOrder ?? 0),
         parentCategory = parentCategory ?? _inferParentCategory(category),
         subCategory = subCategory ?? category,
@@ -97,6 +99,29 @@ class MenuItem {
 
   bool get isCooked => type == 'cooked';
   bool get isInstant => type == 'instant';
+
+  /// Check if the item is available on a specific weekday (1 = Monday, 7 = Sunday)
+  bool isAvailableOnDay(int weekday) {
+    if (availableDays.isEmpty) return true;
+    const dayNames = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+    final currentDay = dayNames[(weekday - 1).clamp(0, 6)];
+    return availableDays.contains(currentDay);
+  }
+
+  /// Whether this day-specific special is scheduled for today
+  bool get isAvailableToday => isAvailableOnDay(DateTime.now().weekday);
+
+  /// Day-specific special badge if available today (e.g. "Friday Special 🔥")
+  /// Per user requirement: On other days, no "Available on Fridays" badge is needed!
+  String? get todaySpecialBadge {
+    if (availableDays.isEmpty) return null;
+    if (isAvailableToday) {
+      final day = availableDays.first;
+      final formattedDay = day[0].toUpperCase() + day.substring(1).toLowerCase();
+      return '$formattedDay Special 🔥';
+    }
+    return null;
+  }
 
   /// Defensive validity invariant:
   /// Reject unnamed products, zero/negative pricing, and missing identifiers.
@@ -169,6 +194,10 @@ class MenuItem {
     final inventoryMode = (data['inventoryMode'] as String?) ?? (type == 'cooked' ? 'MADE_TO_ORDER' : 'STOCK_TRACKED');
     final rawTags = data['tags'];
     final tags = rawTags is List ? rawTags.map((e) => e.toString()).toList() : <String>[];
+    final rawAvailableDays = data['availableDays'];
+    final availableDays = rawAvailableDays is List
+        ? rawAvailableDays.map((e) => e.toString().trim().toUpperCase()).where((e) => e.isNotEmpty).toList()
+        : const <String>[];
 
     return MenuItem(
       id: docId,
@@ -194,6 +223,7 @@ class MenuItem {
       tags: tags,
       displayOrder: displayOrder,
       sortOrder: sortOrder,
+      availableDays: availableDays,
     );
   }
 
@@ -222,6 +252,7 @@ class MenuItem {
       'tags': tags,
       'displayOrder': displayOrder,
       'sortOrder': sortOrder,
+      if (availableDays.isNotEmpty) 'availableDays': availableDays,
     };
   }
 
@@ -249,6 +280,7 @@ class MenuItem {
     List<String>? tags,
     int? displayOrder,
     int? sortOrder,
+    List<String>? availableDays,
   }) {
     return MenuItem(
       id: id,
@@ -272,8 +304,8 @@ class MenuItem {
       visualKey: visualKey ?? this.visualKey,
       isPopular: isPopular ?? this.isPopular,
       tags: tags ?? this.tags,
-      displayOrder: displayOrder ?? this.displayOrder,
-      sortOrder: sortOrder ?? this.sortOrder,
+      sortOrder: sortOrder ?? (displayOrder ?? this.sortOrder),
+      availableDays: availableDays ?? this.availableDays,
     );
   }
 }

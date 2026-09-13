@@ -1768,7 +1768,10 @@
     ],
     "sortOrder": 470,
     "imageUrl": "",
-    "inventoryMode": "MADE_TO_ORDER"
+    "inventoryMode": "MADE_TO_ORDER",
+    "availableDays": [
+      "FRIDAY"
+    ]
   },
   {
     "id": "cheese_pav_bhaji",
@@ -1807,7 +1810,10 @@
     ],
     "sortOrder": 480,
     "imageUrl": "",
-    "inventoryMode": "MADE_TO_ORDER"
+    "inventoryMode": "MADE_TO_ORDER",
+    "availableDays": [
+      "FRIDAY"
+    ]
   },
   {
     "id": "extra_butter_pav_pair_",

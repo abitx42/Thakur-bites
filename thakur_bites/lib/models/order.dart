@@ -235,6 +235,7 @@ class OrderItem {
   final int quantity;
   final double price;
   final String? type; // 'cooked' | 'instant'
+  final String? customization; // e.g. '4 Rotis, Paneer Sabji'
 
   OrderItem({
     required this.menuItemId,
@@ -242,6 +243,7 @@ class OrderItem {
     required this.quantity,
     required this.price,
     this.type,
+    this.customization,
   });
 
   bool get isInstant => type == 'instant';
@@ -256,6 +258,7 @@ class OrderItem {
       quantity: map['quantity'] ?? 1,
       price: (map['price'] ?? map['unitPrice'] ?? 0).toDouble(),
       type: map['type'] as String?,
+      customization: map['customization'] as String?,
     );
   }
 
@@ -266,6 +269,7 @@ class OrderItem {
       'quantity': quantity,
       'price': price,
       if (type != null) 'type': type,
+      if (customization != null && customization!.isNotEmpty) 'customization': customization,
     };
   }
 }
