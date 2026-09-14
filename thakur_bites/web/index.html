@@ -36,6 +36,23 @@
   <title>Thakur Bites</title>
   <link rel="manifest" href="manifest.json">
 
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (registrations) {
+        for (var r of registrations) {
+          r.unregister();
+        }
+      });
+    }
+    if ('caches' in window) {
+      caches.keys().then(function (keys) {
+        for (var k of keys) {
+          caches.delete(k);
+        }
+      });
+    }
+  </script>
+
   <style>
     body {
       margin: 0;
@@ -58,6 +75,14 @@
       z-index: 999999;
       transition: opacity 0.4s ease-out;
       pointer-events: none;
+      animation: autoDismissSplash 0.5s ease 4s forwards;
+    }
+    @keyframes autoDismissSplash {
+      to {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
     }
     .splash-logo {
       font-size: 28px;
@@ -96,8 +121,9 @@
   <script>
     function hideLoadingSplash() {
       var splash = document.getElementById('loading-splash');
-      if (splash && splash.style.opacity !== '0') {
+      if (splash) {
         splash.style.opacity = '0';
+        splash.style.pointerEvents = 'none';
         setTimeout(function () {
           if (splash && splash.parentNode) {
             splash.parentNode.removeChild(splash);
@@ -106,9 +132,9 @@
       }
     }
     window.addEventListener('flutter-first-frame', hideLoadingSplash);
-    // Safety fallback: fade out splash after 5s so UI is never permanently blocked
-    setTimeout(hideLoadingSplash, 5000);
+    // Safety fallback: fade out splash after 3.5s so UI is never permanently blocked
+    setTimeout(hideLoadingSplash, 3500);
   </script>
-  <script src="flutter_bootstrap.js" async></script>
+  <script src="flutter_bootstrap.js?v=20260914_0820" async></script>
 </body>
 </html>
