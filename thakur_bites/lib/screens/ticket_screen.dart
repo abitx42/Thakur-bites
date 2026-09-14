@@ -589,7 +589,7 @@ class _TicketScreenState extends State<TicketScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Ordered at ${_formatTime(order.createdAt)}',
+                  'Ordered on ${_formatDateTime(order.createdAt)}',
                   style: AppFonts.body(fontSize: 11, color: AppColors.inkSoft),
                 ),
               ],
@@ -647,10 +647,44 @@ class _TicketScreenState extends State<TicketScreen> {
     );
   }
 
-  String _formatTime(DateTime dt) {
+  String _formatDateTime(DateTime dt) {
+    final now = DateTime.now();
+    final isToday =
+        dt.year == now.year && dt.month == now.month && dt.day == now.day;
+    final yesterday = now.subtract(const Duration(days: 1));
+    final isYesterday = dt.year == yesterday.year &&
+        dt.month == yesterday.month &&
+        dt.day == yesterday.day;
+
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    final monthName = months[dt.month - 1];
+
     final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
     final m = dt.minute.toString().padLeft(2, '0');
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
-    return '$h:$m $ampm';
+    final timeStr = '$h:$m $ampm';
+
+    if (isToday) {
+      return 'Today, $timeStr';
+    } else if (isYesterday) {
+      return 'Yesterday, $timeStr';
+    } else if (dt.year == now.year) {
+      return '${dt.day} $monthName, $timeStr';
+    } else {
+      return '${dt.day} $monthName ${dt.year}, $timeStr';
+    }
   }
 }

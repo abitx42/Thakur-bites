@@ -61,6 +61,34 @@ export function renderCashierView(container) {
         osc.stop(ctx.currentTime + 0.4);
       }
     } catch (_) {}
+  function formatOrderDateTime(dtInput) {
+    if (!dtInput) return '';
+    const dt = dtInput.toDate ? dtInput.toDate() : new Date(dtInput);
+    if (isNaN(dt.getTime())) return '';
+
+    const now = new Date();
+    const isToday = dt.getFullYear() === now.getFullYear() &&
+                    dt.getMonth() === now.getMonth() &&
+                    dt.getDate() === now.getDate();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const isYesterday = dt.getFullYear() === yesterday.getFullYear() &&
+                        dt.getMonth() === yesterday.getMonth() &&
+                        dt.getDate() === yesterday.getDate();
+
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthName = months[dt.getMonth()];
+
+    let hours = dt.getHours();
+    const minutes = String(dt.getMinutes()).padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12 || 12;
+    const timeStr = `${hours}:${minutes} ${ampm}`;
+
+    if (isToday) return `Today, ${timeStr}`;
+    if (isYesterday) return `Yesterday, ${timeStr}`;
+    if (dt.getFullYear() === now.getFullYear()) return `${dt.getDate()} ${monthName}, ${timeStr}`;
+    return `${dt.getDate()} ${monthName} ${dt.getFullYear()}, ${timeStr}`;
   }
 
   function render() {
@@ -110,13 +138,20 @@ export function renderCashierView(container) {
           </div>
         ` : ''}
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 1.5rem;">
+        <!-- Master Layout: 2 Columns -->
+        <div style="display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 1.5rem; align-items: start;">
           
-          <!-- LEFT COLUMN: Pending Cash Queue & Search -->
+          <!-- LEFT COLUMN: Pending Cash Queue -->
           <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 16px; padding: 1.2rem; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
             
-            <!-- Search Bar -->
-            <div style="display: flex; align-items: center; gap: 8px; background: var(--bg-surface); border: 1.5px solid var(--border-light); border-radius: 10px; padding: 8px 14px; margin-bottom: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <span style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: var(--ink-secondary);">
+                AWAITING CASH (${filteredOrders.length})
+              </span>
+            </div>
+
+            <!-- Search input -->
+            <div style="background: var(--bg-surface); border: 1px solid var(--border-light); border-radius: 8px; padding: 8px 12px; display: flex; align-items: center; gap: 8px; margin-bottom: 1rem;">
               <span>🔍</span>
               <input 
                 type="text" 
@@ -142,6 +177,7 @@ export function renderCashierView(container) {
                 const isSelected = activeSelected && (activeSelected.id || activeSelected.orderId) === (order.id || order.orderId);
                 const amt = Number(order.totalAmount) || ((order.totalAmountPaise || 0) / 100);
                 const itemCount = (order.items || []).reduce((sum, i) => sum + (i.quantity || 1), 0);
+                const dateStr = formatOrderDateTime(order.createdAt);
                 return `
                   <div 
                     class="cash-order-card ${isSelected ? 'selected' : ''}" 
@@ -154,7 +190,7 @@ export function renderCashierView(container) {
                           ${escapeHtml(order.tokenNumber || 'TB-???')}
                         </span>
                         <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-top: 2px;">
-                          ${order.studentRoll ? `Roll: ${escapeHtml(order.studentRoll)} · ` : ''}${itemCount} Items
+                          ${order.studentRoll ? `Roll: ${escapeHtml(order.studentRoll)} · ` : ''}${itemCount} Items${dateStr ? ` · 🕒 ${escapeHtml(dateStr)}` : ''}
                         </div>
                       </div>
                       <div style="text-align: right;">

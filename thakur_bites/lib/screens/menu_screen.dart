@@ -83,6 +83,7 @@ class _MenuScreenState extends State<MenuScreen> {
   int _currentNavIndex = 0; // 0=Menu, 1=Orders, 2=Profile
 
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _menuScrollController = ScrollController();
   app.Order? _recoveredActiveOrder;
 
   Stream<List<app.Order>>? _cachedUserOrdersStream;
@@ -135,34 +136,56 @@ class _MenuScreenState extends State<MenuScreen> {
     }
   }
 
+  void _scrollToTop() {
+    if (_menuScrollController.hasClients) {
+      _menuScrollController.animateTo(
+        0.0,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
+    _menuScrollController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.surface,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Body — switches based on bottom nav
-            Expanded(
-              child: IndexedStack(
-                index: _currentNavIndex,
-                children: [
-                  _buildMenuTab(),
-                  _buildOrdersTab(),
-                  _buildProfileTab(),
-                ],
+    return PopScope(
+      canPop: _currentNavIndex == 0,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_currentNavIndex != 0) {
+          setState(() {
+            _currentNavIndex = 0;
+          });
+        }
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.surface,
+        body: SafeArea(
+          child: Column(
+            children: [
+              // Body — switches based on bottom nav
+              Expanded(
+                child: IndexedStack(
+                  index: _currentNavIndex,
+                  children: [
+                    _buildMenuTab(),
+                    _buildOrdersTab(),
+                    _buildProfileTab(),
+                  ],
+                ),
               ),
-            ),
 
-            // Bottom nav
-            _buildBottomNav(),
-          ],
+              // Bottom nav
+              _buildBottomNav(),
+            ],
+          ),
         ),
       ),
     );
@@ -211,10 +234,12 @@ class _MenuScreenState extends State<MenuScreen> {
                           _activeParentCategory = cat;
                           _activeSubCategory = 'all';
                         });
+                        _scrollToTop();
                       },
                       activeSubCategory: _activeSubCategory,
                       onSubCategorySelected: (sub) {
                         setState(() => _activeSubCategory = sub);
+                        _scrollToTop();
                       },
                     ),
                     const SizedBox(height: 6),
@@ -494,7 +519,10 @@ class _MenuScreenState extends State<MenuScreen> {
         PopupMenuButton<MenuSortOption>(
           tooltip: 'Sort Menu',
           initialValue: _selectedSort,
-          onSelected: (sort) => setState(() => _selectedSort = sort),
+          onSelected: (sort) {
+            setState(() => _selectedSort = sort);
+            _scrollToTop();
+          },
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           itemBuilder: (context) => [
             for (final opt in MenuSortOption.values)
@@ -783,6 +811,7 @@ class _MenuScreenState extends State<MenuScreen> {
         await Future.delayed(const Duration(milliseconds: 400));
       },
       child: GridView.builder(
+        controller: _menuScrollController,
         padding: const EdgeInsets.only(bottom: 16, top: 4),
         physics: const AlwaysScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -2244,7 +2273,7 @@ class _OrderCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _formatTime(order.createdAt),
+                    _formatDateTime(order.createdAt),
                     style: AppFonts.body(
                       fontSize: 11.5,
                       color: AppColors.inkSoft,
@@ -2387,11 +2416,45 @@ class _OrderCard extends StatelessWidget {
     }
   }
 
-  String _formatTime(DateTime dt) {
+  String _formatDateTime(DateTime dt) {
+    final now = DateTime.now();
+    final isToday =
+        dt.year == now.year && dt.month == now.month && dt.day == now.day;
+    final yesterday = now.subtract(const Duration(days: 1));
+    final isYesterday = dt.year == yesterday.year &&
+        dt.month == yesterday.month &&
+        dt.day == yesterday.day;
+
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    final monthName = months[dt.month - 1];
+
     final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
     final m = dt.minute.toString().padLeft(2, '0');
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
-    return '$h:$m $ampm';
+    final timeStr = '$h:$m $ampm';
+
+    if (isToday) {
+      return 'Today, $timeStr';
+    } else if (isYesterday) {
+      return 'Yesterday, $timeStr';
+    } else if (dt.year == now.year) {
+      return '${dt.day} $monthName, $timeStr';
+    } else {
+      return '${dt.day} $monthName ${dt.year}, $timeStr';
+    }
   }
 }
 

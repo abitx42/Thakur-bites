@@ -624,6 +624,11 @@ function renderOrderCard(order, isReady) {
             <div style="font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; color: var(--ink-secondary); margin-top: 2px;">
               ${escapeHtml(order.studentName || 'Student')}
             </div>
+            ${order.createdAt ? `
+              <div style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-secondary); margin-top: 2px;">
+                🕒 ${escapeHtml(formatOrderDateTime(order.createdAt))}
+              </div>
+            ` : ''}
             ${order.isOnlyReadyMade ? `
               <div style="margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; background: #DCFCE7; border: 1px solid #86EFAC; border-radius: 6px; padding: 2px 6px;">
                 <span style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 800; color: #15803D;">⚡ READY-MADE</span>
@@ -688,15 +693,53 @@ function renderOrderCard(order, isReady) {
   `;
 }
 
+function formatOrderDateTime(dtInput) {
+  if (!dtInput) return '';
+  const dt = dtInput.toDate ? dtInput.toDate() : new Date(dtInput);
+  if (isNaN(dt.getTime())) return '';
+
+  const now = new Date();
+  const isToday = dt.getFullYear() === now.getFullYear() &&
+                  dt.getMonth() === now.getMonth() &&
+                  dt.getDate() === now.getDate();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = dt.getFullYear() === yesterday.getFullYear() &&
+                      dt.getMonth() === yesterday.getMonth() &&
+                      dt.getDate() === yesterday.getDate();
+
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthName = months[dt.getMonth()];
+
+  let hours = dt.getHours();
+  const minutes = String(dt.getMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  const timeStr = `${hours}:${minutes} ${ampm}`;
+
+  if (isToday) return `Today, ${timeStr}`;
+  if (isYesterday) return `Yesterday, ${timeStr}`;
+  if (dt.getFullYear() === now.getFullYear()) return `${dt.getDate()} ${monthName}, ${timeStr}`;
+  return `${dt.getDate()} ${monthName} ${dt.getFullYear()}, ${timeStr}`;
+}
+
 function renderCollectedCard(order) {
+  const dateStr = formatOrderDateTime(order.createdAt || order.collectedAt);
   return `
-    <div style="background: #F8FAFC; border: 1px solid var(--border-light); border-radius: 10px; padding: 0.8rem 1rem; opacity: 0.75;">
+    <div style="background: #F8FAFC; border: 1px solid var(--border-light); border-radius: 10px; padding: 0.8rem 1rem; opacity: 0.85;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <span style="font-family: var(--font-mono); font-weight: 800; font-size: 1rem;">${escapeHtml(order.tokenNumber || 'TB-???')}</span>
         <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #16A34A; font-weight: 700;">COLLECTED</span>
       </div>
-      <div style="font-family: var(--font-sans); font-size: 0.8rem; color: var(--ink-secondary); margin-top: 2px;">
-        ${escapeHtml(order.studentName || 'Student')}
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 3px;">
+        <span style="font-family: var(--font-sans); font-size: 0.8rem; color: var(--ink-secondary);">
+          ${escapeHtml(order.studentName || 'Student')}
+        </span>
+        ${dateStr ? `
+          <span style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-secondary); font-weight: 600;">
+            ${escapeHtml(dateStr)}
+          </span>
+        ` : ''}
       </div>
     </div>
   `;

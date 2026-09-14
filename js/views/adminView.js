@@ -1374,11 +1374,25 @@ export function renderAdminView(container, options = {}) {
       });
     }
 
+    const scrollMenuToTop = () => {
+      try {
+        const catalogEl = container.querySelector('#admin-menu-list') || container.querySelector('.admin-section') || window;
+        if (catalogEl === window) {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          catalogEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      } catch (_) {
+        window.scrollTo(0, 0);
+      }
+    };
+
     const sortFilterSelect = container.querySelector('#sort-filter-select');
     if (sortFilterSelect) {
       sortFilterSelect.addEventListener('change', (e) => {
         selectedSortOption = e.target.value;
         render();
+        scrollMenuToTop();
       });
     }
 
@@ -1387,6 +1401,7 @@ export function renderAdminView(container, options = {}) {
       stockFilterSelect.addEventListener('change', (e) => {
         stockStatusFilter = e.target.value;
         render();
+        scrollMenuToTop();
       });
     }
 
@@ -1399,6 +1414,7 @@ export function renderAdminView(container, options = {}) {
         stockStatusFilter = 'ALL';
         selectedSortOption = 'DEFAULT';
         render();
+        scrollMenuToTop();
       });
     }
 
@@ -1407,6 +1423,7 @@ export function renderAdminView(container, options = {}) {
       btn.addEventListener('click', () => {
         selectedParentFilter = btn.getAttribute('data-category');
         render();
+        scrollMenuToTop();
       });
     });
 
@@ -1415,6 +1432,7 @@ export function renderAdminView(container, options = {}) {
       subcatSelect.addEventListener('change', (e) => {
         selectedSubFilter = e.target.value;
         render();
+        scrollMenuToTop();
       });
     }
 
