@@ -263,7 +263,13 @@ service cloud.firestore {
         && request.resource.data.accountType in ['STUDENT', 'VISITOR'] // Teachers/staff must be elevated via reviewVerificationApplication (TB-R2-002)
         && request.resource.data.verificationStatus in ['NOT_REQUIRED', 'PENDING', 'UNDER_REVIEW']
         && request.resource.data.isVerified == false
-        && request.resource.data.accountDisabled == false;
+        && request.resource.data.accountDisabled == false
+        && !('role' in request.resource.data)
+        && request.resource.data.keys().hasOnly([
+          'uid', 'displayName', 'priorityLevel', 'accountType', 'verificationStatus',
+          'isVerified', 'accountDisabled', 'phone', 'rollNo', 'department', 'year',
+          'photoURL', 'preferences', 'fcmTokens', 'createdAt', 'updatedAt'
+        ]);
       allow update: if isOwner(userId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phone', 'rollNo', 'department', 'year', 'photoURL', 'preferences', 'updatedAt'])
         && request.resource.data.displayName is string && request.resource.data.displayName.size() >= 2 && request.resource.data.displayName.size() <= 100
@@ -306,6 +312,10 @@ service cloud.firestore {
       allow create: if isAuthenticated()
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.status == 'SUBMITTED'
+        && request.resource.data.applicationType in ['TEACHER', 'COLLEGE_STAFF']
+        && (!('employeeId' in request.resource.data) || (request.resource.data.employeeId is string && request.resource.data.employeeId.size() <= 30))
+        && (!('department' in request.resource.data) || (request.resource.data.department is string && request.resource.data.department.size() <= 50))
+        && (!('designation' in request.resource.data) || (request.resource.data.designation is string && request.resource.data.designation.size() <= 50))
         && request.resource.data.keys().hasOnly(['applicationId', 'userId', 'applicationType', 'employeeId', 'department', 'designation', 'officialEmail', 'claimedEmployeeId', 'claimedDepartment', 'claimedDesignation', 'claimedOfficialEmail', 'idProofStoragePath', 'status', 'submittedAt']);
       allow update, delete: if isManagerOrAdmin();
     }

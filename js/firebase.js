@@ -106,13 +106,6 @@ export function subscribeStaffAuth(callback) {
       }
 
       if (!role) {
-        try {
-          const userSnap = await getDoc(doc(db, 'users', user.uid));
-          if (userSnap.exists()) role = userSnap.data()?.role;
-        } catch (_) {}
-      }
-
-      if (!role) {
         // Token has no role claim: treat as unauthenticated for RBAC purposes
         callback({ user: null, role: null, isAuthenticated: false });
       } else {
