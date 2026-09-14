@@ -13,10 +13,6 @@ class FunctionsService {
       : _functions = functions ?? FirebaseFunctions.instance;
 
   HttpsCallable _getCallable(String name) {
-    if (kIsWeb) {
-      final origin = Uri.base.origin;
-      return _functions.httpsCallableFromUrl('$origin/adi-thakur-bite/us-central1/$name');
-    }
     return _functions.httpsCallable(name);
   }
 

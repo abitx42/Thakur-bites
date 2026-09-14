@@ -97,6 +97,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   const counterRef = db.collection('counters').doc(`orders_${dateStr}`);
   const newOrderRef = db.collection('orders').doc();
   const facultyLockRef = db.collection('facultyPriorityLocks').doc(studentId);
+  const dailyBoardRef = db.collection('canteenConfig').doc('dailyMenuBoard');
 
   // Deduplicated item document references
   const itemRefs = consolidatedItems.map(i => db.collection('menuItems').doc(i.itemId));
@@ -106,11 +107,12 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       // ═════════════════════════════════════════════════════════════
       // 1. ALL READS FIRST (Strict Transaction Invariant)
       // ═════════════════════════════════════════════════════════════
-      const [idempotencySnap, userSnap, counterSnap, facultyLockSnap, ...itemSnapshots] = await Promise.all([
+      const [idempotencySnap, userSnap, counterSnap, facultyLockSnap, dailyBoardSnap, ...itemSnapshots] = await Promise.all([
         transaction.get(idempotencyLockRef),
         transaction.get(userRef),
         transaction.get(counterRef),
         transaction.get(facultyLockRef),
+        transaction.get(dailyBoardRef),
         ...itemRefs.map(ref => transaction.get(ref)),
       ]);
 
@@ -195,6 +197,35 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
 
         if (!isAvail) {
           throw new HttpsError('failed-precondition', `${menuData.name} is currently out of stock.`);
+        }
+
+        // Bread Stock Validation (Daily Board Invariant)
+        if (dailyBoardSnap.exists) {
+          const dailyData = dailyBoardSnap.data() || {};
+          const rotiAvailable = dailyData.rotiAvailable !== false;
+          const puriAvailable = dailyData.puriAvailable !== false;
+
+          const matchingItemWithCustom = items.find(i => i.itemId === req.itemId && i.customization);
+          if (matchingItemWithCustom?.customization) {
+            const custLower = matchingItemWithCustom.customization.toLowerCase();
+            if (!rotiAvailable && (custLower.includes('roti') || custLower.includes('chapati'))) {
+              throw new HttpsError('failed-precondition', 'Fresh Chapatis are sold out for today. Please select Puris or update your cart.');
+            }
+            if (!puriAvailable && (custLower.includes('puri') || custLower.includes('poori'))) {
+              throw new HttpsError('failed-precondition', 'Fresh Puris are sold out for today. Please select Rotis or update your cart.');
+            }
+          }
+        }
+
+        // Day-specific Menu Item Invariant
+        if (Array.isArray(menuData.availableDays) && menuData.availableDays.length > 0) {
+          const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+          const mumbaiDate = new Date(now.toDate().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+          const todayDay = daysOfWeek[mumbaiDate.getDay()];
+          const isAvailToday = menuData.availableDays.map((d: string) => String(d).toLowerCase()).includes(todayDay);
+          if (!isAvailToday) {
+            throw new HttpsError('failed-precondition', `${menuData.name} is not served on ${todayDay.toUpperCase()}. Available days: ${menuData.availableDays.join(', ')}.`);
+          }
         }
 
         // Strict Fail-Closed Inventory Calculation (No 50-stock fallback)

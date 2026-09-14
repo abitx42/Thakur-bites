@@ -65,12 +65,16 @@ class PaymentService {
       razorpayOrderId = (sessionData['gatewayOrderId'] ?? sessionData['razorpayOrderId'] ?? '') as String;
       keyId = (sessionData['keyId'] as String?) ?? keyId;
     } on FirebaseFunctionsException catch (e) {
-      if (e.code != 'not-found' && e.code != 'unavailable') {
+      if (e.code == 'unavailable') {
+        throw const PaymentException('Payment gateway service is temporarily unavailable. Please retry shortly.');
+      }
+      if (e.code != 'not-found') {
         throw PaymentException('Payment session creation failed: ${e.message}');
       }
       debugPrint('[PaymentService] Backend function notice: ${e.message}. Launching direct gateway.');
     } catch (e) {
-      debugPrint('[PaymentService] Payment session creation notice: $e');
+      if (e is PaymentException) rethrow;
+      throw PaymentException('Payment session creation error: $e');
     }
 
     // Step 2: Launch Razorpay SDK and collect payment confirmation

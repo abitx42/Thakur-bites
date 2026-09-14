@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/order.dart' as app;
 import '../theme/app_theme.dart';
 import 'order_status_screen.dart';
@@ -22,10 +23,26 @@ class _TicketScreenState extends State<TicketScreen>
   late AnimationController _animController;
   late Animation<double> _slideAnim;
   late Animation<double> _fadeAnim;
+  String? _cachedPin;
 
   @override
   void initState() {
     super.initState();
+    _cachedPin = widget.order.pinCode;
+    if (_cachedPin == null || _cachedPin!.isEmpty) {
+      SharedPreferences.getInstance().then((prefs) {
+        final p = prefs.getString('order_pin_${widget.order.id}');
+        if (p != null && p.isNotEmpty && mounted) {
+          setState(() {
+            _cachedPin = p;
+          });
+        }
+      }).catchError((_) {});
+    } else {
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setString('order_pin_${widget.order.id}', _cachedPin!);
+      }).catchError((_) {});
+    }
     _animController = AnimationController(
       duration: const Duration(milliseconds: 600),
       vsync: this,
@@ -59,13 +76,22 @@ class _TicketScreenState extends State<TicketScreen>
               .snapshots(),
           builder: (context, snapshot) {
             app.Order currentOrder = widget.order;
+            final effectivePin = widget.order.pinCode.isNotEmpty
+                ? widget.order.pinCode
+                : (_cachedPin ?? '');
             if (snapshot.hasData && snapshot.data != null && snapshot.data!.exists) {
               try {
-                currentOrder = app.Order.fromFirestore(
+                final fromDb = app.Order.fromFirestore(
                   snapshot.data!.id,
                   snapshot.data!.data()!,
                 );
+                final resolvedPin = fromDb.pinCode.isNotEmpty
+                    ? fromDb.pinCode
+                    : effectivePin;
+                currentOrder = fromDb.copyWith(pinCode: resolvedPin);
               } catch (_) {}
+            } else {
+              currentOrder = widget.order.copyWith(pinCode: effectivePin);
             }
 
             return Column(
@@ -282,23 +308,49 @@ class _TicketScreenState extends State<TicketScreen>
                 const SizedBox(height: 4),
 
                 // Pin code
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface2,
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: AppColors.line, width: 1),
-                  ),
-                  child: Text(
-                    'PICKUP PIN: ${order.pinCode}',
-                    style: AppFonts.mono(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.ink,
+                if (order.isReady || order.isOnlyReadyMade || order.status == 'ready' || order.status == 'collected') ...[
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface2,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: AppColors.line, width: 1),
+                    ),
+                    child: Text(
+                      'PICKUP PIN: ${order.pinCode.isEmpty ? "••••" : order.pinCode}',
+                      style: AppFonts.mono(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.ink,
+                      ),
                     ),
                   ),
-                ),
+                ] else ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: const Color(0xFFFDE68A), width: 1),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('🍳', style: TextStyle(fontSize: 12)),
+                        const SizedBox(width: 6),
+                        Text(
+                          'PREPARING · PIN REVEALS WHEN READY',
+                          style: AppFonts.mono(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF92400E),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
 
                 if (order.isOnlyReadyMade) ...[
                   const SizedBox(height: 10),
@@ -405,28 +457,53 @@ class _TicketScreenState extends State<TicketScreen>
                 const SizedBox(height: 14),
 
                 // Verified Scannable QR Code Container
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border.all(color: AppColors.line, width: 1.5),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: QrImageView(
-                    data: 'TB:${order.id}:${order.tokenNumber}:${order.pinCode}',
-                    version: QrVersions.auto,
-                    size: 96,
-                    backgroundColor: Colors.white,
-                    eyeStyle: const QrEyeStyle(
-                      eyeShape: QrEyeShape.square,
-                      color: AppColors.ink,
+                if (order.isReady || order.isOnlyReadyMade || order.status == 'ready' || order.status == 'collected') ...[
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border.all(color: AppColors.line, width: 1.5),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    dataModuleStyle: const QrDataModuleStyle(
-                      dataModuleShape: QrDataModuleShape.square,
-                      color: AppColors.ink,
+                    child: QrImageView(
+                      data: 'TB:${order.id}:${order.tokenNumber}:${order.pinCode}',
+                      version: QrVersions.auto,
+                      size: 96,
+                      backgroundColor: Colors.white,
+                      eyeStyle: const QrEyeStyle(
+                        eyeShape: QrEyeShape.square,
+                        color: AppColors.ink,
+                      ),
+                      dataModuleStyle: const QrDataModuleStyle(
+                        dataModuleShape: QrDataModuleShape.square,
+                        color: AppColors.ink,
+                      ),
                     ),
                   ),
-                ),
+                ] else ...[
+                  Container(
+                    width: 96,
+                    height: 96,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface2,
+                      border: Border.all(color: AppColors.line, width: 1.5),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.lock_clock_rounded, color: AppColors.inkSoft, size: 32),
+                        const SizedBox(height: 4),
+                        Text(
+                          'QR Locked',
+                          textAlign: TextAlign.center,
+                          style: AppFonts.mono(fontSize: 9.5, fontWeight: FontWeight.w700, color: AppColors.inkSoft),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
 
                 const SizedBox(height: 12),
 

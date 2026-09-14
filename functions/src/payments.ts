@@ -240,6 +240,7 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
     keyId: razorpayKeyId,
     adapterMode: isProduction ? 'PRODUCTION_GATEWAY' : 'SIMULATION_ADAPTER',
     notes: {
+      orderId,
       studentId,
       tokenNumber,
       college: 'TCET Mumbai',
@@ -397,8 +398,13 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
       return { status: 'CLAIMED' };
     });
 
-    if (claimResult.status === 'ALREADY_PROCESSED' || claimResult.status === 'IN_FLIGHT_LOCKED') {
+    if (claimResult.status === 'ALREADY_PROCESSED') {
       res.status(200).json({ received: true, alreadyProcessed: true, status: claimResult.status });
+      return;
+    }
+
+    if (claimResult.status === 'IN_FLIGHT_LOCKED') {
+      res.status(503).json({ received: false, inFlight: true, message: 'Event is currently being processed by another worker.' });
       return;
     }
 
@@ -408,14 +414,21 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
         throw new Error('Invalid payment payload in captured event.');
       }
 
-      const orderId = paymentEntity.notes?.orderId;
+      let orderId = paymentEntity.notes?.orderId;
       const gatewayPaymentAmountPaise = Number(paymentEntity.amount || 0);
       const gatewayCurrency = paymentEntity.currency || 'INR';
       const gatewayOrderId = paymentEntity.order_id;
       const gatewayPaymentId = paymentEntity.id;
 
+      if (!orderId && gatewayOrderId) {
+        const matchSnap = await db.collection('orders').where('gatewayOrderId', '==', gatewayOrderId).limit(1).get();
+        if (!matchSnap.empty) {
+          orderId = matchSnap.docs[0].id;
+        }
+      }
+
       if (!orderId) {
-        throw new Error('Missing orderId in payment notes.');
+        throw new Error('Missing orderId in payment notes and no matching order found for gatewayOrderId.');
       }
 
       // Delegate to single authoritative payment finalizer

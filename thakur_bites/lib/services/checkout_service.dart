@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/order.dart';
 import '../providers/cart_provider.dart';
 import 'functions_service.dart';
@@ -57,17 +58,16 @@ class CheckoutService {
       );
 
       // Convert server response to local Order model
-      return _orderFromCallableResult(result);
+      final order = _orderFromCallableResult(result);
+      if (order.pinCode.isNotEmpty) {
+        SharedPreferences.getInstance().then((prefs) {
+          prefs.setString('order_pin_${order.id}', order.pinCode);
+        }).catchError((_) {});
+      }
+      return order;
     } on FirebaseFunctionsException catch (e) {
-      // If Cloud Functions are not deployed (404 NOT_FOUND) or unavailable,
-      // create the online order directly in Firestore:
-      if (e.code == 'not-found' || e.code == 'unavailable') {
-        return await _createDirectFirestoreOnlineOrder(
-          user: user,
-          entries: entries,
-          readyMadePreference: readyMadePreference,
-          student: student,
-        );
+      if (e.code == 'not-found') {
+        throw const CheckoutException('Ordering service is temporarily updating. Please retry in a moment.');
       }
 
       switch (e.code) {

@@ -151,10 +151,10 @@ export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (re
 
     const newAvailable = newStockOnHand - reservedStock;
 
-    // 1. Update MenuItem stock maintaining single source of truth (stockCount purged)
+    // 1. Update MenuItem stock maintaining single source of truth (stockCount aligned with availableStock)
     transaction.update(itemRef, {
       stockOnHand: newStockOnHand,
-      stockCount: newStockOnHand,
+      stockCount: newAvailable,
       reservedStock,
       availableStock: newAvailable,
       isOrderable: newAvailable > 0,

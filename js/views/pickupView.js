@@ -14,11 +14,28 @@ let lastKeypressTime = 0;
 let scannerFeedbackMessage = null;
 let scannerFeedbackType = 'success'; // 'success' | 'error'
 let keydownListener = null;
+let pickupAudioCtx = null;
+
+function getAudioContext() {
+  try {
+    if (!pickupAudioCtx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) pickupAudioCtx = new AudioCtx();
+    }
+    if (pickupAudioCtx && pickupAudioCtx.state === 'suspended') {
+      pickupAudioCtx.resume().catch(() => {});
+    }
+    return pickupAudioCtx;
+  } catch (_) {
+    return null;
+  }
+}
 
 // Synthesize pleasant POS scanner feedback tones
 function playScanSound(isSuccess = true) {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = getAudioContext();
+    if (!ctx) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -77,13 +94,8 @@ export function renderPickupView(container) {
       const pinCode = parts[3] || '';
 
       try {
-        try {
-          const verifyFn = httpsCallable(functions, 'verifyPickup');
-          await verifyFn({ orderId, pinCode });
-        } catch (fnErr) {
-          // Direct fallback for Spark plan / operational staff
-          await updateOrderStatus(orderId, 'collected');
-        }
+        const verifyFn = httpsCallable(functions, 'verifyPickup');
+        await verifyFn({ orderId, pinCode });
 
         playScanSound(true);
         scannerFeedbackMessage = `✅ Order ${tokenNumber} Verified & Handed Over!`;
@@ -96,7 +108,7 @@ export function renderPickupView(container) {
         }, 4000);
       } catch (err) {
         playScanSound(false);
-        scannerFeedbackMessage = `❌ Scan Error: ${err.message || 'Handover failed'}`;
+        scannerFeedbackMessage = `❌ Verification Failed: ${err.message || 'Invalid PIN or unready order'}`;
         scannerFeedbackType = 'error';
         render();
 
@@ -114,17 +126,10 @@ export function renderPickupView(container) {
       const orderId = parts[0];
 
       try {
-        try {
-          const verifyFn = httpsCallable(functions, 'verifyPickup');
-          const res = await verifyFn({ orderId, qrToken: cleanPayload });
-          playScanSound(true);
-          scannerFeedbackMessage = `✅ Order ${res.data?.tokenNumber || orderId} Verified & Collected!`;
-        } catch (fnErr) {
-          // Direct fallback for Spark plan / operational staff
-          await updateOrderStatus(orderId, 'collected');
-          playScanSound(true);
-          scannerFeedbackMessage = `✅ Order Verified & Collected!`;
-        }
+        const verifyFn = httpsCallable(functions, 'verifyPickup');
+        const res = await verifyFn({ orderId, qrToken: cleanPayload });
+        playScanSound(true);
+        scannerFeedbackMessage = `✅ Order ${res.data?.tokenNumber || orderId} Verified & Collected!`;
         scannerFeedbackType = 'success';
         render();
 
@@ -156,8 +161,9 @@ export function renderPickupView(container) {
   }
 
   keydownListener = (e) => {
-    // Ignore input if user is actively typing in a normal text input
-    if (e.target && e.target.tagName === 'INPUT' && e.target.id === 'pickup-filter-input') {
+    // Ignore input if user is actively typing in any input, textarea, select or contentEditable element
+    const targetTag = e.target?.tagName;
+    if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT' || e.target?.isContentEditable) {
       return;
     }
 
@@ -173,8 +179,8 @@ export function renderPickupView(container) {
       }
       scannerBuffer = '';
     } else if (e.key.length === 1) {
-      // If typing speed is high (< 50ms interval), it's a hardware scanner stream
-      if (interval < 50 || scannerBuffer.length === 0) {
+      // Hardware barcode scanner inter-character latency is typically < 100ms
+      if (interval < 100 || scannerBuffer.length === 0) {
         scannerBuffer += e.key;
       } else {
         // Human typing reset

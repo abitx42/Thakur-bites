@@ -84,12 +84,25 @@ class CartProvider extends ChangeNotifier {
     final previousUserId = _userId;
     _userId = newUserId;
 
-    // If migrating from guest / unauthenticated into a logged-in user,
-    // preserve any items currently in the cart wishlist!
-    if ((previousUserId == null || previousUserId.isEmpty) && _entries.isNotEmpty) {
-      await _persistCartLocally();
-      notifyListeners();
-      return;
+    // If migrating from guest / unauthenticated into a logged-in user:
+    if ((previousUserId == null || previousUserId.isEmpty) && newUserId != null && newUserId.isNotEmpty) {
+      if (_entries.isNotEmpty) {
+        // Migrate active items to the logged-in user and purge guest storage
+        await _persistCartLocally();
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove('offline_cart_v1_guest');
+        } catch (_) {}
+        notifyListeners();
+        return;
+      } else {
+        // Guest cart was empty; load user's existing persisted cart
+        _entries.clear();
+        _priceChangeAlerts.clear();
+        await _loadPersistedCart();
+        notifyListeners();
+        return;
+      }
     }
 
     _entries.clear();
@@ -105,9 +118,11 @@ class CartProvider extends ChangeNotifier {
 
   /// Load cached wishlist from local device storage upon app startup/reconnect
   Future<void> _loadPersistedCart() async {
+    final expectedKey = _storageKey;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_storageKey);
+      if (_storageKey != expectedKey) return;
+      final raw = prefs.getString(expectedKey);
       if (raw != null && raw.isNotEmpty) {
         final List<dynamic> list = jsonDecode(raw);
         for (final entry in list) {
@@ -310,14 +325,14 @@ class CartProvider extends ChangeNotifier {
     if (!item.isInStock) return false;
     final key = entryKey(item.id, customization);
 
+    final currentTotalItemQty = getQty(item.id);
+    if (currentTotalItemQty >= item.availableStock || currentTotalItemQty >= maxQuantityPerItem) {
+      return false;
+    }
+
     if (_entries.containsKey(key)) {
-      final currentQty = _entries[key]!.qty;
-      if (currentQty >= item.availableStock || currentQty >= maxQuantityPerItem) {
-        return false;
-      }
       _entries[key]!.qty++;
     } else {
-      if (item.availableStock <= 0) return false;
       _entries[key] = CartEntry(item: item, customization: customization);
     }
     _persistCartLocally();
@@ -379,11 +394,24 @@ class CartProvider extends ChangeNotifier {
 
   /// Cap item quantity to available stock (called at checkout when backend says stock is limited)
   void capItemQuantity(String itemId, int maxAvailable) {
-    for (final entry in _entries.values.where((e) => e.item.id == itemId)) {
-      if (maxAvailable <= 0) {
+    if (maxAvailable <= 0) {
+      for (final entry in _entries.values.where((e) => e.item.id == itemId)) {
         entry.item = entry.item.copyWith(available: false, stockCount: 0);
-      } else if (entry.qty > maxAvailable) {
-        entry.qty = maxAvailable;
+      }
+      _entries.removeWhere((_, e) => e.item.id == itemId);
+    } else {
+      int remaining = maxAvailable;
+      final matchingKeys = _entries.entries.where((e) => e.value.item.id == itemId).map((e) => e.key).toList();
+      for (final k in matchingKeys) {
+        final entry = _entries[k]!;
+        if (remaining <= 0) {
+          _entries.remove(k);
+        } else if (entry.qty > remaining) {
+          entry.qty = remaining;
+          remaining = 0;
+        } else {
+          remaining -= entry.qty;
+        }
       }
     }
     _persistCartLocally();

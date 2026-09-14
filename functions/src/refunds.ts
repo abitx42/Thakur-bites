@@ -189,6 +189,9 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
     if (!snap.exists) throw new HttpsError('not-found', 'Order not found during refund reservation.');
 
     const current = snap.data()!;
+    if (cancellation && (current.status === 'preparing' || current.status === 'ready' || current.status === 'collected')) {
+      throw new HttpsError('failed-precondition', 'Order is already being prepared or ready. Cancellation locked.');
+    }
     if (current.status === 'cancelled' && !cancellation) {
       throw new HttpsError('failed-precondition', 'Order is already cancelled.');
     }

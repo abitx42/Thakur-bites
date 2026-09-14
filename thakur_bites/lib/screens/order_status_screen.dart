@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/order.dart' as app;
 import '../models/menu_item.dart';
 import '../providers/auth_provider.dart';
@@ -85,9 +86,26 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     '📦 Perfect Packaging',
   ];
 
+  String? _cachedPin;
+
   @override
   void initState() {
     super.initState();
+    _cachedPin = widget.initialOrder?.pinCode;
+    if (_cachedPin == null || _cachedPin!.isEmpty) {
+      SharedPreferences.getInstance().then((prefs) {
+        final p = prefs.getString('order_pin_${widget.orderId}');
+        if (p != null && p.isNotEmpty && mounted) {
+          setState(() {
+            _cachedPin = p;
+          });
+        }
+      }).catchError((_) {});
+    } else {
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setString('order_pin_${widget.orderId}', _cachedPin!);
+      }).catchError((_) {});
+    }
     // Cache stream once so 1-second countdown timer rebuilds do NOT reconnect to Firestore every second
     _orderStream = FirestoreService().orderStream(widget.orderId);
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -640,6 +658,12 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
 
   /// Ready Pickup PIN Display Card
   Widget _buildPickupPinCard(app.Order order) {
+    final effectivePin = order.pinCode.isNotEmpty ? order.pinCode : (_cachedPin ?? '');
+    if (order.pinCode.isNotEmpty && (_cachedPin == null || _cachedPin!.isEmpty)) {
+      _cachedPin = order.pinCode;
+      SharedPreferences.getInstance().then((p) => p.setString('order_pin_${order.id}', order.pinCode)).catchError((_) {});
+    }
+
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -678,7 +702,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
             ),
             child: QrImageView(
-              data: 'TB:${order.id}:${order.tokenNumber}:${order.pinCode}',
+              data: 'TB:${order.id}:${order.tokenNumber}:$effectivePin',
               version: QrVersions.auto,
               size: 130,
               backgroundColor: Colors.white,
@@ -702,8 +726,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
           // PIN Container
           GestureDetector(
             onTap: () {
-              if (order.pinCode.isNotEmpty) {
-                Clipboard.setData(ClipboardData(text: order.pinCode));
+              if (effectivePin.isNotEmpty) {
+                Clipboard.setData(ClipboardData(text: effectivePin));
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('PIN copied to clipboard'),
@@ -731,7 +755,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    order.pinCode.isEmpty ? '••••' : order.pinCode,
+                    effectivePin.isEmpty ? '••••' : effectivePin,
                     style: AppFonts.mono(
                       fontSize: 34,
                       fontWeight: FontWeight.w900,

@@ -127,7 +127,10 @@ export const executeIntegrityRepair = onCall<IntegrityRepairRequest, Promise<Int
       const nowMillis = now.toMillis();
       const expiredDocs = resSnap.docs.filter((d) => {
         const data = d.data();
-        return typeof data.expiresAtMillis === 'number' && data.expiresAtMillis < nowMillis;
+        const expMillis = typeof data.expiresAtMillis === 'number'
+          ? data.expiresAtMillis
+          : (data.expiresAt?.toMillis ? data.expiresAt.toMillis() : 0);
+        return expMillis > 0 && expMillis < nowMillis;
       });
 
       for (const resDoc of expiredDocs) {
@@ -135,14 +138,8 @@ export const executeIntegrityRepair = onCall<IntegrityRepairRequest, Promise<Int
         const items = Array.isArray(resData.items) ? resData.items : [];
 
         await db.runTransaction(async (t) => {
-          // Release reservation
-          t.update(resDoc.ref, {
-            status: 'EXPIRED',
-            expiredAt: now,
-            repairedBy: request.auth?.uid,
-          });
-
-          // Restore inventory stock calculations
+          // 1. ALL READS FIRST (Strict Firestore Transaction Invariant)
+          const itemReads: { itemId: string; quantity: number; menuRef: admin.firestore.DocumentReference; menuDoc: admin.firestore.DocumentSnapshot }[] = [];
           for (const item of items) {
             const itemId = item.id || item.itemId;
             const quantity = Number(item.quantity || 0);
@@ -150,14 +147,25 @@ export const executeIntegrityRepair = onCall<IntegrityRepairRequest, Promise<Int
 
             const menuRef = db.collection('menuItems').doc(itemId);
             const menuDoc = await t.get(menuRef);
-            if (menuDoc.exists) {
-              const mData = menuDoc.data() || {};
+            itemReads.push({ itemId, quantity, menuRef, menuDoc });
+          }
+
+          // 2. ALL WRITES AFTER
+          t.update(resDoc.ref, {
+            status: 'EXPIRED',
+            expiredAt: now,
+            repairedBy: request.auth?.uid,
+          });
+
+          for (const read of itemReads) {
+            if (read.menuDoc.exists) {
+              const mData = read.menuDoc.data() || {};
               const currentOnHand = Number(mData.stockOnHand || 0);
               const currentReserved = Number(mData.reservedStock || 0);
-              const newReserved = Math.max(0, currentReserved - quantity);
+              const newReserved = Math.max(0, currentReserved - read.quantity);
               const newAvailable = Math.max(0, currentOnHand - newReserved);
 
-              t.update(menuRef, {
+              t.update(read.menuRef, {
                 reservedStock: newReserved,
                 availableStock: newAvailable,
                 updatedAt: now,

@@ -85,6 +85,17 @@ class _MenuScreenState extends State<MenuScreen> {
   final TextEditingController _searchController = TextEditingController();
   app.Order? _recoveredActiveOrder;
 
+  Stream<List<app.Order>>? _cachedUserOrdersStream;
+  String? _cachedOrdersUid;
+
+  Stream<List<app.Order>> _getUserOrdersStream(String uid) {
+    if (_cachedOrdersUid != uid || _cachedUserOrdersStream == null) {
+      _cachedOrdersUid = uid;
+      _cachedUserOrdersStream = _firestore.userOrdersStream(uid);
+    }
+    return _cachedUserOrdersStream!;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -914,7 +925,7 @@ class _MenuScreenState extends State<MenuScreen> {
       );
     }
 
-    final stream = _firestore.userOrdersStream(profile.uid);
+    final stream = _getUserOrdersStream(profile.uid);
 
     return Column(
       children: [
@@ -1922,7 +1933,7 @@ class _MenuScreenState extends State<MenuScreen> {
 
     if (profile != null) {
       return StreamBuilder<List<app.Order>>(
-        stream: _firestore.userOrdersStream(profile.uid),
+        stream: _getUserOrdersStream(profile.uid),
         builder: (context, snapshot) {
           final orders = snapshot.data ?? [];
           if (orders.isNotEmpty) {

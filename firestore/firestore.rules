@@ -80,36 +80,26 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         resource.data.studentId == request.auth.uid || isOperationalStaff()
       );
-      // Resilient ordering: allow students to place their own validated online orders directly
-      allow create: if isAuthenticated()
-        && request.resource.data.studentId == request.auth.uid
-        && request.resource.data.paymentMethod == 'online'
-        && request.resource.data.totalAmount is number && request.resource.data.totalAmount > 0;
-      // Allow students to update their own order:
-      // 1. Pay for order: payment_pending -> confirmed
-      // 2. Cancel order BEFORE cooking: payment_pending or confirmed -> cancelled
-      // STRICT INVARIANT: Cancellation is strictly BLOCKED once kitchen moves order to preparing, ready, or collected!
+      // Order creation is strictly server-authoritative via createCheckout Cloud Function
+      allow create: if false;
+      // Allow students to cancel their own order before cooking starts,
+      // and allow operational staff to manage workstation transitions.
+      // Payment confirmation (paymentStatus: 'paid') is strictly server-authoritative.
       allow update: if (isAuthenticated() && resource.data.studentId == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'paymentStatus', 'status', 'gatewayPaymentId', 'gatewayOrderId',
-          'gatewaySignature', 'paidAt', 'updatedAt', 'cancelReason', 'cancelledAt', 'refundStatus'
+          'paymentStatus', 'status', 'updatedAt', 'cancelReason', 'cancelledAt'
         ])
         && (
-          (resource.data.status == 'payment_pending'
-           && request.resource.data.paymentStatus == 'paid'
-           && request.resource.data.status == 'confirmed'
-           && request.resource.data.gatewayPaymentId is string
-           && request.resource.data.gatewayPaymentId.size() >= 6)
-          ||
           (resource.data.status == 'payment_pending'
            && request.resource.data.paymentStatus in ['failed', 'expired', 'cancelled']
            && request.resource.data.status in ['payment_pending', 'cancelled'])
           ||
-          (resource.data.status == 'confirmed'
-           && request.resource.data.status == 'cancelled')
+          (resource.data.status in ['payment_pending', 'confirmed']
+           && request.resource.data.status == 'cancelled'
+           && request.resource.data.paymentStatus in ['cancelled', resource.data.paymentStatus])
         )
       ) || isOperationalStaff();
-      allow delete: if isOperationalStaff();
+      allow delete: if false; // Orders are immutable operational and financial audit records
     }
 
     // ─── Cryptographic Order Secrets (Isolated from Client/Staff Reads) ──

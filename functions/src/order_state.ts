@@ -235,7 +235,11 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
     }
 
     const orderData = snap.data()!;
-    if (orderData.status === 'collected' || orderData.status === 'cancelled') {
+    if (orderData.status === 'collected') {
+      throw new HttpsError('failed-precondition', `Order is already in ${orderData.status} state.`);
+    }
+
+    if (orderData.status === 'cancelled' && !gatewayRefundId) {
       throw new HttpsError('failed-precondition', `Order is already in ${orderData.status} state.`);
     }
 

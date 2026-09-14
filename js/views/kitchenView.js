@@ -16,14 +16,29 @@ let viewMode = 'pipeline'; // 'pipeline' (sequential pile) or 'grid' (all ticket
 let focusedOrderId = null; // User manual focus override if desired
 let isInitialSyncDone = false;
 let audioAlertsEnabled = localStorage.getItem('tb_kds_audio_enabled') !== 'false'; // default ON
+let kitchenAudioCtx = null;
+
+function getKitchenAudioContext() {
+  try {
+    if (!kitchenAudioCtx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) kitchenAudioCtx = new AudioCtx();
+    }
+    if (kitchenAudioCtx && kitchenAudioCtx.state === 'suspended') {
+      kitchenAudioCtx.resume().catch(() => {});
+    }
+    return kitchenAudioCtx;
+  } catch (_) {
+    return null;
+  }
+}
 
 // Synthesize pleasant kitchen chime using Web Audio API (zero external assets needed)
 function playKitchenOrderChime() {
   if (!audioAlertsEnabled) return;
   try {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
+    const ctx = getKitchenAudioContext();
+    if (!ctx) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
 
