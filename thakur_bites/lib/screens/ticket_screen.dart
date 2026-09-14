@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/order.dart' as app;
 import '../theme/app_theme.dart';
 import '../widgets/receipt_print_reveal.dart';
+import '../widgets/chef_cooking_card.dart';
 import 'order_status_screen.dart';
 
 /// Phase 4 — Perforated ticket confirmation screen with live Firestore status sync.
@@ -147,6 +148,10 @@ class _TicketScreenState extends State<TicketScreen> {
   Widget _buildActionButtons(app.Order currentOrder) {
     return Column(
       children: [
+        // Masterchef Live Cooking Animation Card
+        const ChefCookingCard(),
+        const SizedBox(height: 16),
+
         // View Status button
         SizedBox(
           width: double.infinity,
@@ -237,13 +242,34 @@ class _TicketScreenState extends State<TicketScreen> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        border: Border.all(color: AppColors.line, width: 1.5),
+        color: const Color(0xFFFAF6ED),
+        border: Border.all(color: const Color(0xFFE4DCD0), width: 1.5),
         borderRadius: BorderRadius.circular(6),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x1A3B281C),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+          BoxShadow(
+            color: Color(0x0A000000),
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          ),
+        ],
       ),
-      child: Column(
+      child: Stack(
         children: [
-          Padding(
+          // 203-DPI Thermal Head Micro-Scanlines Overlay
+          const Positioned.fill(
+            child: CustomPaint(
+              painter: ThermalPaperScanlinesPainter(),
+            ),
+          ),
+
+          Column(
+            children: [
+              Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
             child: Column(
               children: [
@@ -598,6 +624,8 @@ class _TicketScreenState extends State<TicketScreen> {
 
           // Perforation bottom
           _buildPerforation(),
+        ],
+      ),
         ],
       ),
     );

@@ -38,6 +38,42 @@ void main() {
     });
   });
 
+  group('evaluateReceiptFeed Physics Tests', () {
+    test('starts at 0.0 and ends at 1.0', () {
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(0.0), 0.0);
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(0.817), 1.0);
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(1.0), 1.0);
+    });
+
+    test('Pause 1 (heating pause) holds at 8%', () {
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(0.08), 0.08);
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(0.11), 0.08);
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(0.139), 0.08);
+    });
+
+    test('Pause 2 (mid-ticket rasterization) holds at 42%', () {
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(0.35), closeTo(0.42, 0.001));
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(0.39), 0.42);
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(0.419), 0.42);
+    });
+
+    test('Pause 3 (stamp/QR computation) holds at 82%', () {
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(0.65), closeTo(0.82, 0.001));
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(0.68), 0.82);
+      expect(ReceiptPrintReveal.evaluateReceiptFeed(0.709), 0.82);
+    });
+
+    test('feed increases monotonically across bursts', () {
+      double prev = 0.0;
+      for (int i = 0; i <= 100; i++) {
+        final t = i / 100.0;
+        final feed = ReceiptPrintReveal.evaluateReceiptFeed(t);
+        expect(feed, greaterThanOrEqualTo(prev - 0.001));
+        prev = feed;
+      }
+    });
+  });
+
   group('ReceiptPrintReveal Widget Tests', () {
     testWidgets(
         'renders printer bar, ready indicator, receipt, and actions immediately when playIntro is false',
@@ -56,12 +92,12 @@ void main() {
 
       expect(find.text('Sample Ticket Receipt'), findsOneWidget);
       expect(find.text('Sample Action Buttons'), findsOneWidget);
-      expect(find.text('TCET THERMAL DISPATCH'), findsOneWidget);
+      expect(find.text('TCET SPEED-DISPATCH'), findsOneWidget);
       expect(find.text('READY'), findsOneWidget);
     });
 
     testWidgets(
-        'animates multi-phase 2.2s thermal print sequence when playIntro is true',
+        'animates multi-phase 5.2s thermal print sequence when playIntro is true',
         (tester) async {
       bool completedCalled = false;
 
@@ -70,7 +106,7 @@ void main() {
           home: Scaffold(
             body: ReceiptPrintReveal(
               playIntro: true,
-              duration: const Duration(milliseconds: 2200),
+              duration: const Duration(milliseconds: 5200),
               onCompleted: () => completedCalled = true,
               receipt: const SizedBox(
                 width: 300,
@@ -83,22 +119,43 @@ void main() {
         ),
       );
 
-      // Initial frame (t=0ms): Intro hasn't started forwarding yet (80ms delay)
-      expect(find.text('TCET THERMAL DISPATCH'), findsOneWidget);
+      // Initial frame (t=0ms): Intro hasn't started forwarding yet (100ms delay)
+      expect(find.text('TCET SPEED-DISPATCH'), findsOneWidget);
       expect(completedCalled, isFalse);
 
-      // Advance past delay and into unspooling phase (t = 100ms + 500ms = 600ms)
+      // Advance past initial delay into feeding phase (t = 100ms + 200ms = 300ms)
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('FEEDING'), findsOneWidget);
+      expect(completedCalled, isFalse);
+
+      // Advance into Pause 1: HEATING (t = ~650ms, 550ms after start)
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text('HEATING'), findsOneWidget);
+      expect(completedCalled, isFalse);
+
+      // Advance into Burst 1: PRINTING (t = ~1300ms, 1200ms after start)
+      await tester.pump(const Duration(milliseconds: 650));
       expect(find.text('PRINTING'), findsOneWidget);
       expect(completedCalled, isFalse);
 
-      // Advance into blade cut and scrap phase (t = ~1600ms)
-      await tester.pump(const Duration(milliseconds: 1000));
+      // Advance into Pause 2: BUFFERING (t = ~2100ms, 2000ms after start)
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(find.text('BUFFERING'), findsOneWidget);
       expect(completedCalled, isFalse);
 
-      // Advance to full completion (t = 2200ms + buffer)
-      await tester.pump(const Duration(milliseconds: 800));
+      // Advance into Pause 3: PROCESSING (t = ~3600ms, 3500ms after start)
+      await tester.pump(const Duration(milliseconds: 1500));
+      expect(find.text('PROCESSING'), findsOneWidget);
+      expect(completedCalled, isFalse);
+
+      // Advance into CUTTING (t = ~4450ms, 4350ms after start)
+      await tester.pump(const Duration(milliseconds: 850));
+      expect(find.text('CUTTING'), findsOneWidget);
+      expect(completedCalled, isFalse);
+
+      // Advance to full completion (t = 5300ms total)
+      await tester.pump(const Duration(milliseconds: 850));
       await tester.pump(const Duration(milliseconds: 200));
 
       expect(completedCalled, isTrue);
