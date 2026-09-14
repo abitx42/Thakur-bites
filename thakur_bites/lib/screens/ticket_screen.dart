@@ -5,6 +5,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/order.dart' as app;
 import '../theme/app_theme.dart';
+import '../widgets/receipt_print_reveal.dart';
 import 'order_status_screen.dart';
 
 /// Phase 4 — Perforated ticket confirmation screen with live Firestore status sync.
@@ -19,14 +20,11 @@ class TicketScreen extends StatefulWidget {
   State<TicketScreen> createState() => _TicketScreenState();
 }
 
-class _TicketScreenState extends State<TicketScreen>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _animController;
-  late Animation<double> _slideAnim;
-  late Animation<double> _fadeAnim;
+class _TicketScreenState extends State<TicketScreen> {
   String? _cachedPin;
   bool _copiedToken = false;
   bool _copiedPin = false;
+  bool _hasPlayedIntro = false;
   late final Stream<DocumentSnapshot<Map<String, dynamic>>> _orderSnapshotStream;
 
   @override
@@ -51,24 +49,10 @@ class _TicketScreenState extends State<TicketScreen>
         prefs.setString('order_pin_${widget.order.id}', _cachedPin!);
       }).catchError((_) {});
     }
-    _animController = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    );
-    _slideAnim = Tween<double>(begin: -22, end: 0).animate(
-      CurvedAnimation(parent: _animController, curve: Curves.easeOutBack),
-    );
-    _fadeAnim = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _animController, curve: Curves.easeOut),
-    );
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (mounted) _animController.forward();
-    });
   }
 
   @override
   void dispose() {
-    _animController.dispose();
     super.dispose();
   }
 
@@ -134,95 +118,22 @@ class _TicketScreenState extends State<TicketScreen>
                   ),
                 ),
 
-                // Ticket body
+                // Ticket body with Thermal Printer Print-Reveal
                 Expanded(
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(18),
-                    child: AnimatedBuilder(
-                      animation: _animController,
-                      builder: (context, child) {
-                        return Transform.translate(
-                          offset: Offset(0, _slideAnim.value),
-                          child: Opacity(
-                            opacity: _fadeAnim.value.clamp(0.0, 1.0),
-                            child: _buildTicket(currentOrder),
-                          ),
-                        );
+                    padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
+                    child: ReceiptPrintReveal(
+                      playIntro: !_hasPlayedIntro,
+                      onCompleted: () {
+                        if (mounted) {
+                          setState(() {
+                            _hasPlayedIntro = true;
+                          });
+                        }
                       },
+                      receipt: _buildTicket(currentOrder),
+                      actions: _buildActionButtons(currentOrder),
                     ),
-                  ),
-                ),
-
-                // Bottom action buttons
-                Container(
-                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
-                  decoration: const BoxDecoration(
-                    border: Border(
-                        top: BorderSide(color: AppColors.line, width: 1)),
-                    color: AppColors.surface,
-                  ),
-                  child: Column(
-                    children: [
-                      // View Status button
-                      SizedBox(
-                        width: double.infinity,
-                        child: GestureDetector(
-                          onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    OrderStatusScreen(order: currentOrder),
-                              ),
-                            );
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            decoration: BoxDecoration(
-                              color: AppColors.red,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              'Track live preparation →',
-                              style: AppFonts.body(
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-
-                      // Back to menu button
-                      SizedBox(
-                        width: double.infinity,
-                        child: GestureDetector(
-                          onTap: () {
-                            Navigator.of(context)
-                                .popUntil((route) => route.isFirst);
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            decoration: BoxDecoration(
-                              color: Colors.transparent,
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: AppColors.line, width: 1.5),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              'Back to menu',
-                              style: AppFonts.body(
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.ink,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
                   ),
                 ),
               ],
@@ -230,6 +141,72 @@ class _TicketScreenState extends State<TicketScreen>
           },
         ),
       ),
+    );
+  }
+
+  Widget _buildActionButtons(app.Order currentOrder) {
+    return Column(
+      children: [
+        // View Status button
+        SizedBox(
+          width: double.infinity,
+          child: GestureDetector(
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      OrderStatusScreen(order: currentOrder),
+                ),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                color: AppColors.red,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                'Track live preparation →',
+                style: AppFonts.body(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // Back to menu button
+        SizedBox(
+          width: double.infinity,
+          child: GestureDetector(
+            onTap: () {
+              Navigator.of(context)
+                  .popUntil((route) => route.isFirst);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.line, width: 1.5),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                'Back to menu',
+                style: AppFonts.body(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.ink,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -266,9 +243,6 @@ class _TicketScreenState extends State<TicketScreen>
       ),
       child: Column(
         children: [
-          // Perforation top
-          _buildPerforation(),
-
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
             child: Column(
