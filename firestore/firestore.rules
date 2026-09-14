@@ -274,6 +274,12 @@ service cloud.firestore {
         && (!('photoURL' in request.resource.data) || (request.resource.data.photoURL is string && request.resource.data.photoURL.size() <= 500 && (request.resource.data.photoURL.matches('^https://.*') || request.resource.data.photoURL == '')))
         && (!('preferences' in request.resource.data) || (request.resource.data.preferences is map));
       allow delete: if false;
+
+      // User Order Notifications (Read-only to owner, writes strictly Admin SDK / Cloud Functions)
+      match /notifications/{notificationId} {
+        allow read: if isOwner(userId);
+        allow write: if false; // Server Admin SDK only
+      }
     }
 
     // ─── User Preferences ────────────────────────────────────────
