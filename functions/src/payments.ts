@@ -620,7 +620,12 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
   paymentsSnap.forEach(doc => {
     const p = doc.data();
     const pAmountPaise = p.amountPaise !== undefined ? Number(p.amountPaise) : Math.round(Number(p.amount || 0) * 100);
-    onlinePaymentsCapturedPaise += pAmountPaise;
+    // TB-R2-011: Segregate digital payments from counter cash so cash isn't double-counted
+    if (p.gateway === 'counter_cash' || p.paymentMethod === 'counter_cash') {
+      counterCashEstimatedPaise += pAmountPaise;
+    } else {
+      onlinePaymentsCapturedPaise += pAmountPaise;
+    }
     capturedPaymentOrderIds.add(p.orderId);
   });
 
@@ -638,17 +643,11 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
 
     if (isPaid) {
       totalRevenuePaise += orderPaise;
-      if (order.paymentMethod === 'counter_cash') {
-        counterCashEstimatedPaise += orderPaise;
-      }
       if (!capturedPaymentOrderIds.has(doc.id)) {
         discrepanciesCount++;
         auditNotes.push(`Order ${doc.id} marked paid but missing verified payment ledger record.`);
       }
     } else {
-      if (order.paymentMethod === 'counter_cash') {
-        counterCashEstimatedPaise += orderPaise;
-      }
       if (order.status === 'collected') {
         discrepanciesCount++;
         auditNotes.push(`Order ${doc.id} marked collected but paymentStatus is unpaid/pending.`);
@@ -758,6 +757,12 @@ export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: s
       cancelledBy: request.auth!.uid,
       updatedAt: now,
     });
+
+    // 2b. Release Faculty Priority Lock if held (TB-R2-013)
+    if (orderData.studentId) {
+      const lockRef = db.collection('facultyPriorityLocks').doc(orderData.studentId);
+      transaction.delete(lockRef);
+    }
 
     // 3. Log order event
     const eventRef = db.collection('orderEvents').doc();

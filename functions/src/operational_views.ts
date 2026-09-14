@@ -76,8 +76,10 @@ export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async 
     throw new HttpsError('permission-denied', 'Permission denied: Kitchen role required.');
   }
 
+  // TB-R2-008: Strict FIFO ordering to prevent queue starvation under peak rush
   const snap = await db.collection('orders')
     .where('status', 'in', ['confirmed', 'preparing', 'placed'])
+    .orderBy('createdAt', 'asc')
     .limit(100)
     .get();
 

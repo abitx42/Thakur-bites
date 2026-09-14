@@ -48,9 +48,9 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
   const isPrivileged = callerRole && ['developer', 'admin', 'manager', 'security_admin', 'system'].includes(callerRole);
 
   // Enforce Google-only customer authentication architecture:
-  // Customers must authenticate via Google Sign-In (google.com). Non-Google sign-in attempts
-  // are rejected unless executed by privileged staff / admin roles.
-  if (signInProvider && !isGoogle && !isPrivileged && signInProvider !== 'custom') {
+  // Customers must authenticate via Google Sign-In (google.com) or Anonymous guest mode. Non-Google sign-in attempts
+  // are rejected unless executed by privileged staff / admin roles. (TB-R2-009)
+  if (signInProvider && !isGoogle && !isPrivileged && signInProvider !== 'custom' && signInProvider !== 'anonymous') {
     throw new HttpsError(
       'permission-denied',
       'Customer accounts must authenticate via Google Sign-In (google.com).'
@@ -132,6 +132,12 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
       // User already exists — update mutable client-editable fields only (TB-AUTH-010)
       const existingData = userSnap.data() as UserDocument;
 
+      // TB-R2-002: Prevent client-manipulated Firestore documents from claiming unverified faculty status
+      let authoritativeAccountType = existingData.accountType;
+      if ((authoritativeAccountType === 'TEACHER' || authoritativeAccountType === 'COLLEGE_STAFF') && !existingData.isVerified) {
+        authoritativeAccountType = classification.accountType;
+      }
+
       // TB-NEW-003: If user was previously PENDING email verification, but has now verified institutional email, elevate them.
       let currentVerificationStatus = existingData.verificationStatus;
       let currentPriorityLevel = existingData.priorityLevel;
@@ -160,6 +166,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
         department: preservedDept,
         year: cleanYear || existingData.year || '',
         rollNo: preservedRollNo,
+        accountType: authoritativeAccountType,
         verificationStatus: currentVerificationStatus,
         priorityLevel: currentPriorityLevel,
         isVerified: currentIsVerified,
@@ -168,7 +175,7 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
 
       return {
         isNew: false,
-        accountType: existingData.accountType,
+        accountType: authoritativeAccountType,
         verificationStatus: currentVerificationStatus,
         priorityLevel: currentPriorityLevel,
         isVerified: currentIsVerified,

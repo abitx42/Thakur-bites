@@ -52,6 +52,8 @@ export function getVisualFamily(item) {
   return VISUAL_FAMILIES.food_default;
 }
 
+import { escapeHtml } from './views/escapeHtml.js';
+
 export function renderMenuVisualHtml(item, width = 64, height = 54) {
   const family = getVisualFamily(item);
   const imageUrl = item && item.imageUrl ? item.imageUrl : '';
@@ -64,9 +66,11 @@ export function renderMenuVisualHtml(item, width = 64, height = 54) {
   `;
 
   if (imageUrl) {
+    const safeUrl = escapeHtml(imageUrl);
+    const safeAlt = escapeHtml(item && item.name ? item.name : 'dish');
     return `
       <div style="position: relative; width: ${width}px; height: ${height}px; flex-shrink: 0;">
-        <img src="${imageUrl}" alt="${item.name || 'dish'}"
+        <img src="${safeUrl}" alt="${safeAlt}"
           style="width: ${width}px; height: ${height}px; object-fit: cover; border-radius: 8px; display: block;"
           onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
         <div style="display: none; width: ${width}px; height: ${height}px; background: ${family.bg}; border: 1.2px solid ${family.color}33; border-radius: 8px; align-items: center; justify-content: center; font-size: ${Math.round(height * 0.44)}px; position: relative;">

@@ -143,8 +143,8 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
 
     // 4. Cancelled Order / Orphaned Payment Handling (TB-003 & TB-NEW-002 Remediation)
     // Invariant: Cancelled orders are NEVER resurrected. Late payment is recorded as ORPHANED for automated refund.
-    // Invariant TB-NEW-002: Deterministic transaction ID orphan_fin_${gatewayPaymentId} guarantees exactly 1 ledger posting.
-    if (orderData.status === 'cancelled' || orderData.paymentStatus === 'cancelled') {
+    // Invariant TB-NEW-002 & TB-R2-006: Deterministic transaction ID orphan_fin_${gatewayPaymentId} guarantees exactly 1 ledger posting.
+    if (orderData.status === 'cancelled' || orderData.paymentStatus === 'cancelled' || orderData.status === 'expired' || orderData.paymentStatus === 'expired') {
       const paymentId = `orphan_${gatewayPaymentId}`;
       const orphanRef = db.collection('orphanedPayments').doc(paymentId);
       const finTxRef = db.collection('financialTransactions').doc(`orphan_fin_${gatewayPaymentId}`);

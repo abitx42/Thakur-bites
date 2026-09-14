@@ -203,10 +203,29 @@ export async function executeIntegrityScan(): Promise<IntegrityScanResult> {
       anomaliesToRecord.push({ category: 'ORDER_LIFECYCLE', severity: 'CRITICAL', details: msg, relatedEntityId: orderId });
     }
 
-    // Check Missing Financial Ledger for Paid Orders
+    // Check Missing Financial Ledger for Paid Orders (TB-R2-001)
     if ((order.paymentStatus === 'paid' || order.paymentStatus === 'captured') && !txnsByOrderId.has(orderId)) {
-      const directFinDoc = txnDocMap.get(`fin_${orderId}`) || txnDocMap.get(`cash_fin_${orderId}`);
-      if (!directFinDoc) {
+      let hasFinDoc = txnDocMap.has(`fin_${orderId}`) || txnDocMap.has(`cash_fin_${orderId}`);
+      if (!hasFinDoc && order.gatewayPaymentId) {
+        hasFinDoc = txnDocMap.has(`pay_fin_${order.gatewayPaymentId}`);
+      }
+      if (!hasFinDoc) {
+        // Fallback: direct query in case limit(500) omitted the record
+        const directQuery = await db.collection('financialTransactions')
+          .where('orderId', '==', orderId)
+          .limit(1)
+          .get();
+        if (!directQuery.empty) {
+          hasFinDoc = true;
+        } else if (order.gatewayPaymentId) {
+          const directPayDoc = await db.collection('financialTransactions').doc(`pay_fin_${order.gatewayPaymentId}`).get();
+          if (directPayDoc.exists) {
+            hasFinDoc = true;
+          }
+        }
+      }
+
+      if (!hasFinDoc) {
         const msg = `MISSING_FINANCIAL_LEDGER: Order ${orderId} is marked PAID but has no record in financialTransactions collection.`;
         financialViolations.push(msg);
         anomaliesToRecord.push({ category: 'FINANCIAL', severity: 'CRITICAL', details: msg, relatedEntityId: orderId });

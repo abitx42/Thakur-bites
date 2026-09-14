@@ -246,6 +246,7 @@ class OrderItem {
     this.customization,
   });
 
+  String get itemId => menuItemId;
   bool get isInstant => type == 'instant';
   bool get isCooked => type == 'cooked';
 

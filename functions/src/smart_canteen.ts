@@ -54,8 +54,10 @@ export function evaluateCampusSchedule(nowDate: Date = new Date()): {
   period: SmartCanteenForecast['currentCampusPeriod'];
   nextRecess: SmartCanteenForecast['nextMajorRecess'];
 } {
-  const hours = nowDate.getHours();
-  const minutes = nowDate.getMinutes();
+  // TB-R2-015: Strict Asia/Kolkata IST evaluation to avoid 5.5h UTC server lag
+  const mumbaiDate = new Date(nowDate.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const hours = mumbaiDate.getHours();
+  const minutes = mumbaiDate.getMinutes();
   const currentTimeMinutes = hours * 60 + minutes;
 
   // TCET Bell Schedule in Minutes from midnight:
@@ -215,9 +217,14 @@ export function calculateSmartCanteenForecast(
         recommendation = `Restock immediately. Expected ${projectedDemandNextHour} orders during ${nextRecess.name}.`;
       } else if (projectedDeficit > 0) {
         riskLevel = 'HIGH';
-        const minutesLeft = Math.round((available / (projectedDemandNextHour / 60)));
-        const stockoutDate = new Date(nowDate.getTime() + minutesLeft * 60000);
-        predictedStockoutTime = `${stockoutDate.getHours().toString().padStart(2, '0')}:${stockoutDate.getMinutes().toString().padStart(2, '0')}`;
+        if (projectedDemandNextHour > 0) {
+          const minutesLeft = Math.round((available / (projectedDemandNextHour / 60)));
+          if (Number.isFinite(minutesLeft) && minutesLeft >= 0) {
+            const mumbaiNow = new Date(nowDate.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+            const stockoutDate = new Date(mumbaiNow.getTime() + minutesLeft * 60000);
+            predictedStockoutTime = `${stockoutDate.getHours().toString().padStart(2, '0')}:${stockoutDate.getMinutes().toString().padStart(2, '0')}`;
+          }
+        }
         recommendation = `Prepare/restock ${projectedDeficit} additional units before ${nextRecess.startTime}.`;
 
         if (proactivePrepRecommendations.length < 5) {

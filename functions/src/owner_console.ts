@@ -53,9 +53,14 @@ export interface OwnerBusinessMetricsResponse {
 }
 
 function getTodayStartTimestamp(): Timestamp {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return Timestamp.fromDate(d);
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const istStart = new Date(`${dateStr}T00:00:00+05:30`);
+  return Timestamp.fromDate(istStart);
+}
+
+function getMumbaiNow(): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
 }
 
 /**
@@ -121,8 +126,12 @@ export const getOwnerBusinessMetrics = onCall(async (request): Promise<OwnerBusi
       } else {
         digitalRevenuePaise += amount;
       }
-    } else if (data.status === 'cancelled' && (data.refundedAmountPaise || isPaid)) {
+    }
+    // TB-R2-010: Track refunds accurately regardless of whether order is cancelled or collected
+    if (data.status === 'cancelled' && (data.refundedAmountPaise || isPaid)) {
       refundedPaise += Number(data.refundedAmountPaise || amount);
+    } else if (data.status !== 'cancelled' && data.refundedAmountPaise) {
+      refundedPaise += Number(data.refundedAmountPaise);
     }
 
     // Item sales tracking
@@ -387,8 +396,12 @@ export const getAdminOperationsDashboard = onCall<void, Promise<AdminOperationsD
       } else {
         todayDigitalPaise += amount;
       }
-    } else if (data.status === 'cancelled' && (data.refundedAmountPaise || isPaid)) {
+    }
+    // TB-R2-010: Track refunds accurately regardless of whether order is cancelled or collected
+    if (data.status === 'cancelled' && (data.refundedAmountPaise || isPaid)) {
       todayRefundedPaise += Number(data.refundedAmountPaise || amount);
+    } else if (data.status !== 'cancelled' && data.refundedAmountPaise) {
+      todayRefundedPaise += Number(data.refundedAmountPaise);
     }
   });
 
@@ -427,8 +440,9 @@ export const getAdminOperationsDashboard = onCall<void, Promise<AdminOperationsD
     }
   });
 
-  // 6. Compute Comprehensive Production Operational KPIs (Phase 10)
-  const hoursElapsed = Math.max(0.5, (now.getHours() - 7) + now.getMinutes() / 60);
+  // 6. Compute Comprehensive Production Operational KPIs (Phase 10 & TB-R2-015)
+  const mumbaiNow = getMumbaiNow();
+  const hoursElapsed = Math.max(0.5, (mumbaiNow.getHours() - 7) + mumbaiNow.getMinutes() / 60);
   let totalOrderPrepMinutesSum = 0;
   let prepCount = 0;
   let totalCompletionMinutesSum = 0;

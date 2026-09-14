@@ -170,8 +170,10 @@ export async function enforceRateLimit(
     }
 
     timestamps.push(now);
-    if (timestamps.length > 100) {
-      timestamps = timestamps.slice(-100);
+    // Retain at least maxAllowed + 10 entries so rate limiting is never bypassed when maxAllowed > 100 (TB-R2-007)
+    const maxRetained = Math.max(100, maxAllowed + 10);
+    if (timestamps.length > maxRetained) {
+      timestamps = timestamps.slice(-maxRetained);
     }
     const expireAt = Timestamp.fromMillis(now + baseConfig.windowSeconds * 1000);
 

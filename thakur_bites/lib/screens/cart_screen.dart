@@ -11,6 +11,7 @@ import '../providers/cart_provider.dart';
 import '../services/firestore_service.dart';
 import '../services/checkout_service.dart';
 import '../services/payment_service.dart';
+import '../services/functions_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/canteen_status_banner.dart';
 import 'login_sheet.dart';
@@ -785,27 +786,39 @@ class _CartSummaryState extends State<_CartSummary> {
       app.Order order;
       final student = authProvider.currentStudent;
 
+      bool canReuseOrder = false;
       if (_activePendingOrder != null &&
+          !_activePendingOrder!.isCancelled &&
           _activePendingOrder!.totalAmount == cart.totalPrice &&
-          !_activePendingOrder!.isCancelled) {
+          _activePendingOrder!.items.length == cart.entries.length) {
+        canReuseOrder = true;
+        for (final entry in cart.entries) {
+          final matched = _activePendingOrder!.items.any((i) =>
+              i.itemId == entry.item.id &&
+              i.quantity == entry.qty &&
+              (i.customization ?? '') == (entry.customization ?? ''));
+          if (!matched) {
+            canReuseOrder = false;
+            break;
+          }
+        }
+      }
+
+      if (canReuseOrder) {
         // Reuse current pending order session
         order = _activePendingOrder!;
       } else {
-        // Cancel prior pending order if cart items or totals changed
+        // Cancel prior pending order if cart items or totals changed (TB-R2-004)
         if (_activePendingOrder != null) {
-          FirebaseFirestore.instance
-              .collection('orders')
-              .doc(_activePendingOrder!.id)
-              .update({
-            'status': 'cancelled',
-            'paymentStatus': 'failed',
-            'cancelReason': 'Cart modified before payment retry',
-            'updatedAt': FieldValue.serverTimestamp(),
-          }).catchError((_) {});
+          final oldOrderId = _activePendingOrder!.id;
           _activePendingOrder = null;
+          FunctionsService().cancelOrder(orderId: oldOrderId, reason: 'Cart modified before payment retry')
+              .catchError((_) {});
         }
 
-        _currentIdempotencyKey ??= generateIdempotencyKey();
+        // Explicitly clear old idempotency key so retry generates fresh session
+        _currentIdempotencyKey = null;
+        _currentIdempotencyKey = generateIdempotencyKey();
 
         order = await _checkoutService.createCheckout(
           idempotencyKey: _currentIdempotencyKey!,

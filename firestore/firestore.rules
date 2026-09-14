@@ -191,11 +191,7 @@ service cloud.firestore {
     // ─── Internal System Tables ─────────────────────────────────
     match /counters/dailyTokenCounter {
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated()
-        && request.resource.data.keys().hasOnly(['lastToken', 'date', 'updatedAt'])
-        && request.resource.data.lastToken is number
-        && request.resource.data.lastToken >= 100
-        && request.resource.data.lastToken <= 999;
+      allow write: if false; // Server-only authoritative allocation via createCheckout transactions (TB-R2-003)
     }
 
     match /counters/{counterId} {
@@ -264,7 +260,7 @@ service cloud.firestore {
         && request.resource.data.displayName.size() >= 2
         && request.resource.data.displayName.size() <= 100
         && request.resource.data.priorityLevel == 0
-        && request.resource.data.accountType in ['STUDENT', 'TEACHER', 'VISITOR', 'COLLEGE_STAFF']
+        && request.resource.data.accountType in ['STUDENT', 'VISITOR'] // Teachers/staff must be elevated via reviewVerificationApplication (TB-R2-002)
         && request.resource.data.verificationStatus in ['NOT_REQUIRED', 'PENDING', 'UNDER_REVIEW']
         && request.resource.data.isVerified == false
         && request.resource.data.accountDisabled == false;

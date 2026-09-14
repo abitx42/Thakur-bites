@@ -172,6 +172,24 @@ class FunctionsService {
     return Map<String, dynamic>.from(result.data as Map);
   }
 
+  /// Submits student pilot feedback for a completed meal.
+  Future<Map<String, dynamic>> submitPilotStudentFeedback({
+    required String orderId,
+    required int rating,
+    List<String>? tags,
+    String? comment,
+  }) async {
+    final callable = _getCallable('submitPilotStudentFeedback');
+    final result = await callable.call({
+      'orderId': orderId,
+      'rating': rating,
+      'tags': tags ?? [],
+      'comment': comment ?? '',
+      'appVersion': _appVersion,
+    });
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
   // ─── Version ─────────────────────────────────────────────────────────────
 
   static const String _appVersion = '1.0.0'; // Keep in sync with pubspec.yaml

@@ -65,8 +65,10 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
     throw new HttpsError('invalid-argument', 'Cart items cannot be empty and must not exceed 50 distinct items.');
   }
 
-  // 1b. Strict Quantity & Format Validation (P1: Reject invalid input rather than silent clamping)
+  // 1b. Strict Quantity & Format Validation (TB-R2-005)
   const aggregatedItemsMap = new Map<string, number>();
+  const lineItemsMap = new Map<string, { itemId: string; quantity: number; customization?: string }>();
+
   for (const item of items) {
     if (!item.itemId || typeof item.itemId !== 'string' || item.itemId.length > 128) {
       throw new HttpsError('invalid-argument', 'Item ID must be a non-empty string <= 128 characters.');
@@ -80,12 +82,27 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       throw new HttpsError('invalid-argument', `Total quantity for ${item.itemId} exceeds maximum 50 items.`);
     }
     aggregatedItemsMap.set(item.itemId, nextTotal);
+
+    // Track distinct line item customizations
+    const custom = item.customization ? String(item.customization).trim().substring(0, 100) : '';
+    const key = `${item.itemId}::${custom}`;
+    const existingLine = lineItemsMap.get(key);
+    if (existingLine) {
+      existingLine.quantity += item.quantity;
+    } else {
+      lineItemsMap.set(key, {
+        itemId: item.itemId,
+        quantity: item.quantity,
+        ...(custom ? { customization: custom } : {}),
+      });
+    }
   }
 
   const consolidatedItems = Array.from(aggregatedItemsMap.entries()).map(([itemId, quantity]) => ({
     itemId,
     quantity,
   }));
+  const consolidatedLineItems = Array.from(lineItemsMap.values());
 
   // Deterministic Idempotency Key Lock Document
   const idempotencyHash = crypto.createHash('sha256').update(`${studentId}_${idempotencyKey.trim()}`).digest('hex');
@@ -152,7 +169,16 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       let shouldGrantFacultyLock = false;
 
       if (userPriorityLevel >= 2) {
+        let isLockActive = false;
         if (facultyLockSnap.exists && facultyLockSnap.data()?.activeOrderId) {
+          const grantedAtMillis = facultyLockSnap.data()?.grantedAt?.toMillis?.() || 0;
+          const isStale = (now.toMillis() - grantedAtMillis) > (15 * 60 * 1000); // 15 min TTL
+          if (!isStale) {
+            isLockActive = true;
+          }
+        }
+
+        if (isLockActive) {
           assignedPriority = 1;
           priorityReason = 'FAIRNESS_MAX_ACTIVE_PRIORITY_REACHED';
         } else {
@@ -205,9 +231,9 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
           const rotiAvailable = dailyData.rotiAvailable !== false;
           const puriAvailable = dailyData.puriAvailable !== false;
 
-          const matchingItemWithCustom = items.find(i => i.itemId === req.itemId && i.customization);
-          if (matchingItemWithCustom?.customization) {
-            const custLower = matchingItemWithCustom.customization.toLowerCase();
+          const itemsWithCustom = consolidatedLineItems.filter(i => i.itemId === req.itemId && i.customization);
+          for (const itemWithCustom of itemsWithCustom) {
+            const custLower = itemWithCustom.customization!.toLowerCase();
             if (!rotiAvailable && (custLower.includes('roti') || custLower.includes('chapati'))) {
               throw new HttpsError('failed-precondition', 'Fresh Chapatis are sold out for today. Please select Puris or update your cart.');
             }
@@ -251,25 +277,28 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
           }
         }
 
-        const subtotalPaise = unitPricePaise * req.quantity;
-        calculatedTotalPaise += subtotalPaise;
         if (prepMinutes > maxPrepMinutes) {
           maxPrepMinutes = prepMinutes;
         }
 
-        const originalCustom = items.find(i => i.itemId === req.itemId && i.customization)?.customization;
-        orderItemSnapshots.push({
-          itemId: req.itemId,
-          name: menuData.name,
-          quantity: req.quantity,
-          unitPrice: unitPricePaise / 100,
-          unitPricePaise,
-          subtotal: subtotalPaise / 100,
-          subtotalPaise,
-          type,
-          station: menuData.category || 'general',
-          ...(originalCustom ? { customization: String(originalCustom).substring(0, 100) } : {}),
-        });
+        // Add each distinct line configuration (e.g. 1 Roti Thali + 1 Puri Thali) (TB-R2-005)
+        const linesForThisItem = consolidatedLineItems.filter(l => l.itemId === req.itemId);
+        for (const line of linesForThisItem) {
+          const lineSubtotalPaise = unitPricePaise * line.quantity;
+          calculatedTotalPaise += lineSubtotalPaise;
+          orderItemSnapshots.push({
+            itemId: req.itemId,
+            name: menuData.name,
+            quantity: line.quantity,
+            unitPrice: unitPricePaise / 100,
+            unitPricePaise,
+            subtotal: lineSubtotalPaise / 100,
+            subtotalPaise: lineSubtotalPaise,
+            type,
+            station: menuData.category || 'general',
+            ...(line.customization ? { customization: line.customization } : {}),
+          });
+        }
       }
 
       // ═════════════════════════════════════════════════════════════

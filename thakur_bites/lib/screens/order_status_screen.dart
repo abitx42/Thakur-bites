@@ -78,6 +78,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   int _selectedStars = 5;
   final Set<String> _selectedFeedbackTags = {'🔥 Crispy & Fresh', '⚡️ Fast Service'};
   bool _feedbackSubmitted = false;
+  bool _isSubmittingFeedback = false;
 
   final List<String> _feedbackOptions = [
     '🔥 Crispy & Fresh',
@@ -85,6 +86,13 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     '😋 Super Tasty',
     '📦 Perfect Packaging',
   ];
+
+  static const Map<String, String> _tagEnumMap = {
+    '🔥 Crispy & Fresh': 'great_experience',
+    '⚡️ Fast Service': 'payment_seamless',
+    '😋 Super Tasty': 'great_experience',
+    '📦 Perfect Packaging': 'payment_seamless',
+  };
 
   String? _cachedPin;
 
@@ -106,6 +114,17 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
         prefs.setString('order_pin_${widget.orderId}', _cachedPin!);
       }).catchError((_) {});
     }
+
+    // Restore previously submitted rating for this order (TB-R2-014)
+    SharedPreferences.getInstance().then((prefs) {
+      if (prefs.getBool('feedback_submitted_${widget.orderId}') == true && mounted) {
+        setState(() {
+          _feedbackSubmitted = true;
+          _selectedStars = prefs.getInt('feedback_stars_${widget.orderId}') ?? 5;
+        });
+      }
+    }).catchError((_) {});
+
     // Cache stream once so 1-second countdown timer rebuilds do NOT reconnect to Firestore every second
     _orderStream = FirestoreService().orderStream(widget.orderId);
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -1263,6 +1282,50 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     }
   }
 
+  Future<void> _submitFeedback(String orderId) async {
+    if (_feedbackSubmitted || _isSubmittingFeedback) return;
+    setState(() => _isSubmittingFeedback = true);
+
+    try {
+      final validTags = _selectedFeedbackTags
+          .map((tag) => _tagEnumMap[tag])
+          .whereType<String>()
+          .toSet()
+          .toList();
+
+      await FunctionsService().submitPilotStudentFeedback(
+        orderId: orderId,
+        rating: _selectedStars,
+        tags: validTags.isEmpty ? ['great_experience'] : validTags,
+      );
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('feedback_submitted_$orderId', true);
+      await prefs.setInt('feedback_stars_$orderId', _selectedStars);
+
+      if (mounted) {
+        setState(() {
+          _feedbackSubmitted = true;
+          _isSubmittingFeedback = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Thank you! Your feedback has been recorded.'),
+            backgroundColor: AppColors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isSubmittingFeedback = false;
+          _feedbackSubmitted = true;
+        });
+      }
+    }
+  }
+
   /// Post-Pickup Card: Star Ratings, Feedback Tags & 1-Tap Quick Reorder
   Widget _buildPostPickupCard(app.Order order) {
     return Container(
@@ -1295,12 +1358,13 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               final star = index + 1;
               final filled = star <= _selectedStars;
               return GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _selectedStars = star;
-                    _feedbackSubmitted = true;
-                  });
-                },
+                onTap: _feedbackSubmitted
+                    ? null
+                    : () {
+                        setState(() {
+                          _selectedStars = star;
+                        });
+                      },
                 child: Padding(
                   padding: const EdgeInsets.only(right: 6),
                   child: Icon(
@@ -1321,16 +1385,17 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
             children: _feedbackOptions.map((tag) {
               final isSelected = _selectedFeedbackTags.contains(tag);
               return GestureDetector(
-                onTap: () {
-                  setState(() {
-                    if (isSelected) {
-                      _selectedFeedbackTags.remove(tag);
-                    } else {
-                      _selectedFeedbackTags.add(tag);
-                    }
-                    _feedbackSubmitted = true;
-                  });
-                },
+                onTap: _feedbackSubmitted
+                    ? null
+                    : () {
+                        setState(() {
+                          if (isSelected) {
+                            _selectedFeedbackTags.remove(tag);
+                          } else {
+                            _selectedFeedbackTags.add(tag);
+                          }
+                        });
+                      },
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
@@ -1354,6 +1419,25 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
             }).toList(),
           ),
 
+          if (!_feedbackSubmitted) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isSubmittingFeedback ? null : () => _submitFeedback(order.id),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                child: _isSubmittingFeedback
+                    ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : Text('Submit Rating', style: AppFonts.mono(fontSize: 12, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ],
+
           const SizedBox(height: 16),
           const Divider(height: 1, color: Color(0xFF86EFAC)),
           const SizedBox(height: 14),
@@ -1365,17 +1449,20 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               onTap: () {
                 final cart = Provider.of<CartProvider>(context, listen: false);
                 for (final item in order.items) {
-                  cart.addItem(
-                    MenuItem(
-                      id: item.menuItemId,
-                      name: item.name,
-                      price: item.price,
-                      category: 'snacks',
-                      type: 'cooked',
-                      prepMinutes: 5,
-                      stockCount: 50,
-                    ),
-                  );
+                  for (int k = 0; k < item.quantity; k++) {
+                    cart.addItem(
+                      MenuItem(
+                        id: item.menuItemId,
+                        name: item.name,
+                        price: item.price,
+                        category: 'general',
+                        type: item.type ?? 'cooked',
+                        prepMinutes: 5,
+                        stockCount: 50,
+                      ),
+                      customization: item.customization,
+                    );
+                  }
                 }
 
                 Navigator.of(context).push(
