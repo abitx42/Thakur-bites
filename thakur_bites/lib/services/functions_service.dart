@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'device_security_service.dart';
 
 /// Typed, named callable references for all Thakur Bites Cloud Functions.
 ///
@@ -27,12 +28,14 @@ class FunctionsService {
     String? readyMadePreference,
   }) async {
     final callable = _getCallable('createCheckout');
+    final deviceId = DeviceSecurityService().deviceId;
     final result = await callable.call({
       'idempotencyKey': idempotencyKey,
       'items': items,
       'paymentMethod': paymentMethod,
       if (readyMadePreference != null && readyMadePreference.isNotEmpty)
         'readyMadePreference': readyMadePreference,
+      if (deviceId.isNotEmpty) 'deviceId': deviceId,
       'appVersion': _appVersion,
     });
     return Map<String, dynamic>.from(result.data as Map);

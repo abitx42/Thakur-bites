@@ -57,6 +57,7 @@ export interface CheckoutRequest {
   items: CheckoutRequestItem[];
   paymentMethod?: PaymentMethod;
   readyMadePreference?: string;
+  deviceId?: string;
   appVersion?: string;
 }
 
@@ -109,6 +110,7 @@ export interface OrderDocument {
   reservationExpiresAt?: Timestamp;
   priorityLevel?: PriorityLevel;
   priorityReason?: string;
+  deviceId?: string | null;
   updatedAt?: Timestamp;
 }
 

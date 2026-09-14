@@ -13,6 +13,8 @@ import 'models/app_version.dart';
 import 'screens/menu_screen.dart';
 import 'screens/force_update_screen.dart';
 import 'widgets/update_dialog.dart';
+import 'services/device_security_service.dart';
+import 'widgets/device_security_wrapper.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -106,12 +108,15 @@ class ThakurBitesApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => CartProvider()),
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => UpdateService()),
+        ChangeNotifierProvider(create: (_) => DeviceSecurityService()),
       ],
       child: MaterialApp(
         title: 'Thakur Bites',
         debugShowCheckedModeBanner: false,
         theme: buildAppTheme(),
-        home: const AppUpdateWrapper(child: MenuScreen()),
+        home: const DeviceSecurityWrapper(
+          child: AppUpdateWrapper(child: MenuScreen()),
+        ),
       ),
     );
   }

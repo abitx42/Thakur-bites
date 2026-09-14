@@ -1,5 +1,8 @@
 // Thakur Bites Platform 2.0 — Universal Operations & Application Portal Gateway
 import { staffAuth, renderPinPadModal, getOrCreateDeviceId } from './auth.js?v=8';
+import { initSecuritySentinel } from './securitySentinel.js?v=1';
+
+initSecuritySentinel({ blockShortcuts: false });
 
 function initPortalGateway() {
   const root = document.getElementById('app-root');

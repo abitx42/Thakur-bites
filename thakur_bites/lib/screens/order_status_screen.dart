@@ -390,6 +390,9 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                 ? '⚡ Express Counter'
                 : EtaService.getWaitTimeLabel(order.estimatedMinutes);
 
+    final now = DateTime.now();
+    final liveSecStr = "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}";
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
@@ -397,61 +400,101 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.line, width: 1),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Your token',
-                style: AppFonts.body(fontSize: 11, color: AppColors.inkSoft),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Your token',
+                    style: AppFonts.body(fontSize: 11, color: AppColors.inkSoft),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    order.tokenNumber.isEmpty ? '—' : order.tokenNumber,
+                    style: AppFonts.mono(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: order.isCancelled ? AppColors.inkSoft : AppColors.red,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 2),
-              Text(
-                order.tokenNumber.isEmpty ? '—' : order.tokenNumber,
-                style: AppFonts.mono(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                  color: order.isCancelled ? AppColors.inkSoft : AppColors.red,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    waitLabel,
+                    style: AppFonts.body(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: order.isCancelled
+                          ? AppColors.inkSoft
+                          : order.isPaymentPending
+                              ? const Color(0xFFD97706)
+                              : order.isOnlyReadyMade
+                                  ? const Color(0xFF16A34A)
+                                  : AppColors.inkSoft,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    order.isCancelled
+                        ? 'Cancelled'
+                        : order.isOnlyReadyMade
+                            ? 'Ready Now'
+                            : (order.readyAt != null ? _formatTime(order.readyAt!) : 'Ready Now'),
+                    style: AppFonts.mono(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: order.isOnlyReadyMade && !order.isCancelled
+                          ? const Color(0xFF16A34A)
+                          : AppColors.ink,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                waitLabel,
-                style: AppFonts.body(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: order.isCancelled
-                      ? AppColors.inkSoft
-                      : order.isPaymentPending
-                          ? const Color(0xFFD97706)
-                          : order.isOnlyReadyMade
-                              ? const Color(0xFF16A34A)
-                              : AppColors.inkSoft,
-                ),
+          if (!order.isCancelled && !order.isPaymentPending) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0FDF4),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFBBF7D0)),
               ),
-              const SizedBox(height: 2),
-              Text(
-                order.isCancelled
-                    ? 'Cancelled'
-                    : order.isOnlyReadyMade
-                        ? 'Ready Now'
-                        : (order.readyAt != null ? _formatTime(order.readyAt!) : 'Ready Now'),
-                style: AppFonts.mono(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: order.isOnlyReadyMade && !order.isCancelled
-                      ? const Color(0xFF16A34A)
-                      : AppColors.ink,
-                ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF16A34A),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'SECURE CANTEEN TICKET · LIVE $liveSecStr',
+                      style: AppFonts.mono(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF15803D),
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.verified_user_rounded, size: 14, color: Color(0xFF16A34A)),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ],
       ),
     );

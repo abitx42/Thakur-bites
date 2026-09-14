@@ -411,6 +411,11 @@ service cloud.firestore {
       allow write: if false; // Server Admin SDK Only
     }
 
+    // ─── Banned Devices Blacklist (Server Admin SDK Only) ────────
+    match /bannedDevices/{deviceId} {
+      allow read, write: if false; // Cloud Functions only
+    }
+
     // ─── Default Deny ────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

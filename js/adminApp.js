@@ -4,6 +4,9 @@ import { renderAdminView } from './views/adminView.js?v=9';
 import { renderAnalyticsView } from './views/analyticsView.js?v=6';
 import { renderWorkstationView } from './views/workstationView.js?v=2';
 import { renderPrivilegedAuthModal } from './views/mfaModal.js?v=2';
+import { initSecuritySentinel } from './securitySentinel.js?v=1';
+
+initSecuritySentinel({ blockShortcuts: true });
 
 let currentAdminView = 'menu'; // 'menu' | 'analytics' | 'workstations'
 

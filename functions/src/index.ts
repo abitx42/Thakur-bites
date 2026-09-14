@@ -104,6 +104,7 @@ export {
   getPilotFeedbackSummary,
 } from './pilot_feedback';
 export { getOrderSuccessFunnel } from './funnel_metrics';
+export { reportSecurityViolation } from './security_events';
 
 
 

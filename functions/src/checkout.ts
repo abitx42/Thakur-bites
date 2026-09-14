@@ -42,7 +42,10 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   }
 
   await enforceRateLimit(studentId, 'checkout');
-  const { idempotencyKey, items, paymentMethod = 'online', readyMadePreference } = request.data || {};
+  const { idempotencyKey, items, paymentMethod = 'online', readyMadePreference, deviceId } = request.data || {};
+  const sanitizedDeviceId = typeof deviceId === 'string' && deviceId.trim().length > 0
+    ? deviceId.trim().slice(0, 128)
+    : undefined;
 
   // Strict Payment Method Enum Validation (TB-NEW-008 Remediation)
   if (paymentMethod !== 'online' && paymentMethod !== 'counter_cash') {
@@ -115,6 +118,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   const newOrderRef = db.collection('orders').doc();
   const facultyLockRef = db.collection('facultyPriorityLocks').doc(studentId);
   const dailyBoardRef = db.collection('canteenConfig').doc('dailyMenuBoard');
+  const bannedDeviceRef = sanitizedDeviceId ? db.collection('bannedDevices').doc(sanitizedDeviceId) : null;
 
   // Deduplicated item document references
   const itemRefs = consolidatedItems.map(i => db.collection('menuItems').doc(i.itemId));
@@ -124,12 +128,13 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       // ═════════════════════════════════════════════════════════════
       // 1. ALL READS FIRST (Strict Transaction Invariant)
       // ═════════════════════════════════════════════════════════════
-      const [idempotencySnap, userSnap, counterSnap, facultyLockSnap, dailyBoardSnap, ...itemSnapshots] = await Promise.all([
+      const [idempotencySnap, userSnap, counterSnap, facultyLockSnap, dailyBoardSnap, bannedDeviceSnap, ...itemSnapshots] = await Promise.all([
         transaction.get(idempotencyLockRef),
         transaction.get(userRef),
         transaction.get(counterRef),
         transaction.get(facultyLockRef),
         transaction.get(dailyBoardRef),
+        bannedDeviceRef ? transaction.get(bannedDeviceRef) : Promise.resolve(null),
         ...itemRefs.map(ref => transaction.get(ref)),
       ]);
 
@@ -155,6 +160,10 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       const userData = userSnap.data() || {};
       if (userData.accountDisabled === true) {
         throw new HttpsError('permission-denied', 'Account has been deactivated.');
+      }
+
+      if (bannedDeviceSnap && bannedDeviceSnap.exists) {
+        throw new HttpsError('permission-denied', 'This device has been suspended due to security violations.');
       }
 
       const studentName = userData.displayName || 'Customer';
@@ -355,6 +364,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         createdAt: now,
         readyAt: Timestamp.fromDate(readyAtDate),
         reservationExpiresAt: Timestamp.fromDate(new Date(Date.now() + 15 * 60000)),
+        deviceId: sanitizedDeviceId || null,
       };
 
       // ═════════════════════════════════════════════════════════════
