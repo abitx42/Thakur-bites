@@ -18,6 +18,10 @@ class Order {
   final DateTime? cancelledAt;
   final int? totalAmountPaise;
   final String? gatewayOrderId;
+  final String? gatewayPaymentId;
+  final String? refundId;
+  final int? refundedAmountPaise;
+  final String? refundLifecycleStatus;
   final DateTime createdAt;
   final DateTime? readyAt;
   final int estimatedMinutes; // max prep time of all items
@@ -43,6 +47,10 @@ class Order {
     this.cancelledAt,
     this.totalAmountPaise,
     this.gatewayOrderId,
+    this.gatewayPaymentId,
+    this.refundId,
+    this.refundedAmountPaise,
+    this.refundLifecycleStatus,
     required this.createdAt,
     this.readyAt,
     this.reservationExpiresAt,
@@ -83,6 +91,9 @@ class Order {
   bool get isCancelled => status == 'cancelled' || paymentStatus == 'cancelled';
   bool get isOnlinePayment => paymentMethod == 'online';
   bool get isCounterCash => paymentMethod == 'counter_cash';
+  bool get isPaid => paymentStatus == 'paid' || paymentStatus == 'captured';
+  bool get isRefunded => paymentStatus == 'refunded' || refundId != null;
+  bool get isRefundPending => paymentStatus == 'refund_pending' || refundLifecycleStatus == 'REFUND_REQUESTED';
   bool get isFacultyPriority =>
       (priorityLevel != null && priorityLevel! >= 2) ||
       priorityReason == 'FACULTY_PRIORITY_APPLIED';
@@ -150,6 +161,10 @@ class Order {
       cancelledAt: (data['cancelledAt'] as Timestamp?)?.toDate(),
       totalAmountPaise: (data['totalAmountPaise'] as num?)?.toInt(),
       gatewayOrderId: data['gatewayOrderId'] as String?,
+      gatewayPaymentId: (data['gatewayPaymentId'] ?? data['paymentId']) as String?,
+      refundId: data['refundId'] as String?,
+      refundedAmountPaise: (data['refundedAmountPaise'] ?? data['amountRefundedPaise']) as int?,
+      refundLifecycleStatus: data['refundLifecycleStatus'] as String?,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       readyAt: (data['readyAt'] as Timestamp?)?.toDate(),
       reservationExpiresAt: (data['reservationExpiresAt'] as Timestamp?)?.toDate(),
@@ -183,6 +198,10 @@ class Order {
       'totalAmount': totalAmount,
       'totalAmountPaise': totalAmountPaise ?? (totalAmount * 100).round(),
       if (gatewayOrderId != null) 'gatewayOrderId': gatewayOrderId,
+      if (gatewayPaymentId != null) 'gatewayPaymentId': gatewayPaymentId,
+      if (refundId != null) 'refundId': refundId,
+      if (refundedAmountPaise != null) 'refundedAmountPaise': refundedAmountPaise,
+      if (refundLifecycleStatus != null) 'refundLifecycleStatus': refundLifecycleStatus,
       'items': items.map((item) => item.toMap()).toList(),
       'isOnlyReadyMade': isOnlyReadyMade,
       if (readyMadePreference != null) 'readyMadePreference': readyMadePreference,
@@ -205,6 +224,10 @@ class Order {
     DateTime? cancelledAt,
     int? totalAmountPaise,
     String? gatewayOrderId,
+    String? gatewayPaymentId,
+    String? refundId,
+    int? refundedAmountPaise,
+    String? refundLifecycleStatus,
     DateTime? createdAt,
     DateTime? readyAt,
     DateTime? reservationExpiresAt,
@@ -230,6 +253,10 @@ class Order {
       cancelledAt: cancelledAt ?? this.cancelledAt,
       totalAmountPaise: totalAmountPaise ?? this.totalAmountPaise,
       gatewayOrderId: gatewayOrderId ?? this.gatewayOrderId,
+      gatewayPaymentId: gatewayPaymentId ?? this.gatewayPaymentId,
+      refundId: refundId ?? this.refundId,
+      refundedAmountPaise: refundedAmountPaise ?? this.refundedAmountPaise,
+      refundLifecycleStatus: refundLifecycleStatus ?? this.refundLifecycleStatus,
       createdAt: createdAt ?? this.createdAt,
       readyAt: readyAt ?? this.readyAt,
       reservationExpiresAt: reservationExpiresAt ?? this.reservationExpiresAt,

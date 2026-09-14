@@ -122,7 +122,7 @@ service cloud.firestore {
         (
           resource.data.studentId == request.auth.uid &&
           (
-            (request.resource.data.status == 'cancelled' && resource.data.status in ['placed', 'payment_pending']) ||
+            (request.resource.data.status == 'cancelled' && resource.data.status in ['placed', 'payment_pending', 'confirmed', 'ready']) ||
             (request.resource.data.paymentStatus == 'paid' && resource.data.paymentStatus in ['pending', 'unpaid'])
           )
         )
