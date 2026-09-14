@@ -16,12 +16,50 @@ import 'widgets/update_dialog.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  bool firebaseReady = false;
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    firebaseReady = true;
   } catch (e) {
     debugPrint('[Startup] Firebase initialization: $e');
+    if (Firebase.apps.isNotEmpty) {
+      firebaseReady = true;
+    }
+  }
+
+  if (!firebaseReady) {
+    runApp(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: buildAppTheme(),
+        home: const Scaffold(
+          body: Center(
+            child: Padding(
+              padding: EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.cloud_off_rounded, size: 64, color: AppColors.red),
+                  SizedBox(height: 16),
+                  Text(
+                    'Connection Notice',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'Unable to connect to canteen services. Please refresh the page.',
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    return;
   }
 
   if (!kIsWeb && kDebugMode) {

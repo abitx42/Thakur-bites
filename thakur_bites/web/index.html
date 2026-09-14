@@ -94,9 +94,9 @@
   </div>
 
   <script>
-    window.addEventListener('flutter-first-frame', function () {
+    function hideLoadingSplash() {
       var splash = document.getElementById('loading-splash');
-      if (splash) {
+      if (splash && splash.style.opacity !== '0') {
         splash.style.opacity = '0';
         setTimeout(function () {
           if (splash && splash.parentNode) {
@@ -104,8 +104,11 @@
           }
         }, 400);
       }
-    });
+    }
+    window.addEventListener('flutter-first-frame', hideLoadingSplash);
+    // Safety fallback: fade out splash after 5s so UI is never permanently blocked
+    setTimeout(hideLoadingSplash, 5000);
   </script>
-  <script src="flutter_bootstrap.js?v=2" async></script>
+  <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
