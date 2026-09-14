@@ -422,7 +422,32 @@ class _CartItemRow extends StatelessWidget {
                     onTap: () {
                       HapticFeedback.selectionClick();
                       final entryKey = CartProvider.entryKey(item.id, entry.customization);
+                      final removedItem = entry.item;
+                      final removedCustomization = entry.customization;
+                      final wasLastItem = entry.qty == 1;
+
                       context.read<CartProvider>().removeItem(entryKey);
+
+                      if (wasLastItem) {
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Removed ${item.name} from tray'),
+                            duration: const Duration(seconds: 4),
+                            action: SnackBarAction(
+                              label: 'UNDO',
+                              textColor: AppColors.mustard,
+                              onPressed: () {
+                                HapticFeedback.selectionClick();
+                                context.read<CartProvider>().addItem(
+                                      removedItem,
+                                      customization: removedCustomization,
+                                    );
+                              },
+                            ),
+                          ),
+                        );
+                      }
                     },
                     child: Container(
                       width: 28,

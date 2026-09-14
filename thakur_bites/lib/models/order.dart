@@ -26,6 +26,8 @@ class Order {
   final DateTime? reservationExpiresAt;
   final bool isOnlyReadyMade;
   final String? readyMadePreference;
+  final int? priorityLevel;
+  final String? priorityReason;
 
   Order({
     required this.id,
@@ -49,6 +51,8 @@ class Order {
     required this.items,
     this.isOnlyReadyMade = false,
     this.readyMadePreference,
+    this.priorityLevel,
+    this.priorityReason,
   });
 
   /// Status progression
@@ -79,6 +83,9 @@ class Order {
   bool get isCancelled => status == 'cancelled' || paymentStatus == 'cancelled';
   bool get isOnlinePayment => paymentMethod == 'online';
   bool get isCounterCash => paymentMethod == 'counter_cash';
+  bool get isFacultyPriority =>
+      (priorityLevel != null && priorityLevel! >= 2) ||
+      priorityReason == 'FACULTY_PRIORITY_APPLIED';
 
   /// Pre-preparation cancellation exclusivity (INV-007, INV-014)
   bool get canCancel => !isCancelled && !isPreparing && !isReady && !isCollected;
@@ -152,6 +159,8 @@ class Order {
       items: parsedItems,
       isOnlyReadyMade: onlyReadyMade,
       readyMadePreference: data['readyMadePreference'] as String?,
+      priorityLevel: (data['priorityLevel'] as num?)?.toInt(),
+      priorityReason: data['priorityReason'] as String?,
     );
   }
 
@@ -177,6 +186,8 @@ class Order {
       'items': items.map((item) => item.toMap()).toList(),
       'isOnlyReadyMade': isOnlyReadyMade,
       if (readyMadePreference != null) 'readyMadePreference': readyMadePreference,
+      if (priorityLevel != null) 'priorityLevel': priorityLevel,
+      if (priorityReason != null) 'priorityReason': priorityReason,
     };
   }
 
@@ -202,6 +213,8 @@ class Order {
     List<OrderItem>? items,
     bool? isOnlyReadyMade,
     String? readyMadePreference,
+    int? priorityLevel,
+    String? priorityReason,
   }) {
     return Order(
       id: id ?? this.id,
@@ -225,6 +238,8 @@ class Order {
       items: items ?? this.items,
       isOnlyReadyMade: isOnlyReadyMade ?? this.isOnlyReadyMade,
       readyMadePreference: readyMadePreference ?? this.readyMadePreference,
+      priorityLevel: priorityLevel ?? this.priorityLevel,
+      priorityReason: priorityReason ?? this.priorityReason,
     );
   }
 }

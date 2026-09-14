@@ -1385,3 +1385,23 @@ html, body {
   }
 }
 
+/* Station Verification High-Visibility Flash */
+.station-verify-flash {
+  animation: station-flash-pulse 0.4s ease-out;
+}
+@keyframes station-flash-pulse {
+  0% {
+    transform: scale(0.98);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.01);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+

@@ -354,22 +354,26 @@ body {
   white-space: nowrap;
 }
 
-/* Ready Token Card — Massive Glowing Visual */
+/* Ready Token Card — Calm High-Contrast Visual with Targeted Entrance Pop */
 .token-card.ready {
   background: #064E3B;
   border: 3px solid #22C55E;
   box-shadow: 0 0 24px rgba(34, 197, 94, 0.35);
-  animation: glow-ready 2s infinite ease-in-out;
+  animation: glow-ready-entrance 1.2s 2 ease-out;
 }
 
-@keyframes glow-ready {
-  0%, 100% {
-    box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
-    transform: scale(1);
+@keyframes glow-ready-entrance {
+  0% {
+    box-shadow: 0 0 15px rgba(34, 197, 94, 0.25);
+    transform: scale(0.96);
   }
   50% {
-    box-shadow: 0 0 35px rgba(34, 197, 94, 0.6);
-    transform: scale(1.02);
+    box-shadow: 0 0 40px rgba(34, 197, 94, 0.7);
+    transform: scale(1.03);
+  }
+  100% {
+    box-shadow: 0 0 24px rgba(34, 197, 94, 0.35);
+    transform: scale(1);
   }
 }
 

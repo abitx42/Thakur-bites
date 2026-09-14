@@ -330,41 +330,10 @@ class MenuItemCard extends StatelessWidget {
   }
 
   Widget _buildAddButton(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Semantics(
-        button: true,
-        label: 'Add ${item.name} to cart',
-        child: GestureDetector(
-          onTap: () {
-            HapticFeedback.selectionClick();
-            if (_isCustomizableMeal) {
-              MealCustomizerSheet.show(
-                context,
-                item: item,
-                dailyBoard: dailyBoard ?? DailyBoard.defaultForDay(DateTime.now()),
-              );
-            } else {
-              context.read<CartProvider>().addItem(item);
-            }
-          },
-          child: Container(
-            width: 44,
-            height: 44,
-            alignment: Alignment.center,
-            color: Colors.transparent,
-            child: Container(
-              width: 30,
-              height: 30,
-              decoration: const BoxDecoration(
-                color: AppColors.ink,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.add, color: Colors.white, size: 17),
-            ),
-          ),
-        ),
-      ),
+    return _AddButtonWithBounce(
+      item: item,
+      isCustomizableMeal: _isCustomizableMeal,
+      dailyBoard: dailyBoard,
     );
   }
 
@@ -594,3 +563,72 @@ class MenuItemCard extends StatelessWidget {
     );
   }
 }
+
+/// Contained tactile press-bounce button for adding items to the tray
+class _AddButtonWithBounce extends StatefulWidget {
+  final MenuItem item;
+  final bool isCustomizableMeal;
+  final DailyBoard? dailyBoard;
+
+  const _AddButtonWithBounce({
+    required this.item,
+    required this.isCustomizableMeal,
+    this.dailyBoard,
+  });
+
+  @override
+  State<_AddButtonWithBounce> createState() => _AddButtonWithBounceState();
+}
+
+class _AddButtonWithBounceState extends State<_AddButtonWithBounce> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Semantics(
+        button: true,
+        label: 'Add ${widget.item.name} to cart',
+        child: GestureDetector(
+          onTapDown: (_) => setState(() => _pressed = true),
+          onTapUp: (_) => setState(() => _pressed = false),
+          onTapCancel: () => setState(() => _pressed = false),
+          onTap: () {
+            HapticFeedback.selectionClick();
+            if (widget.isCustomizableMeal) {
+              MealCustomizerSheet.show(
+                context,
+                item: widget.item,
+                dailyBoard: widget.dailyBoard ?? DailyBoard.defaultForDay(DateTime.now()),
+              );
+            } else {
+              context.read<CartProvider>().addItem(widget.item);
+            }
+          },
+          child: Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            color: Colors.transparent,
+            child: AnimatedScale(
+              scale: _pressed ? 0.86 : 1.0,
+              duration: const Duration(milliseconds: 100),
+              curve: Curves.easeOut,
+              child: Container(
+                width: 30,
+                height: 30,
+                decoration: const BoxDecoration(
+                  color: AppColors.ink,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.add, color: Colors.white, size: 17),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+

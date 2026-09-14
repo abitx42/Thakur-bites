@@ -305,11 +305,14 @@ export function renderPickupView(container) {
           </div>
         </div>
 
-        <!-- Scanner Feedback Notification Banner -->
+        <!-- Scanner Feedback Notification Banner (High-Visibility Station Flash) -->
         ${scannerFeedbackMessage ? `
-          <div style="background: ${scannerFeedbackType === 'success' ? '#F0FDF4' : '#FEF2F2'}; border: 1.5px solid ${scannerFeedbackType === 'success' ? '#86EFAC' : '#FCA5A5'}; border-radius: 12px; padding: 1rem 1.2rem; margin-bottom: 1.5rem; font-family: var(--font-mono); font-size: 1rem; font-weight: 700; color: ${scannerFeedbackType === 'success' ? '#15803D' : '#DC2626'}; display: flex; align-items: center; justify-content: space-between;">
-            <span>${escapeHtml(scannerFeedbackMessage)}</span>
-            <span style="font-size: 0.75rem; color: var(--ink-secondary);">AUTO-DISPATCHED</span>
+          <div class="station-verify-flash" style="background: ${scannerFeedbackType === 'success' ? '#ECFDF5' : '#FEF2F2'}; border: 2.5px solid ${scannerFeedbackType === 'success' ? '#16A34A' : '#DC2626'}; border-radius: var(--radius-lg, 16px); padding: 1.2rem 1.5rem; margin-bottom: 1.5rem; font-family: var(--font-mono); font-size: 1.15rem; font-weight: 800; color: ${scannerFeedbackType === 'success' ? '#15803D' : '#DC2626'}; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 0 28px ${scannerFeedbackType === 'success' ? 'rgba(34, 197, 94, 0.35)' : 'rgba(220, 38, 38, 0.35)'};">
+            <span style="display: flex; align-items: center; gap: 12px;">
+              <span style="font-size: 1.5rem;">${scannerFeedbackType === 'success' ? '✅' : '🚨'}</span>
+              <span>${escapeHtml(scannerFeedbackMessage)}</span>
+            </span>
+            <span style="font-size: 0.8rem; font-weight: 800; letter-spacing: 0.08em; padding: 4px 12px; border-radius: var(--radius-pill, 999px); background: ${scannerFeedbackType === 'success' ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)'}; color: ${scannerFeedbackType === 'success' ? '#15803D' : '#DC2626'};">STATION VERIFIED</span>
           </div>
         ` : ''}
 

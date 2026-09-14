@@ -68,6 +68,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
 
   String? _cachedPin;
   String? _previousKnownStatus;
+  bool _copiedPin = false;
+  bool _copiedToken = false;
 
   @override
   void initState() {
@@ -386,23 +388,55 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Your token',
-                    style: AppFonts.body(fontSize: 11, color: AppColors.inkSoft),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    order.tokenNumber.isEmpty ? '—' : order.tokenNumber,
-                    style: AppFonts.mono(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
-                      color: order.isCancelled ? AppColors.inkSoft : AppColors.red,
+              GestureDetector(
+                onTap: () {
+                  if (order.tokenNumber.isNotEmpty) {
+                    HapticFeedback.lightImpact();
+                    Clipboard.setData(ClipboardData(text: order.tokenNumber));
+                    setState(() => _copiedToken = true);
+                    Future.delayed(const Duration(milliseconds: 1500), () {
+                      if (mounted) setState(() => _copiedToken = false);
+                    });
+                  }
+                },
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Your token',
+                      style: AppFonts.body(fontSize: 11, color: AppColors.inkSoft),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 2),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          order.tokenNumber.isEmpty ? '—' : order.tokenNumber,
+                          style: AppFonts.mono(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                            color: order.isCancelled ? AppColors.inkSoft : AppColors.red,
+                          ),
+                        ),
+                        if (order.tokenNumber.isNotEmpty && !order.isCancelled) ...[
+                          const SizedBox(width: 6),
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 200),
+                            child: _copiedToken
+                                ? const Icon(Icons.check_circle_rounded,
+                                    key: ValueKey('token_copied_status'),
+                                    size: 16,
+                                    color: AppColors.green)
+                                : Icon(Icons.copy_rounded,
+                                    key: const ValueKey('token_copy_status'),
+                                    size: 14,
+                                    color: AppColors.inkSoft.withAlpha(120)),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -440,6 +474,32 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               ),
             ],
           ),
+          if (order.isFacultyPriority) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppColors.mustardSoft,
+                borderRadius: AppRadius.radiusPill,
+                border: Border.all(color: AppColors.mustard.withAlpha(120), width: 1),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('⚡', style: TextStyle(fontSize: 11)),
+                  const SizedBox(width: 5),
+                  Text(
+                    'FACULTY PRIORITY APPLIED',
+                    style: AppFonts.mono(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.mustardInk,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (!order.isCancelled && !order.isPaymentPending) ...[
             const SizedBox(height: 10),
             ValueListenableBuilder<DateTime>(
@@ -769,17 +829,22 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
           ),
           const SizedBox(height: 12),
 
-          // PIN Container
+          // PIN Container with copy micro-interaction
           GestureDetector(
             onTap: () {
               if (effectivePin.isNotEmpty) {
+                HapticFeedback.lightImpact();
                 Clipboard.setData(ClipboardData(text: effectivePin));
+                setState(() => _copiedPin = true);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('PIN copied to clipboard'),
                     duration: Duration(seconds: 1),
                   ),
                 );
+                Future.delayed(const Duration(milliseconds: 1500), () {
+                  if (mounted) setState(() => _copiedPin = false);
+                });
               }
             },
             child: Container(
@@ -791,13 +856,31 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               ),
               child: Column(
                 children: [
-                  Text(
-                    'PICKUP PIN',
-                    style: AppFonts.mono(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.greenInk,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'PICKUP PIN',
+                        style: AppFonts.mono(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.greenInk,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 200),
+                        child: _copiedPin
+                            ? const Icon(Icons.check_circle_rounded,
+                                key: ValueKey('pin_copied_status'),
+                                size: 14,
+                                color: AppColors.green)
+                            : Icon(Icons.copy_rounded,
+                                key: const ValueKey('pin_copy_status'),
+                                size: 12,
+                                color: AppColors.greenInk.withAlpha(140)),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Text(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,6 +25,8 @@ class _TicketScreenState extends State<TicketScreen>
   late Animation<double> _slideAnim;
   late Animation<double> _fadeAnim;
   String? _cachedPin;
+  bool _copiedToken = false;
+  bool _copiedPin = false;
   late final Stream<DocumentSnapshot<Map<String, dynamic>>> _orderSnapshotStream;
 
   @override
@@ -300,33 +303,119 @@ class _TicketScreenState extends State<TicketScreen>
                 ),
                 const SizedBox(height: 8),
 
-                // Token number
-                Text(
-                  order.tokenNumber,
-                  style: AppFonts.mono(
-                    fontSize: 44,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.red,
-                  ).copyWith(letterSpacing: 0.5),
+                // Token number with copy micro-interaction
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    Clipboard.setData(ClipboardData(text: order.tokenNumber));
+                    setState(() => _copiedToken = true);
+                    Future.delayed(const Duration(milliseconds: 1500), () {
+                      if (mounted) setState(() => _copiedToken = false);
+                    });
+                  },
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        order.tokenNumber,
+                        style: AppFonts.mono(
+                          fontSize: 44,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.red,
+                        ).copyWith(letterSpacing: 0.5),
+                      ),
+                      const SizedBox(width: 8),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 200),
+                        child: _copiedToken
+                            ? const Icon(Icons.check_circle_rounded,
+                                key: ValueKey('token_copied'),
+                                size: 22,
+                                color: AppColors.green)
+                            : Icon(Icons.copy_rounded,
+                                key: const ValueKey('token_copy'),
+                                size: 18,
+                                color: AppColors.inkSoft.withAlpha(120)),
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 4),
+                if (order.isFacultyPriority) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.mustardSoft,
+                      borderRadius: AppRadius.radiusPill,
+                      border: Border.all(color: AppColors.mustard.withAlpha(120), width: 1),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('⚡', style: TextStyle(fontSize: 11)),
+                        const SizedBox(width: 4),
+                        Text(
+                          'FACULTY PRIORITY APPLIED',
+                          style: AppFonts.mono(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.mustardInk,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 6),
 
                 // Pin code
                 if (order.isReady || order.isOnlyReadyMade || order.status == 'ready' || order.status == 'collected') ...[
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface2,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: AppColors.line, width: 1),
-                    ),
-                    child: Text(
-                      'PICKUP PIN: ${resolvedPin.isEmpty ? "••••" : resolvedPin}',
-                      style: AppFonts.mono(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.ink,
+                  GestureDetector(
+                    onTap: () {
+                      if (resolvedPin.isNotEmpty) {
+                        HapticFeedback.lightImpact();
+                        Clipboard.setData(ClipboardData(text: resolvedPin));
+                        setState(() => _copiedPin = true);
+                        Future.delayed(const Duration(milliseconds: 1500), () {
+                          if (mounted) setState(() => _copiedPin = false);
+                        });
+                      }
+                    },
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface2,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: AppColors.line, width: 1),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'PICKUP PIN: ${resolvedPin.isEmpty ? "••••" : resolvedPin}',
+                            style: AppFonts.mono(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.ink,
+                            ),
+                          ),
+                          if (resolvedPin.isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 200),
+                              child: _copiedPin
+                                  ? const Icon(Icons.check_circle_rounded,
+                                      key: ValueKey('pin_copied'),
+                                      size: 16,
+                                      color: AppColors.green)
+                                  : Icon(Icons.copy_rounded,
+                                      key: const ValueKey('pin_copy'),
+                                      size: 14,
+                                      color: AppColors.inkSoft.withAlpha(120)),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ),
