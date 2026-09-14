@@ -18,7 +18,11 @@ void main() {
     });
 
     test('revealFraction at 0.5 creates traveling jagged bottom edge', () {
-      final clipper = PrintRevealClipper(revealFraction: 0.5, toothWidth: 10, toothHeight: 4);
+      final clipper = PrintRevealClipper(
+        revealFraction: 0.5,
+        toothWidth: 10,
+        toothHeight: 4,
+      );
       final path = clipper.getClip(const Size(300, 500));
       final bounds = path.getBounds();
       // Revealed height should be 250 with teeth reaching up to 246
@@ -35,7 +39,9 @@ void main() {
   });
 
   group('ReceiptPrintReveal Widget Tests', () {
-    testWidgets('renders printer bar, receipt, and actions immediately when playIntro is false', (tester) async {
+    testWidgets(
+        'renders printer bar, ready indicator, receipt, and actions immediately when playIntro is false',
+        (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
@@ -50,9 +56,13 @@ void main() {
 
       expect(find.text('Sample Ticket Receipt'), findsOneWidget);
       expect(find.text('Sample Action Buttons'), findsOneWidget);
+      expect(find.text('TCET THERMAL DISPATCH'), findsOneWidget);
+      expect(find.text('READY'), findsOneWidget);
     });
 
-    testWidgets('animates receipt unspooling when playIntro is true', (tester) async {
+    testWidgets(
+        'animates multi-phase 2.2s thermal print sequence when playIntro is true',
+        (tester) async {
       bool completedCalled = false;
 
       await tester.pumpWidget(
@@ -60,6 +70,7 @@ void main() {
           home: Scaffold(
             body: ReceiptPrintReveal(
               playIntro: true,
+              duration: const Duration(milliseconds: 2200),
               onCompleted: () => completedCalled = true,
               receipt: const SizedBox(
                 width: 300,
@@ -72,17 +83,63 @@ void main() {
         ),
       );
 
-      // Initial frame: actions have 0 opacity initially
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      // Initial frame (t=0ms): Intro hasn't started forwarding yet (80ms delay)
+      expect(find.text('TCET THERMAL DISPATCH'), findsOneWidget);
+      expect(completedCalled, isFalse);
 
-      // Advance through the unspool animation (total 900ms)
+      // Advance past delay and into unspooling phase (t = 100ms + 500ms = 600ms)
+      await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 500));
-      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text('PRINTING'), findsOneWidget);
+      expect(completedCalled, isFalse);
+
+      // Advance into blade cut and scrap phase (t = ~1600ms)
+      await tester.pump(const Duration(milliseconds: 1000));
+      expect(completedCalled, isFalse);
+
+      // Advance to full completion (t = 2200ms + buffer)
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.pump(const Duration(milliseconds: 200));
 
       expect(completedCalled, isTrue);
+      expect(find.text('READY'), findsOneWidget);
       expect(find.text('Receipt Content'), findsOneWidget);
       expect(find.text('Actions'), findsOneWidget);
+    });
+
+    testWidgets(
+        'didUpdateWidget snaps to 1.0 if playIntro changes to false during playback',
+        (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ReceiptPrintReveal(
+              playIntro: true,
+              receipt: Text('Receipt Content'),
+              actions: Text('Actions'),
+            ),
+          ),
+        ),
+      );
+
+      // Advance slightly
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Update widget with playIntro: false
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ReceiptPrintReveal(
+              playIntro: false,
+              receipt: Text('Receipt Content'),
+              actions: Text('Actions'),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      expect(find.text('READY'), findsOneWidget);
     });
   });
 }
