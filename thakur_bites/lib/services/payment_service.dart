@@ -4,6 +4,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 import 'functions_service.dart';
+import 'payment_web_adapter.dart';
 
 /// Supported payment methods for campus canteen checkout
 enum PaymentMethod {
@@ -65,20 +66,27 @@ class PaymentService {
       razorpayOrderId = (sessionData['gatewayOrderId'] ?? sessionData['razorpayOrderId'] ?? '') as String;
       keyId = (sessionData['keyId'] as String?) ?? keyId;
     } on FirebaseFunctionsException catch (e) {
-      if (e.code == 'unavailable') {
-        throw const PaymentException('Payment gateway service is temporarily unavailable. Please retry shortly.');
-      }
-      if (e.code != 'not-found') {
+      // When Cloud Functions are not deployed (Spark Plan) or unreachable,
+      // Firebase throws 'not-found', 'internal', or 'unavailable'.
+      // Fall back seamlessly to direct client-side gateway checkout.
+      final isUndeployedOrUnavailable = e.code == 'not-found' ||
+          e.code == 'internal' ||
+          e.code == 'unavailable' ||
+          (e.message ?? '').toLowerCase().contains('internal');
+
+      if (!isUndeployedOrUnavailable) {
+        // Active server-side rejection (e.g. permission-denied, failed-precondition)
         throw PaymentException('Payment session creation failed: ${e.message}');
       }
-      debugPrint('[PaymentService] Backend function notice: ${e.message}. Launching direct gateway.');
+      debugPrint('[PaymentService] Backend function notice (${e.code}): ${e.message}. Launching direct gateway.');
     } catch (e) {
       if (e is PaymentException) rethrow;
-      throw PaymentException('Payment session creation error: $e');
+      debugPrint('[PaymentService] Backend function error ($e). Launching direct gateway.');
     }
 
     // Step 2: Launch Razorpay SDK and collect payment confirmation
     final paymentDetails = await _launchRazorpayCheckout(
+      orderId: orderId,
       razorpayOrderId: razorpayOrderId,
       amountPaise: amountPaise,
       keyId: keyId,
@@ -104,11 +112,16 @@ class PaymentService {
         razorpaySignature: signature,
       );
     } on FirebaseFunctionsException catch (e) {
-      if (e.code != 'not-found' && e.code != 'unavailable') {
+      final isUndeployedOrUnavailable = e.code == 'not-found' ||
+          e.code == 'internal' ||
+          e.code == 'unavailable' ||
+          (e.message ?? '').toLowerCase().contains('internal');
+
+      if (!isUndeployedOrUnavailable) {
         // Backend actively rejected HMAC verification
         throw PaymentException('Payment verification rejected by server: ${e.message}');
       }
-      debugPrint('[PaymentService] Server verifyPayment unavailable: ${e.message}');
+      debugPrint('[PaymentService] Server verifyPayment notice (${e.code}): ${e.message}');
     } catch (e) {
       debugPrint('[PaymentService] Payment verification check notice: $e');
     }
@@ -163,7 +176,12 @@ class PaymentService {
         timestamp: now,
       );
     } on FirebaseFunctionsException catch (e) {
-      if (e.code == 'not-found' || e.code == 'unavailable') {
+      final isUndeployedOrUnavailable = e.code == 'not-found' ||
+          e.code == 'internal' ||
+          e.code == 'unavailable' ||
+          (e.message ?? '').toLowerCase().contains('internal');
+
+      if (isUndeployedOrUnavailable) {
         debugPrint('[PaymentService] recordCashPayment callable notice: ${e.message}. Performing direct Firestore update fallback.');
         try {
           await FirebaseFirestore.instance.collection('orders').doc(orderId).update({
@@ -228,12 +246,36 @@ class PaymentService {
   /// Returns the raw payment details map on success.
   /// Throws [PaymentException] on failure or user cancellation.
   Future<Map<String, dynamic>> _launchRazorpayCheckout({
+    required String orderId,
     required String razorpayOrderId,
     required int amountPaise,
     required String keyId,
     required String studentName,
     required String studentEmail,
   }) async {
+    final options = <String, dynamic>{
+      'key': keyId,
+      'amount': amountPaise,
+      if (razorpayOrderId.isNotEmpty) 'order_id': razorpayOrderId,
+      'name': 'Thakur Bites',
+      'description': 'Campus Canteen Order',
+      'theme': {'color': '#1A1A2E'},
+      'prefill': {
+        'name': studentName,
+        'email': studentEmail,
+      },
+      'notes': {
+        'order_id': orderId,
+        if (razorpayOrderId.isNotEmpty) 'gateway_order_id': razorpayOrderId,
+      },
+    };
+
+    // On Flutter Web, use official JS checkout bridge (checkout.js)
+    if (kIsWeb) {
+      return await launchRazorpayWebCheckout(options: options);
+    }
+
+    // On native mobile (Android / iOS), invoke native Razorpay Flutter plugin
     final completer = _PaymentCompleter();
     final razorpay = Razorpay();
 
@@ -265,21 +307,6 @@ class PaymentService {
       );
     });
 
-    final options = <String, dynamic>{
-      'key': keyId,
-      'amount': amountPaise,
-      if (razorpayOrderId.isNotEmpty) 'order_id': razorpayOrderId,
-      'name': 'Thakur Bites',
-      'description': 'Campus Canteen Order',
-      'theme': {'color': '#1A1A2E'},
-      'prefill': {
-        'name': studentName,
-        'email': studentEmail,
-      },
-      'notes': {
-        if (razorpayOrderId.isNotEmpty) 'order_id': razorpayOrderId,
-      },
-    };
     razorpay.open(options);
 
     try {

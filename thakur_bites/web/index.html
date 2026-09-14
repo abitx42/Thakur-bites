@@ -61,6 +61,44 @@
     } catch (_) {}
   </script>
 
+  <!-- Razorpay Official Checkout SDK & Web Bridge -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script>
+    window.openRazorpayCheckout = function(options, successCallback, failureCallback) {
+      try {
+        if (typeof Razorpay === 'undefined') {
+          if (failureCallback) failureCallback('Razorpay SDK failed to load. Please check your internet connection or ad-blocker.');
+          return;
+        }
+        var opts = Object.assign({}, options);
+        opts.handler = function(response) {
+          if (successCallback) {
+            successCallback(
+              response.razorpay_payment_id || '',
+              response.razorpay_order_id || '',
+              response.razorpay_signature || ''
+            );
+          }
+        };
+        opts.modal = {
+          ondismiss: function() {
+            if (failureCallback) failureCallback('Payment was cancelled.');
+          }
+        };
+        var rzp = new Razorpay(opts);
+        rzp.on('payment.failed', function(response) {
+          var desc = (response && response.error && response.error.description)
+            ? response.error.description
+            : 'Payment failed or was declined.';
+          if (failureCallback) failureCallback(desc);
+        });
+        rzp.open();
+      } catch (err) {
+        if (failureCallback) failureCallback(err.toString());
+      }
+    };
+  </script>
+
   <style>
     body {
       margin: 0;

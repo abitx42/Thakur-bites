@@ -54,5 +54,11 @@ void main() {
       expect(res.orderId, equals(testOrder.id));
       expect(res.errorMessage, contains('dismissed'));
     });
+
+    test('PaymentException string formats properly', () {
+      const pe = PaymentException('Payment was cancelled.');
+      expect(pe.toString(), equals('PaymentException: Payment was cancelled.'));
+      expect(pe.message, equals('Payment was cancelled.'));
+    });
   });
 }
