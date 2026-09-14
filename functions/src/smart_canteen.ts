@@ -165,8 +165,9 @@ export function calculateSmartCanteenForecast(
     (o) => o.status === 'confirmed' || o.status === 'preparing'
   ).length;
 
-  // 2. Compute item sales velocity today
-  const hoursElapsed = Math.max(0.5, (nowDate.getHours() - 7) + nowDate.getMinutes() / 60);
+  // 2. Compute item sales velocity today (TB-R2-015: evaluate in Asia/Kolkata timezone to avoid 5.5h UTC lag)
+  const mumbaiDate = new Date(nowDate.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const hoursElapsed = Math.max(0.5, (mumbaiDate.getHours() - 7) + mumbaiDate.getMinutes() / 60);
   const itemSales: Record<string, number> = {};
 
   ordersToday.forEach((order) => {
@@ -301,9 +302,14 @@ export const getSmartCanteenIntelligence = onCall(async (request): Promise<Smart
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'view_business_analytics', 'Insufficient permissions for smart canteen intelligence.');
 
-  // Fetch today's orders and active menu
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  // Fetch today's orders and active menu (Asia/Kolkata IST start of day)
+  const dateStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const todayStart = new Date(`${dateStr}T00:00:00+05:30`);
 
   const [menuSnap, ordersSnap] = await Promise.all([
     db.collection('menuItems').get(),

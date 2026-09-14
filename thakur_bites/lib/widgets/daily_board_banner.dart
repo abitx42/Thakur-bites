@@ -29,9 +29,9 @@ class DailyBoardBanner extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.fromLTRB(18, 2, 18, 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFFBEB),
+        color: AppColors.amberBg,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFFDE68A), width: 1.2),
+        border: Border.all(color: AppColors.amberBorder, width: 1.2),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withAlpha(8),
@@ -56,7 +56,7 @@ class DailyBoardBanner extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFB45309),
+                        color: AppColors.mustardInk,
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
@@ -76,7 +76,7 @@ class DailyBoardBanner extends StatelessWidget {
                         style: AppFonts.mono(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
-                          color: const Color(0xFF92400E),
+                          color: AppColors.chai,
                           letterSpacing: 0.5,
                         ),
                         overflow: TextOverflow.ellipsis,
@@ -90,14 +90,14 @@ class DailyBoardBanner extends StatelessWidget {
                           style: AppFonts.body(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: const Color(0xFFB45309),
+                            color: AppColors.mustardInk,
                           ),
                         ),
                         const SizedBox(width: 2),
                         const Icon(
                           Icons.chevron_right_rounded,
                           size: 16,
-                          color: Color(0xFFB45309),
+                          color: AppColors.mustardInk,
                         ),
                       ],
                     ),
@@ -112,17 +112,17 @@ class DailyBoardBanner extends StatelessWidget {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     if (board.sabji1.isNotEmpty)
-                      _buildPill('🥘 ${board.sabji1}', const Color(0xFFFEF3C7), const Color(0xFF92400E)),
+                      _buildPill('🥘 ${board.sabji1}', AppColors.warningBg, AppColors.chai),
                     if (board.sabji2.isNotEmpty)
-                      _buildPill('🍛 ${board.sabji2}', const Color(0xFFFEF3C7), const Color(0xFF92400E)),
+                      _buildPill('🍛 ${board.sabji2}', AppColors.warningBg, AppColors.chai),
                     if (board.sweetOfTheDay.isNotEmpty)
-                      _buildPill('🍯 ${board.sweetOfTheDay}', const Color(0xFFFEE2E2), const Color(0xFF991B1B)),
+                      _buildPill('🍯 ${board.sweetOfTheDay}', AppColors.dangerBg, AppColors.redDeep),
                     if (!board.rotiAvailable && board.puriAvailable)
-                      _buildPill('⚠️ Chapati Over · Pooris Active', const Color(0xFFFEF3C7), const Color(0xFFB45309)),
+                      _buildPill('⚠️ Chapati Over · Pooris Active', AppColors.warningBg, AppColors.mustardInk),
                     if (board.rotiAvailable && !board.puriAvailable)
-                      _buildPill('⚠️ Puri Over · Rotis Active', const Color(0xFFFEF3C7), const Color(0xFFB45309)),
+                      _buildPill('⚠️ Puri Over · Rotis Active', AppColors.warningBg, AppColors.mustardInk),
                     if (!board.hasAnyBread)
-                      _buildPill('❌ Breads Finished Today', const Color(0xFFFEE2E2), const Color(0xFF991B1B)),
+                      _buildPill('❌ Breads Finished Today', AppColors.dangerBg, AppColors.redDeep),
                   ],
                 ),
 
@@ -132,9 +132,9 @@ class DailyBoardBanner extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFEF2F2),
+                      color: AppColors.dangerBg,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFFFCA5A5), width: 0.8),
+                      border: Border.all(color: AppColors.redSoft, width: 0.8),
                     ),
                     child: Row(
                       children: [
@@ -148,7 +148,7 @@ class DailyBoardBanner extends StatelessWidget {
                             style: AppFonts.body(
                               fontSize: 11.5,
                               fontWeight: FontWeight.w700,
-                              color: const Color(0xFFB91C1C),
+                              color: AppColors.redDeep,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -222,7 +222,7 @@ class _DailyBoardDetailModal extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
+                  color: AppColors.warningBg,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Text('🍱', style: TextStyle(fontSize: 22)),
@@ -301,9 +301,9 @@ class _DailyBoardDetailModal extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFEFF6FF),
+                color: AppColors.infoBg,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFF93C5FD)),
+                border: Border.all(color: AppColors.infoBorder),
               ),
               child: Row(
                 children: [
@@ -315,7 +315,7 @@ class _DailyBoardDetailModal extends StatelessWidget {
                       style: AppFonts.body(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: const Color(0xFF1E40AF),
+                        color: AppColors.infoDeep,
                       ),
                     ),
                   ),
@@ -349,10 +349,10 @@ class _DailyBoardDetailModal extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: isHighlight ? const Color(0xFFFEF2F2) : AppColors.surface2,
+        color: isHighlight ? AppColors.dangerBg : AppColors.surface2,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: isHighlight ? const Color(0xFFFCA5A5) : AppColors.line,
+          color: isHighlight ? AppColors.redSoft : AppColors.line,
           width: 1,
         ),
       ),
@@ -368,7 +368,7 @@ class _DailyBoardDetailModal extends StatelessWidget {
                 style: AppFonts.mono(
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
-                  color: isHighlight ? const Color(0xFFB91C1C) : AppColors.ink,
+                  color: isHighlight ? AppColors.redDeep : AppColors.ink,
                 ),
               ),
             ],
@@ -382,7 +382,7 @@ class _DailyBoardDetailModal extends StatelessWidget {
                 style: AppFonts.body(
                   fontSize: 12.5,
                   fontWeight: isHighlight ? FontWeight.w600 : FontWeight.w500,
-                  color: isHighlight ? const Color(0xFF991B1B) : AppColors.ink,
+                  color: isHighlight ? AppColors.redDeep : AppColors.ink,
                 ),
               ),
             ),

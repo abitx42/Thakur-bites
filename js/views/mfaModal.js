@@ -31,7 +31,7 @@ export function renderPrivilegedAuthModal(container, { onSuccess, onCancel }) {
             <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #DC2626; font-weight: 800; background: #FEE2E2; padding: 2px 8px; border-radius: 4px;">
               MANDATORY MFA · 6-HR PRIVILEGE
             </span>
-            <button id="close-mfa-modal-btn" style="background: transparent; border: none; font-size: 1.2rem; cursor: pointer; color: var(--ink-secondary);">✕</button>
+            <button id="close-mfa-modal-btn" class="btn btn--ghost btn--sm" style="font-size: 1.2rem; padding: 2px 6px;">✕</button>
           </div>
 
           <h2 style="font-family: var(--font-display); font-size: 2rem; margin: 0.4rem 0 0.2rem 0; color: var(--ink-primary);">
@@ -65,8 +65,9 @@ export function renderPrivilegedAuthModal(container, { onSuccess, onCancel }) {
 
           <button 
             id="verify-mfa-submit-btn"
+            class="btn btn--primary btn--lg ${authenticating ? 'is-loading' : ''}"
             ${authenticating ? 'disabled' : ''}
-            style="width: 100%; padding: 12px; border-radius: 10px; background: #0F172A; color: #FFF; border: none; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; cursor: pointer; margin-bottom: 12px;"
+            style="width: 100%; margin-bottom: 12px;"
           >
             ${authenticating ? 'Verifying...' : 'Authenticate 6-Hour Privileged Session →'}
           </button>
@@ -251,8 +252,9 @@ export function renderMfaEnrollmentModal(container, { onEnrolled, onCancel }) {
 
             <button 
               id="activate-mfa-btn"
+              class="btn btn--success btn--lg ${activating ? 'is-loading' : ''}"
               ${activating ? 'disabled' : ''}
-              style="width: 100%; padding: 12px; border-radius: 8px; background: #16A34A; color: #FFF; border: none; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; cursor: pointer;"
+              style="width: 100%;"
             >
               ${activating ? 'Activating...' : 'Verify & Enable MFA Protection ✓'}
             </button>

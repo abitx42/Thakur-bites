@@ -72,7 +72,9 @@ class Order {
   bool get isPaymentInitiated => paymentStatus == 'initiated';
   bool get isConfirmed => (status == 'confirmed' || status == 'placed') && !isCancelled;
   bool get isPreparing => status == 'preparing' && !isCancelled;
-  bool get isReady => status == 'ready' && !isCancelled;
+  bool get isReady =>
+      (status == 'ready' || (isOnlyReadyMade && !isPaymentPending && !isCollected)) &&
+      !isCancelled;
   bool get isCollected => status == 'collected' && !isCancelled;
   bool get isCancelled => status == 'cancelled' || paymentStatus == 'cancelled';
   bool get isOnlinePayment => paymentMethod == 'online';
@@ -93,28 +95,27 @@ class Order {
   int get customerStatusIndex {
     if (isCancelled) return -1;
     if (isPaymentPending) return 0;
-    if (isConfirmed) return 1;
-    if (isPreparing) return 2;
-    if (isReady) return 3;
     if (isCollected) return 4;
+    if (isReady) return 3;
+    if (isPreparing) return 2;
+    if (isConfirmed) return 1;
     return 0;
   }
 
   /// Human-friendly status label
   String get statusLabel {
     if (isCancelled) return 'Order Cancelled';
+    if (isPaymentPending) return 'Payment Pending';
+    if (isCollected) return 'Collected';
+    if (isOnlyReadyMade || isReady) return 'Ready for pickup';
     switch (status) {
-      case 'payment_pending':
-        return 'Payment Pending';
       case 'confirmed':
       case 'placed':
         return 'Order confirmed';
       case 'preparing':
-        return isOnlyReadyMade ? 'Express Packaging' : 'Preparing in Kitchen';
+        return 'Preparing in Kitchen';
       case 'ready':
         return 'Ready for pickup';
-      case 'collected':
-        return 'Collected';
       default:
         return status;
     }

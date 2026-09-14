@@ -174,6 +174,11 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
 
   await enforceRateLimit(studentId, 'payment_session');
 
+  const userDoc = await db.collection('users').doc(studentId).get();
+  if (userDoc.exists && userDoc.data()?.accountDisabled === true) {
+    throw new HttpsError('permission-denied', 'Account has been deactivated.');
+  }
+
   const { orderId } = request.data;
   if (!orderId) {
     throw new HttpsError('invalid-argument', 'orderId is required.');
@@ -258,6 +263,11 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
   await enforceAppVersionPolicy((request.data as any)?.appVersion);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Student must be authenticated.');
+  }
+
+  const userDoc = await db.collection('users').doc(request.auth.uid).get();
+  if (userDoc.exists && userDoc.data()?.accountDisabled === true) {
+    throw new HttpsError('permission-denied', 'Account has been deactivated.');
   }
 
   const rawData = (request.data || {}) as any;
@@ -454,7 +464,36 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
   } catch (err: any) {
     const correlationId = `WH-ERR-${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
     console.error(`[handlePaymentWebhook][${correlationId}] Internal processing error:`, err);
-    // Mark as FAILED / RETRYABLE so gateway retries can be processed
+
+    // Non-retryable domain errors must be acknowledged (HTTP 200) to stop gateway retry storms
+    const msg = (err.message || '').toLowerCase();
+    const isTerminalDomainError =
+      msg.includes('invalid payment flow') ||
+      msg.includes('not found') ||
+      msg.includes('mismatch') ||
+      msg.includes('tamper') ||
+      msg.includes('cancelled') ||
+      msg.includes('zero-paise');
+
+    if (isTerminalDomainError) {
+      await eventDocRef.set({
+        status: 'TERMINAL_REJECTED',
+        errorMessage: err.message,
+        correlationId,
+        rejectedAt: Timestamp.now(),
+      }, { merge: true }).catch(() => {});
+
+      res.status(200).json({
+        received: true,
+        acknowledged: true,
+        status: 'TERMINAL_REJECTED',
+        error: err.message,
+        correlationId,
+      });
+      return;
+    }
+
+    // Transient infrastructure errors: mark as FAILED so gateway retries can be processed
     await eventDocRef.set({
       status: 'FAILED',
       errorMessage: err.message,
@@ -504,6 +543,11 @@ export const recordCashPayment = onCall<{ orderId: string; idempotencyKey?: stri
   // Phase 1 Invariants: Cash payment only on counter_cash orders that are unpaid
   if (orderData.paymentMethod !== 'counter_cash') {
     throw new HttpsError('failed-precondition', 'Cannot record cash payment on an online order.');
+  }
+
+  // Reject cash recording on cancelled or expired orders immediately (BUG-01)
+  if (orderData.status === 'cancelled' || orderData.status === 'expired' || orderData.paymentStatus === 'cancelled' || orderData.paymentStatus === 'expired') {
+    throw new HttpsError('failed-precondition', 'Cannot record cash payment on a cancelled or expired order.');
   }
 
   // Idempotency: If already marked as paid, return idempotent success response without duplicate ledger entries
@@ -633,13 +677,17 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
     const order = doc.data();
     const orderPaise = order.totalAmountPaise !== undefined ? Number(order.totalAmountPaise) : Math.round(Number(order.totalAmount || 0) * 100);
 
-    // Cancelled orders do NOT contribute to sales revenue
+    // Cancelled orders do NOT contribute to net sales revenue, but captured payments must be in gross sales to balance against refund disbursements
     if (order.status === 'cancelled') {
       cancelledOrdersCount++;
+      const wasPaid = order.paymentStatus === 'refunded' || order.paymentStatus === 'partially_refunded' || order.paymentStatus === 'paid' || order.paymentStatus === 'captured' || capturedPaymentOrderIds.has(doc.id);
+      if (wasPaid) {
+        totalRevenuePaise += orderPaise;
+      }
       return;
     }
 
-    const isPaid = order.paymentStatus === 'paid' || order.paymentStatus === 'captured';
+    const isPaid = order.paymentStatus === 'paid' || order.paymentStatus === 'captured' || order.paymentStatus === 'partially_refunded';
 
     if (isPaid) {
       totalRevenuePaise += orderPaise;
@@ -853,17 +901,24 @@ export const reconcileOrderPayment = onCall<ReconcilePaymentRequest>(async (requ
   if (!finTxQuery.empty) {
     const finTx = finTxQuery.docs[0].data();
     if (finTx.status !== 'ORPHANED') {
-      // Reconcile order document to paid & confirmed
-      await orderRef.update({
+      const targetStatus = orderData.status === 'payment_pending'
+        ? (orderData.isOnlyReadyMade === true ? 'ready' : 'confirmed')
+        : orderData.status;
+      const updateData: Record<string, any> = {
         paymentStatus: 'paid',
-        status: orderData.status === 'payment_pending' ? 'confirmed' : orderData.status,
+        status: targetStatus,
         updatedAt: Timestamp.now(),
-      });
+      };
+      if (targetStatus === 'ready' && !orderData.readyAt) {
+        updateData.readyAt = Timestamp.now();
+      }
+      // Reconcile order document to paid & confirmed/ready
+      await orderRef.update(updateData);
 
       return {
         success: true,
         orderId,
-        orderStatus: 'confirmed',
+        orderStatus: targetStatus,
         paymentStatus: 'paid',
         tokenNumber: orderData.tokenNumber,
         message: 'Payment reconciled authoritatively from financial ledger record.',

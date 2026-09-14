@@ -123,7 +123,7 @@ export function renderDailyBoardModal(container, onClose) {
               </div>
             </div>
           </div>
-          <button id="board-close-btn" style="background: transparent; border: none; font-size: 1.5rem; color: #92400E; cursor: pointer; padding: 4px;">✕</button>
+          <button id="board-close-btn" class="btn btn--ghost btn--sm" style="font-size: 1.2rem; color: #92400E; padding: 4px 8px;" title="Close">✕</button>
         </div>
 
         <!-- Form Body -->
@@ -266,14 +266,14 @@ export function renderDailyBoardModal(container, onClose) {
 
         <!-- Footer Actions -->
         <div style="padding: 1rem 1.5rem; background: #F8FAFC; border-top: 1.5px solid var(--border-light); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
-          <button id="board-reset-btn" type="button" style="background: transparent; border: 1.5px solid #CBD5E1; color: #475569; padding: 9px 14px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+          <button id="board-reset-btn" type="button" class="btn btn--secondary btn--sm">
             ⚡ Reset to Today's Default
           </button>
           <div style="display: flex; gap: 10px;">
-            <button id="board-cancel-btn" type="button" style="background: transparent; border: 1.5px solid #CBD5E1; color: #475569; padding: 9px 16px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;">
+            <button id="board-cancel-btn" type="button" class="btn btn--ghost btn--md">
               Cancel
             </button>
-            <button id="board-publish-btn" type="button" style="background: #16A34A; color: #FFF; border: none; padding: 10px 20px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.88rem; font-weight: 700; cursor: pointer; box-shadow: 0 2px 6px rgba(22,163,74,0.3);">
+            <button id="board-publish-btn" type="button" class="btn btn--success btn--md" style="display: flex; align-items: center; gap: 6px;">
               🚀 Publish Board Live
             </button>
           </div>

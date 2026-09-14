@@ -1,6 +1,6 @@
 // Thakur Bites — Dedicated Developer Command Cockpit & Engineering Security Center
 import { staffAuth, renderPinPadModal, getPrivilegedSession, onStaffAuthStateChanged } from './auth.js?v=10';
-import { renderSecurityCenterView } from './views/securityCenterView.js?v=6';
+import { renderSecurityCenterView } from './views/securityCenterView.js?v=7';
 import { renderPrivilegedAuthModal } from './views/mfaModal.js?v=2';
 
 function initDeveloperCockpit() {

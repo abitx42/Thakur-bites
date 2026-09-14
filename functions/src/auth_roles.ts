@@ -109,6 +109,13 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     for (const doc of workSessionsSnap.docs) {
       await doc.ref.update({ status: 'REVOKED', revokedAt: now, reason: 'STAFF_ROLE_DEMOTION' }).catch(() => {});
     }
+
+    const directWorkDoc = await db.collection('workstationSessions').doc(targetUid).get();
+    if (directWorkDoc.exists && directWorkDoc.data()?.status === 'ACTIVE') {
+      await directWorkDoc.ref.update({ status: 'REVOKED', revokedAt: now, reason: 'STAFF_ROLE_DEMOTION' }).catch(() => {});
+    }
+
+    await admin.auth().revokeRefreshTokens(targetUid).catch(() => {});
   }
 
   // 5. Update staff user record

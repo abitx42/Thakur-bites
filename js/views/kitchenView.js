@@ -4,7 +4,7 @@
 // Auto-Progression ("as one completes other gets up next"), Smart Cooking Batches,
 // Station-Filtered Views, Dynamic Priority Aging, and Web Audio Alerts.
 
-import { db, functions, fetchKitchenOrders, updateOrderStatus } from '../firebase.js?v=5';
+import { db, functions, fetchKitchenOrders, updateOrderStatus, syncPublicLiveQueue } from '../firebase.js?v=6';
 import { collection, onSnapshot, query, where } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { escapeHtml } from './escapeHtml.js';
 
@@ -52,6 +52,13 @@ function playKitchenOrderChime() {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+
+    osc.onended = () => {
+      try {
+        gain.disconnect();
+        osc.disconnect();
+      } catch (_) {}
+    };
 
     osc.start();
     osc.stop(ctx.currentTime + 0.6);
@@ -168,19 +175,19 @@ export function renderKitchenView(container) {
             
             <!-- View Mode Switcher -->
             <div style="display: flex; background: #F4F4F5; padding: 3px; border-radius: 10px; border: 1.5px solid var(--border-light);">
-              <button id="view-mode-pipeline-btn" style="padding: 6px 12px; border-radius: 8px; border: none; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; cursor: pointer; background: ${viewMode === 'pipeline' ? '#FFF' : 'transparent'}; color: ${viewMode === 'pipeline' ? 'var(--brand-red)' : 'var(--ink-secondary)'}; box-shadow: ${viewMode === 'pipeline' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'};">
+              <button id="view-mode-pipeline-btn" class="btn btn--sm ${viewMode === 'pipeline' ? 'btn--secondary' : 'btn--ghost'}" style="${viewMode === 'pipeline' ? 'background: #FFF; color: var(--brand-red);' : ''}">
                 📋 Queue Pile
               </button>
-              <button id="view-mode-grid-btn" style="padding: 6px 12px; border-radius: 8px; border: none; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; cursor: pointer; background: ${viewMode === 'grid' ? '#FFF' : 'transparent'}; color: ${viewMode === 'grid' ? 'var(--brand-red)' : 'var(--ink-secondary)'}; box-shadow: ${viewMode === 'grid' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'};">
+              <button id="view-mode-grid-btn" class="btn btn--sm ${viewMode === 'grid' ? 'btn--secondary' : 'btn--ghost'}" style="${viewMode === 'grid' ? 'background: #FFF; color: var(--brand-red);' : ''}">
                 🔲 All Cards
               </button>
             </div>
 
-            <button id="toggle-kds-audio-btn" style="background: ${audioAlertsEnabled ? '#EEF2FF' : '#F4F4F5'}; border: 1.5px solid ${audioAlertsEnabled ? '#818CF8' : '#D4D4D8'}; color: ${audioAlertsEnabled ? '#4338CA' : '#71717A'}; padding: 8px 14px; border-radius: 10px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+            <button id="toggle-kds-audio-btn" class="btn btn--sm ${audioAlertsEnabled ? 'btn--info' : 'btn--secondary'}">
               <span>${audioAlertsEnabled ? '🔔 Sound: ON' : '🔕 Sound: MUTED'}</span>
             </button>
 
-            <button id="refresh-kds-manual-btn" style="background: #FFF; border: 1.5px solid var(--border-light); padding: 8px 14px; border-radius: 10px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; color: var(--ink-primary);">
+            <button id="refresh-kds-manual-btn" class="btn btn--secondary btn--sm">
               🔄 Refresh
             </button>
 
@@ -322,26 +329,32 @@ export function renderKitchenView(container) {
                           ${heroOrder.readyMadePreference ? `<span style="font-family: var(--font-sans); font-size: 0.8rem; font-weight: 700; color: #166534;">· ${escapeHtml(heroOrder.readyMadePreference)}</span>` : ''}
                         </div>
                       ` : ''}
+                      ${(heroOrder.dietaryPreferences?.length > 0 || heroOrder.dietaryNotes) ? `
+                        <div style="margin-top: 6px; display: inline-flex; align-items: center; gap: 6px; background: #FEF3C7; border: 1.5px solid #F59E0B; border-radius: 8px; padding: 4px 10px;">
+                          <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; color: #B45309;">🥗 DIETARY:</span>
+                          <span style="font-family: var(--font-sans); font-size: 0.8rem; font-weight: 700; color: #92400E;">
+                            ${escapeHtml((heroOrder.dietaryPreferences || []).join(', '))}${heroOrder.dietaryNotes ? ` (${escapeHtml(heroOrder.dietaryNotes)})` : ''}
+                          </span>
+                        </div>
+                      ` : ''}
                     </div>
 
                     <!-- 1-Tap Ready Progression CTA -->
                     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                       ${!isCooking ? `
                         <button 
-                          class="kds-action-btn start-cook-btn" 
+                          class="btn btn--outline-warning btn--xl kds-action-btn start-cook-btn" 
                           data-order-id="${escapeHtml(orderId)}" 
                           data-target-status="preparing"
-                          style="padding: 14px 22px; border-radius: 12px; border: 2px solid #F59E0B; background: #FEF3C7; color: #92400E; font-family: var(--font-sans); font-size: 1.05rem; font-weight: 800; cursor: pointer; transition: all 0.15s ease; display: flex; align-items: center; gap: 8px;"
                         >
                           <span>🔥 Start Cooking</span>
                         </button>
                       ` : ''}
 
                       <button 
-                        class="kds-action-btn mark-ready-btn" 
+                        class="btn btn--success btn--xl kds-action-btn mark-ready-btn" 
                         data-order-id="${escapeHtml(orderId)}" 
                         data-target-status="ready"
-                        style="padding: 14px 28px; border-radius: 12px; border: none; background: #16A34A; color: #FFF; font-family: var(--font-sans); font-size: 1.1rem; font-weight: 800; cursor: pointer; box-shadow: 0 4px 14px rgba(22,163,74,0.35); transition: all 0.15s ease; display: flex; align-items: center; gap: 10px;"
                       >
                         <span>✅ Mark Ready & Next ⏭️</span>
                       </button>
@@ -432,6 +445,11 @@ export function renderKitchenView(container) {
                                   ⚡ READY-MADE ${order.readyMadePreference ? `· ${escapeHtml(order.readyMadePreference)}` : ''}
                                 </span>
                               ` : ''}
+                              ${(order.dietaryPreferences?.length > 0 || order.dietaryNotes) ? `
+                                <span style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 800; padding: 2px 7px; border-radius: 4px; background: #FEF3C7; color: #B45309; border: 1px solid #FCD34D;">
+                                  🥗 ${escapeHtml((order.dietaryPreferences || []).join(', '))}${order.dietaryNotes ? ` (${escapeHtml(order.dietaryNotes)})` : ''}
+                                </span>
+                              ` : ''}
                               <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary);">
                                 ⏱️ ${elapsedMins}m ago
                               </span>
@@ -446,9 +464,8 @@ export function renderKitchenView(container) {
                         <!-- Pile Action Buttons -->
                         <div style="display: flex; gap: 8px; align-items: center;">
                           <button 
-                            class="focus-order-btn" 
+                            class="btn btn--secondary btn--sm focus-order-btn" 
                             data-order-id="${escapeHtml(orderId)}"
-                            style="background: #F8FAFC; border: 1.5px solid #CBD5E1; color: var(--ink-primary); padding: 8px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: all 0.1s ease;"
                             title="Bring this order to Queue #1 spotlight"
                           >
                             ⬆️ Move to Top
@@ -456,20 +473,18 @@ export function renderKitchenView(container) {
 
                           ${!isCooking ? `
                             <button 
-                              class="kds-action-btn start-cook-btn" 
+                              class="btn btn--outline-warning btn--sm kds-action-btn start-cook-btn" 
                               data-order-id="${escapeHtml(orderId)}" 
                               data-target-status="preparing"
-                              style="background: #FEF3C7; border: 1.5px solid #F59E0B; color: #92400E; padding: 8px 14px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; cursor: pointer;"
                             >
                               🔥 Cook
                             </button>
                           ` : ''}
 
                           <button 
-                            class="kds-action-btn mark-ready-btn" 
+                            class="btn btn--success btn--sm kds-action-btn mark-ready-btn" 
                             data-order-id="${escapeHtml(orderId)}" 
                             data-target-status="ready"
-                            style="background: #16A34A; border: none; color: #FFF; padding: 8px 16px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; cursor: pointer; box-shadow: 0 2px 6px rgba(22,163,74,0.25);"
                           >
                             Ready 🔔
                           </button>
@@ -558,20 +573,18 @@ export function renderKitchenView(container) {
                   <div style="display: grid; grid-template-columns: ${isCooking ? '1fr' : '1fr 1fr'}; gap: 8px;">
                     ${!isCooking ? `
                       <button 
-                        class="kds-action-btn start-cook-btn" 
+                        class="btn btn--outline-warning btn--md kds-action-btn start-cook-btn" 
                         data-order-id="${escapeHtml(orderId)}" 
                         data-target-status="preparing"
-                        style="padding: 10px; border-radius: 8px; border: 1.5px solid #F59E0B; background: #FEF3C7; color: #92400E; font-family: var(--font-sans); font-size: 0.88rem; font-weight: 800; cursor: pointer; transition: all 0.1s ease;"
                       >
                         Start Cooking 🔥
                       </button>
                     ` : ''}
 
                     <button 
-                      class="kds-action-btn mark-ready-btn" 
+                      class="btn btn--success btn--md kds-action-btn mark-ready-btn" 
                       data-order-id="${escapeHtml(orderId)}" 
                       data-target-status="ready"
-                      style="padding: 10px; border-radius: 8px; border: none; background: #16A34A; color: #FFF; font-family: var(--font-sans); font-size: 0.88rem; font-weight: 800; cursor: pointer; box-shadow: 0 2px 6px rgba(22,163,74,0.3); transition: all 0.1s ease;"
                     >
                       Mark Ready 🔔
                     </button>
@@ -729,6 +742,8 @@ export function renderKitchenView(container) {
           estimatedMinutes: data.estimatedMinutes || data.estimatedPrepTimeMinutes || null,
           isOnlyReadyMade: data.isOnlyReadyMade === true || (Array.isArray(data.items) && data.items.length > 0 && data.items.every(i => i.type === 'instant')),
           readyMadePreference: data.readyMadePreference || null,
+          dietaryPreferences: Array.isArray(data.dietaryPreferences) ? data.dietaryPreferences : [],
+          dietaryNotes: data.dietaryNotes || null,
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : (data.createdAt || new Date().toISOString()),
         };
       });
@@ -737,18 +752,46 @@ export function renderKitchenView(container) {
         playKitchenOrderChime();
       }
 
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+
       currentOrders = liveOrders;
       isInitialSyncDone = true;
       renderKDS();
+      syncPublicLiveQueue(liveOrders);
     }, (err) => {
-      console.warn("KDS Firestore onSnapshot notice (falling back to callable):", err);
+      console.warn("KDS Firestore onSnapshot notice (falling back to polling):", err);
       loadKitchenDataAuthoritative();
+      if (!pollInterval) {
+        pollInterval = setInterval(loadKitchenDataAuthoritative, 5000);
+      }
     });
   } catch (err) {
-    console.warn("Could not attach KDS snapshot listener:", err);
+    console.warn("Could not attach KDS snapshot listener, activating fallback polling:", err);
+    if (!pollInterval) {
+      pollInterval = setInterval(loadKitchenDataAuthoritative, 5000);
+    }
   }
 
-  // 4. Also perform immediate fetch and periodic sync fallback
+  // Initial immediate fetch for instant render before snapshot resolves
   loadKitchenDataAuthoritative();
-  pollInterval = setInterval(loadKitchenDataAuthoritative, 4000);
+}
+
+export function cleanupKitchenView() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+  if (unsubscribeOrders) {
+    unsubscribeOrders();
+    unsubscribeOrders = null;
+  }
+  if (kitchenAudioCtx) {
+    try { kitchenAudioCtx.close(); } catch (_) {}
+    kitchenAudioCtx = null;
+  }
+  isInitialSyncDone = false;
+  currentOrders = [];
 }

@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'device_security_service.dart';
 
@@ -26,6 +25,8 @@ class FunctionsService {
     required List<Map<String, dynamic>> items,
     required String paymentMethod, // 'online' | 'counter_cash'
     String? readyMadePreference,
+    List<String>? dietaryPreferences,
+    String? dietaryNotes,
   }) async {
     final callable = _getCallable('createCheckout');
     final deviceId = DeviceSecurityService().deviceId;
@@ -35,7 +36,24 @@ class FunctionsService {
       'paymentMethod': paymentMethod,
       if (readyMadePreference != null && readyMadePreference.isNotEmpty)
         'readyMadePreference': readyMadePreference,
+      if (dietaryPreferences != null && dietaryPreferences.isNotEmpty)
+        'dietaryPreferences': dietaryPreferences,
+      if (dietaryNotes != null && dietaryNotes.isNotEmpty)
+        'dietaryNotes': dietaryNotes,
       if (deviceId.isNotEmpty) 'deviceId': deviceId,
+      'appVersion': _appVersion,
+    });
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
+  /// 1-Tap Reorders a previous completed order with atomic inventory reservation and fresh pricing.
+  /// Returns: { orderId, order, rawPin, signedQrPayload }
+  Future<Map<String, dynamic>> reorderPreviousOrder({
+    required String orderId,
+  }) async {
+    final callable = _getCallable('reorderPreviousOrder');
+    final result = await callable.call({
+      'orderId': orderId,
       'appVersion': _appVersion,
     });
     return Map<String, dynamic>.from(result.data as Map);

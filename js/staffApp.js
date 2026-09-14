@@ -1,8 +1,8 @@
-import { staffAuth, renderPinPadModal, getRegisteredWorkstation, onStaffAuthStateChanged } from './auth.js?v=10';
-import { renderKitchenView } from './views/kitchenView.js?v=6';
-import { renderPickupView } from './views/pickupView.js?v=6';
-import { renderCashierView } from './views/cashierView.js?v=1';
-import { renderAdminView } from './views/adminView.js?v=9';
+import { staffAuth, renderPinPadModal, getRegisteredWorkstation, onStaffAuthStateChanged } from './auth.js?v=12';
+import { renderKitchenView, cleanupKitchenView } from './views/kitchenView.js?v=7';
+import { renderPickupView, cleanupPickupView } from './views/pickupView.js?v=7';
+import { renderCashierView, cleanupCashierView } from './views/cashierView.js?v=1';
+import { renderAdminView, cleanupAdminView } from './views/adminView.js?v=10';
 import { renderDailyBoardModal } from './views/dailyBoardModal.js?v=1';
 import { subscribeDailyBoard, saveDailyBoard } from './firebase.js?v=9';
 import { initSecuritySentinel } from './securitySentinel.js?v=1';
@@ -123,20 +123,23 @@ function initStaffWorkstation() {
           </div>
 
           <!-- Station Views Switcher -->
-          <nav style="display: flex; gap: 6px; flex-wrap: wrap; background: var(--bg-surface); padding: 4px; border-radius: 999px; border: 1.5px solid var(--border-light);">
+          <nav class="staff-nav-bar" style="display: flex; gap: 6px; background: var(--bg-surface); padding: 4px; border-radius: 999px; border: 1.5px solid var(--border-light);">
             <button class="staff-nav-btn ${currentStaffWorkstationView === 'kitchen' ? 'active' : ''}" data-view="kitchen">
               🍳 Kitchen KDS
             </button>
             <button class="staff-nav-btn ${currentStaffWorkstationView === 'pickup' ? 'active' : ''}" data-view="pickup">
               📦 Pickup Counter
             </button>
+            <!-- Cashier POS (safely inactive for online-only phase) -->
+            <!--
             <button class="staff-nav-btn ${currentStaffWorkstationView === 'cashier' ? 'active' : ''}" data-view="cashier">
               💵 Cashier POS
             </button>
+            -->
             <button class="staff-nav-btn ${currentStaffWorkstationView === 'menu' ? 'active' : ''}" data-view="menu">
               📋 Menu & Stock (Add / Quantity)
             </button>
-            <button id="staff-open-daily-board-btn" style="background: #FFFBEB; color: #92400E; border: 1.5px solid #F59E0B; padding: 6px 12px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+            <button id="staff-open-daily-board-btn" style="background: #FFFBEB; color: #92400E; border: 1.5px solid #F59E0B; padding: 6px 12px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;">
               🍱 Today's Daily Board
             </button>
           </nav>
@@ -219,15 +222,24 @@ function initStaffWorkstation() {
       }
     });
 
+    function cleanupCurrentStation() {
+      try { cleanupKitchenView(); } catch (_) {}
+      try { cleanupPickupView(); } catch (_) {}
+      try { cleanupCashierView(); } catch (_) {}
+      try { cleanupAdminView(); } catch (_) {}
+    }
+
     // Attach Station View Switcher Listeners
     root.querySelectorAll('.staff-nav-btn').forEach(btn => {
       btn.addEventListener('click', () => {
+        cleanupCurrentStation();
         currentStaffWorkstationView = btn.getAttribute('data-view');
         render();
       });
     });
 
     root.querySelector('#signout-station-btn')?.addEventListener('click', async () => {
+      cleanupCurrentStation();
       await staffAuth.logout();
       render();
     });
@@ -239,15 +251,21 @@ function initStaffWorkstation() {
       renderKitchenView(viewTarget);
     } else if (currentStaffWorkstationView === 'pickup') {
       renderPickupView(viewTarget);
-    } else if (currentStaffWorkstationView === 'cashier') {
-      renderCashierView(viewTarget);
     } else if (currentStaffWorkstationView === 'menu') {
       renderAdminView(viewTarget, { staffMode: true });
+    } else if (currentStaffWorkstationView === 'cashier') {
+      // Inactive phase fallback
+      currentStaffWorkstationView = 'kitchen';
+      renderKitchenView(viewTarget);
     }
   }
 
   render();
   onStaffAuthStateChanged(() => {
+    try { cleanupKitchenView(); } catch (_) {}
+    try { cleanupPickupView(); } catch (_) {}
+    try { cleanupCashierView(); } catch (_) {}
+    try { cleanupAdminView(); } catch (_) {}
     render();
   });
 }

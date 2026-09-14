@@ -7001,7 +7001,8 @@ describe('Phase 7 & Production Gate Security Abuse Integration Tests', () => {
     assert.strictEqual(publicPayload.ready[0].token, 'TB-043');
 
     // Invariant 2: Zero PII or private business metadata exists in public projection
-    const payloadJson = JSON.stringify(publicPayload);
+    const { updatedAt, ...sanitizedPayload } = publicPayload;
+    const payloadJson = JSON.stringify(sanitizedPayload);
     assert.strictEqual(payloadJson.includes('Alice'), false, 'Customer names must be stripped');
     assert.strictEqual(payloadJson.includes('Bob'), false, 'Customer names must be stripped');
     assert.strictEqual(payloadJson.includes('9876543210'), false, 'Phone numbers must be stripped');

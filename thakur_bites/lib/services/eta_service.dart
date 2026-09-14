@@ -9,6 +9,11 @@ class EtaService {
     required int activeKitchenOrders,
     bool isRushMode = false,
   }) {
+    // If order contains only ready-made shelf items and cook queue is empty, pickup is ready immediately (BUG-15)
+    if (baseEstimatedMinutes <= 0 && activeKitchenOrders == 0) {
+      return 0;
+    }
+
     double estimated = baseEstimatedMinutes.toDouble();
 
     // Add queue lag
@@ -19,7 +24,7 @@ class EtaService {
       estimated *= 1.25;
     }
 
-    // Minimum 3 minutes, maximum 45 minutes
+    // Minimum 3 minutes for cooked/kitchen items, maximum 45 minutes
     final rounded = estimated.round();
     if (rounded < 3) return 3;
     if (rounded > 45) return 45;
@@ -28,6 +33,9 @@ class EtaService {
 
   /// Returns user-facing status label for the estimated wait
   static String getWaitTimeLabel(int minutes, {bool isRushMode = false}) {
+    if (minutes <= 0) {
+      return '⏱️ Ready Any Moment';
+    }
     if (isRushMode) {
       return '🔥 Rush Hour (~$minutes min)';
     }

@@ -68,7 +68,7 @@ class MenuItemCard extends StatelessWidget {
     final level = item.availabilityLevel;
 
     final cardBg = !inStock
-        ? const Color(0xFFF3EFE8)
+        ? AppColors.surface2
         : (isCooked ? AppColors.mustardSoft : AppColors.greenSoft);
     final accentInk = !inStock
         ? AppColors.inkSoft
@@ -78,11 +78,11 @@ class MenuItemCard extends StatelessWidget {
     Color badgeBg;
     Color badgeTextColor;
     if (!inStock) {
-      badgeBg = const Color(0xFFFEE2E2);
-      badgeTextColor = AppColors.red;
+      badgeBg = AppColors.dangerBg;
+      badgeTextColor = AppColors.danger;
     } else if (level == AvailabilityLevel.limited) {
-      badgeBg = const Color(0xFFFEF3C7);
-      badgeTextColor = const Color(0xFFB45309);
+      badgeBg = AppColors.warningBg;
+      badgeTextColor = AppColors.mustardInk;
     } else {
       badgeBg = isCooked
           ? AppColors.mustardInk.withAlpha(30)
@@ -93,7 +93,7 @@ class MenuItemCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: cardBg,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: AppRadius.radiusLg,
         border: inStock ? null : Border.all(color: AppColors.line, width: 1),
       ),
       child: Stack(
@@ -108,59 +108,66 @@ class MenuItemCard extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 7,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: badgeBg,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Availability dot
-                          if (!isCooked || !inStock) ...[
-                            Container(
-                              width: 6,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: !inStock
-                                    ? AppColors.red
-                                    : level == AvailabilityLevel.limited
-                                    ? const Color(0xFFD97706)
-                                    : const Color(0xFF16A34A),
+                    Semantics(
+                      label: !inStock
+                          ? 'Status: Out of Stock'
+                          : (level == AvailabilityLevel.limited
+                              ? 'Status: Limited availability, ${item.badgeText}'
+                              : 'Status: In Stock, ${item.badgeText}'),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: badgeBg,
+                          borderRadius: AppRadius.radiusPill,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Availability dot
+                            if (!isCooked || !inStock) ...[
+                              Container(
+                                width: 6,
+                                height: 6,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: !inStock
+                                      ? AppColors.danger
+                                      : level == AvailabilityLevel.limited
+                                      ? AppColors.warning
+                                      : AppColors.success,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                            ],
+                            Text(
+                              item.badgeText,
+                              style: AppFonts.mono(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: badgeTextColor,
                               ),
                             ),
-                            const SizedBox(width: 4),
                           ],
-                          Text(
-                            item.badgeText,
-                            style: AppFonts.mono(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w600,
-                              color: badgeTextColor,
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                     if (item.todaySpecialBadge != null)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFEF2F2),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: const Color(0xFFEF4444), width: 0.8),
+                          color: AppColors.dangerBg,
+                          borderRadius: AppRadius.radiusSm,
+                          border: Border.all(color: AppColors.danger, width: 0.8),
                         ),
                         child: Text(
                           item.todaySpecialBadge!,
                           style: const TextStyle(
                             fontSize: 9.5,
                             fontWeight: FontWeight.w700,
-                            color: Color(0xFFDC2626),
+                            color: AppColors.danger,
                           ),
                         ),
                       )
@@ -168,16 +175,16 @@ class MenuItemCard extends StatelessWidget {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFEF3C7),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: const Color(0xFFF59E0B), width: 0.8),
+                          color: AppColors.warningBg,
+                          borderRadius: AppRadius.radiusSm,
+                          border: Border.all(color: AppColors.warning, width: 0.8),
                         ),
                         child: const Text(
                           '🔥 Popular',
                           style: TextStyle(
                             fontSize: 9.5,
                             fontWeight: FontWeight.w700,
-                            color: Color(0xFFB45309),
+                            color: AppColors.mustardInk,
                           ),
                         ),
                       ),
@@ -218,9 +225,9 @@ class MenuItemCard extends StatelessWidget {
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
                       color: (dailyBoard != null && !dailyBoard!.hasAnyBread)
-                          ? AppColors.red
+                          ? AppColors.danger
                           : (dailyBoard != null && !dailyBoard!.bothBreadsAvailable)
-                              ? const Color(0xFFB45309)
+                              ? AppColors.mustardInk
                               : AppColors.mustardInk,
                     ),
                     textAlign: TextAlign.center,
@@ -250,15 +257,15 @@ class MenuItemCard extends StatelessWidget {
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFEE2E2),
-                        borderRadius: BorderRadius.circular(6),
+                        color: AppColors.dangerBg,
+                        borderRadius: AppRadius.radiusSm,
                       ),
                       child: Text(
                         'Sold out',
                         style: AppFonts.mono(
                           fontSize: 10.5,
                           fontWeight: FontWeight.w700,
-                          color: AppColors.red,
+                          color: AppColors.danger,
                         ),
                       ),
                     ),
@@ -285,27 +292,31 @@ class MenuItemCard extends StatelessWidget {
                 final prefsService = PreferencesService();
                 final isFav = prefsService.isItemFavourited(item.id);
 
-                return GestureDetector(
-                  onTap: () async {
-                    if (user == null) {
-                      LoginSheet.show(context);
-                      return;
-                    }
-                    HapticFeedback.selectionClick();
-                    await prefsService.toggleFavourite(user.uid, item.id);
-                  },
-                  child: Container(
-                    width: 26,
-                    height: 26,
-                    decoration: BoxDecoration(
-                      color: isFav ? AppColors.red.withAlpha(25) : Colors.black.withAlpha(12),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Center(
-                      child: Icon(
-                        isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                        size: 15,
-                        color: isFav ? AppColors.red : accentInk.withAlpha(150),
+                return Semantics(
+                  button: true,
+                  label: isFav ? 'Remove ${item.name} from favourites' : 'Add ${item.name} to favourites',
+                  child: GestureDetector(
+                    onTap: () async {
+                      if (user == null) {
+                        LoginSheet.show(context);
+                        return;
+                      }
+                      HapticFeedback.selectionClick();
+                      await prefsService.toggleFavourite(user.uid, item.id);
+                    },
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        color: isFav ? AppColors.red.withAlpha(25) : Colors.black.withAlpha(12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(
+                        child: Icon(
+                          isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                          size: 15,
+                          color: isFav ? AppColors.red : accentInk.withAlpha(150),
+                        ),
                       ),
                     ),
                   ),
@@ -321,32 +332,36 @@ class MenuItemCard extends StatelessWidget {
   Widget _buildAddButton(BuildContext context) {
     return Align(
       alignment: Alignment.centerRight,
-      child: GestureDetector(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          if (_isCustomizableMeal) {
-            MealCustomizerSheet.show(
-              context,
-              item: item,
-              dailyBoard: dailyBoard ?? DailyBoard.defaultForDay(DateTime.now()),
-            );
-          } else {
-            context.read<CartProvider>().addItem(item);
-          }
-        },
-        child: Container(
-          width: 44,
-          height: 44,
-          alignment: Alignment.center,
-          color: Colors.transparent,
+      child: Semantics(
+        button: true,
+        label: 'Add ${item.name} to cart',
+        child: GestureDetector(
+          onTap: () {
+            HapticFeedback.selectionClick();
+            if (_isCustomizableMeal) {
+              MealCustomizerSheet.show(
+                context,
+                item: item,
+                dailyBoard: dailyBoard ?? DailyBoard.defaultForDay(DateTime.now()),
+              );
+            } else {
+              context.read<CartProvider>().addItem(item);
+            }
+          },
           child: Container(
-            width: 30,
-            height: 30,
-            decoration: const BoxDecoration(
-              color: AppColors.ink,
-              shape: BoxShape.circle,
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            color: Colors.transparent,
+            child: Container(
+              width: 30,
+              height: 30,
+              decoration: const BoxDecoration(
+                color: AppColors.ink,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.add, color: Colors.white, size: 17),
             ),
-            child: const Icon(Icons.add, color: Colors.white, size: 17),
           ),
         ),
       ),
@@ -370,55 +385,72 @@ class MenuItemCard extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             // Minus
-            GestureDetector(
-              onTap: () {
-                HapticFeedback.selectionClick();
-                context.read<CartProvider>().removeItem(item.id);
-              },
-              child: const SizedBox(
-                width: 44,
-                height: 44,
-                child: Center(
-                  child: Text(
-                    '–',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
+            Semantics(
+              button: true,
+              label: 'Decrease quantity of ${item.name}',
+              child: GestureDetector(
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  final cart = context.read<CartProvider>();
+                  final matchingEntries = cart.entries.where((e) => e.item.id == item.id).toList();
+                  if (matchingEntries.length > 1) {
+                    _showVariantPickerSheet(context, matchingEntries);
+                  } else {
+                    cart.removeItem(item.id, customization: matchingEntries.firstOrNull?.customization);
+                  }
+                },
+                child: const SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Center(
+                    child: Text(
+                      '–',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
             // Qty
-            Text(
-              '$qty',
-              style: AppFonts.mono(fontSize: 12.5, color: Colors.white),
+            Semantics(
+              label: '$qty of ${item.name} in cart',
+              child: Text(
+                '$qty',
+                style: AppFonts.mono(fontSize: 12.5, color: Colors.white),
+              ),
             ),
             // Plus — opens customizer for meal or adds standard item
-            GestureDetector(
-              onTap: () {
-                HapticFeedback.selectionClick();
-                if (_isCustomizableMeal) {
-                  MealCustomizerSheet.show(
-                    context,
-                    item: item,
-                    dailyBoard: dailyBoard ?? DailyBoard.defaultForDay(DateTime.now()),
-                  );
-                } else {
-                  context.read<CartProvider>().addItem(item);
-                }
-              },
-              child: const SizedBox(
-                width: 44,
-                height: 44,
-                child: Center(
-                  child: Text(
-                    '+',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
+            Semantics(
+              button: true,
+              label: 'Increase quantity of ${item.name}',
+              child: GestureDetector(
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  if (_isCustomizableMeal) {
+                    MealCustomizerSheet.show(
+                      context,
+                      item: item,
+                      dailyBoard: dailyBoard ?? DailyBoard.defaultForDay(DateTime.now()),
+                    );
+                  } else {
+                    context.read<CartProvider>().addItem(item);
+                  }
+                },
+                child: const SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Center(
+                    child: Text(
+                      '+',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ),
@@ -427,6 +459,138 @@ class MenuItemCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  void _showVariantPickerSheet(BuildContext context, List<CartEntry> entries) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          decoration: const BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: AppColors.line,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Customized Items in Cart',
+                    style: AppFonts.body(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.ink),
+                  ),
+                  GestureDetector(
+                    onTap: () => Navigator.of(ctx).pop(),
+                    child: const Icon(Icons.close, size: 20, color: AppColors.inkSoft),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Select which customized variant to decrease:',
+                style: AppFonts.body(fontSize: 12.5, color: AppColors.inkSoft),
+              ),
+              const SizedBox(height: 12),
+              ...entries.map((e) {
+                final label = (e.customization != null && e.customization!.isNotEmpty)
+                    ? e.customization!
+                    : 'Standard Option';
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface2,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.line),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              label,
+                              style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.ink),
+                            ),
+                            Text(
+                              '₹${e.item.price.toInt()} each',
+                              style: AppFonts.mono(fontSize: 11, color: AppColors.inkSoft),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          GestureDetector(
+                            onTap: () {
+                              HapticFeedback.selectionClick();
+                              ctx.read<CartProvider>().removeItem(e.item.id, customization: e.customization);
+                              Navigator.of(ctx).pop();
+                            },
+                            child: Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: AppColors.red.withAlpha(25),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Center(
+                                child: Icon(Icons.remove, size: 18, color: AppColors.red),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            child: Text(
+                              '${e.qty}',
+                              style: AppFonts.mono(fontSize: 13, fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () {
+                              HapticFeedback.selectionClick();
+                              ctx.read<CartProvider>().addItem(e.item, customization: e.customization);
+                              Navigator.of(ctx).pop();
+                            },
+                            child: Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: AppColors.green.withAlpha(25),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Center(
+                                child: Icon(Icons.add, size: 18, color: AppColors.greenInk),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        );
+      },
     );
   }
 }

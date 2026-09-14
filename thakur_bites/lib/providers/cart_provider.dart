@@ -87,7 +87,24 @@ class CartProvider extends ChangeNotifier {
     // If migrating from guest / unauthenticated into a logged-in user:
     if ((previousUserId == null || previousUserId.isEmpty) && newUserId != null && newUserId.isNotEmpty) {
       if (_entries.isNotEmpty) {
-        // Migrate active items to the logged-in user and purge guest storage
+        // Guest has active items. Load user's existing persisted cart and merge! (BUG-12)
+        final guestEntries = Map<String, CartEntry>.from(_entries);
+        _entries.clear();
+        _priceChangeAlerts.clear();
+        await _loadPersistedCart();
+
+        // Merge guest entries into the loaded user entries
+        for (final entryMap in guestEntries.entries) {
+          final key = entryMap.key;
+          final guestEntry = entryMap.value;
+          if (_entries.containsKey(key)) {
+            final existing = _entries[key]!;
+            existing.qty = (existing.qty + guestEntry.qty).clamp(1, 20);
+          } else {
+            _entries[key] = guestEntry;
+          }
+        }
+
         await _persistCartLocally();
         try {
           final prefs = await SharedPreferences.getInstance();
@@ -300,7 +317,7 @@ class CartProvider extends ChangeNotifier {
   /// Consolidated summary of student's preferences for ready-made items.
   String get readyMadePreferenceSummary {
     if (!isOnlyReadyMade) return '';
-    return '$_temperaturePreference · $_packagingPreference';
+    return _temperaturePreference;
   }
 
   void setTemperaturePreference(String pref) {

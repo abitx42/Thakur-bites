@@ -80,9 +80,11 @@ export const executeDisasterRecoveryDrill = onCall<{
       const onHand = Number(item.stockOnHand || 0);
       const res = Number(item.reservedStock || 0);
       const avail = Number(item.availableStock || 0);
-      if (avail !== onHand - res || avail < 0) {
+      const isItemAvailable = item.available !== false;
+      const expectedAvail = isItemAvailable ? Math.max(0, onHand - res) : 0;
+      if (avail !== expectedAvail || avail < 0) {
         inventoryEquationsValid = false;
-        details.push(`Inventory equation mismatch in restored item ${doc.id}`);
+        details.push(`Inventory equation mismatch in restored item ${doc.id} (avail: ${avail}, expected: ${expectedAvail}, onHand: ${onHand}, res: ${res}, available: ${item.available})`);
       }
     }
   });

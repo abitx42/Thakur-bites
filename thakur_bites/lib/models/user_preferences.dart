@@ -97,6 +97,15 @@ class DietaryPreferences {
     };
   }
 
+  List<String> get labels {
+    final list = <String>[];
+    if (jainAvailableOnly) list.add('Jain Prep');
+    if (lessSpicy) list.add('Less Spicy');
+    if (lessSugar) list.add('Less Sugar');
+    if (noCutlery) list.add('No Cutlery');
+    return list;
+  }
+
   DietaryPreferences copyWith({
     bool? lessSpicy,
     bool? lessSugar,

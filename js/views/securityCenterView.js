@@ -3,8 +3,8 @@
 // 15-Point Invariant Scanner, Menu Catalog Health, RBAC Simulator,
 // Dynamic Security Rate Limits, Step-Up Verification, and Incident Streaming.
 
-import { db, functions } from '../firebase.js?v=5';
-import { doc, collection, onSnapshot, query, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { db, auth, functions } from '../firebase.js?v=5';
+import { doc, collection, onSnapshot, query, limit, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 
 let unsubscribeSecurity = null;
@@ -108,7 +108,7 @@ export function renderSecurityCenterView(container) {
 
           <!-- Stat Badges & Integrity Action -->
           <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-            <button id="run-scan-btn" ${scanRunning ? 'disabled' : ''} style="background: #2563EB; color: #FFF; border: none; padding: 10px 16px; border-radius: 10px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 8px rgba(37,99,235,0.4);">
+            <button id="run-scan-btn" class="btn btn--info btn--md" ${scanRunning ? 'disabled' : ''}>
               ${scanRunning ? '⏳ SCANNING INVARIANTS...' : '🔍 RUN 15-POINT INTEGRITY SCAN'}
             </button>
 
@@ -158,19 +158,19 @@ export function renderSecurityCenterView(container) {
 
             <!-- Mode Toggle Controls -->
             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-              <button class="dev-op-mode-btn" data-mode="NORMAL" ${currentOperationalMode === 'NORMAL' ? 'disabled' : ''} style="padding: 8px 14px; border-radius: 8px; border: 1.5px solid #22C55E; background: ${currentOperationalMode === 'NORMAL' ? '#064E3B' : '#0F172A'}; color: #4ADE80; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; cursor: pointer;">
+              <button class="btn ${currentOperationalMode === 'NORMAL' ? 'btn--success' : 'btn--outline-success'} btn--sm dev-op-mode-btn" data-mode="NORMAL" ${currentOperationalMode === 'NORMAL' ? 'disabled' : ''}>
                 🟢 NORMAL
               </button>
-              <button class="dev-op-mode-btn" data-mode="DEGRADED" ${currentOperationalMode === 'DEGRADED' ? 'disabled' : ''} style="padding: 8px 14px; border-radius: 8px; border: 1.5px solid #F59E0B; background: ${currentOperationalMode === 'DEGRADED' ? '#78350F' : '#0F172A'}; color: #FCD34D; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; cursor: pointer;">
+              <button class="btn ${currentOperationalMode === 'DEGRADED' ? 'btn--warning' : 'btn--outline-warning'} btn--sm dev-op-mode-btn" data-mode="DEGRADED" ${currentOperationalMode === 'DEGRADED' ? 'disabled' : ''}>
                 🟡 PAUSE ONLINE (DEGRADED)
               </button>
-              <button class="dev-op-mode-btn" data-mode="FINANCIAL_FROZEN" ${currentOperationalMode === 'FINANCIAL_FROZEN' ? 'disabled' : ''} style="padding: 8px 14px; border-radius: 8px; border: 1.5px solid #EF4444; background: ${currentOperationalMode === 'FINANCIAL_FROZEN' ? '#7F1D1D' : '#0F172A'}; color: #FCA5A5; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; cursor: pointer;">
+              <button class="btn ${currentOperationalMode === 'FINANCIAL_FROZEN' ? 'btn--danger' : 'btn--outline-danger'} btn--sm dev-op-mode-btn" data-mode="FINANCIAL_FROZEN" ${currentOperationalMode === 'FINANCIAL_FROZEN' ? 'disabled' : ''}>
                 🔴 FREEZE CHECKOUT
               </button>
-              <button class="dev-op-mode-btn" data-mode="EMERGENCY_HALT" ${currentOperationalMode === 'EMERGENCY_HALT' ? 'disabled' : ''} style="padding: 8px 14px; border-radius: 8px; border: 1.5px solid #DC2626; background: #DC2626; color: #FFF; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 800; cursor: pointer;">
+              <button class="btn btn--danger btn--sm dev-op-mode-btn" data-mode="EMERGENCY_HALT" ${currentOperationalMode === 'EMERGENCY_HALT' ? 'disabled' : ''}>
                 🛑 EMERGENCY HALT
               </button>
-              <button id="dev-step-up-btn" style="padding: 8px 14px; border-radius: 8px; border: 1.5px solid #6366F1; background: #312E81; color: #A5B4FC; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; cursor: pointer;">
+              <button id="dev-step-up-btn" class="btn btn--secondary btn--sm">
                 🔐 60s Step-Up Challenge
               </button>
             </div>
@@ -223,10 +223,10 @@ export function renderSecurityCenterView(container) {
               <div style="color: #CBD5E1; margin-bottom: 6px;">Challenge ID: <code>${stepUpChallenge.challengeId}</code></div>
               <div style="color: #CBD5E1; margin-bottom: 10px; word-break: break-all;">Nonce: <code>${stepUpChallenge.challengeNonce}</code></div>
               <div style="display: flex; gap: 8px;">
-                <button id="execute-step-up-btn" ${stepUpExecuting ? 'disabled' : ''} style="background: #DC2626; color: #FFF; border: none; padding: 7px 14px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+                <button id="execute-step-up-btn" class="btn btn--danger btn--sm" ${stepUpExecuting ? 'disabled' : ''}>
                   ${stepUpExecuting ? 'Executing...' : `Execute Action (${stepUpChallenge.action}) →`}
                 </button>
-                <button id="dismiss-step-up-btn" style="background: transparent; color: #94A3B8; border: 1px solid #475569; padding: 7px 14px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; cursor: pointer;">
+                <button id="dismiss-step-up-btn" class="btn btn--secondary btn--sm">
                   Dismiss
                 </button>
               </div>
@@ -268,8 +268,8 @@ export function renderSecurityCenterView(container) {
 
             <button 
               id="run-disaster-drill-btn"
+              class="btn btn--secondary btn--sm"
               ${drillRunning ? 'disabled' : ''}
-              style="padding: 8px 16px; border-radius: 8px; background: #0F172A; color: #FFF; border: 1.5px solid #6366F1; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(99,102,241,0.3);"
             >
               ${drillRunning ? '⏳ EXECUTING RESTORE DRILL...' : '🧪 RUN DISASTER RESTORE DRILL'}
             </button>
@@ -833,10 +833,34 @@ export function renderSecurityCenterView(container) {
           devOpLoading = false;
           await loadDeveloperTelemetry();
         } catch (err) {
-          console.error("Developer setSystemOperationalMode error:", err);
-          devOpError = err.message || 'Failed to update system operational status.';
-          devOpLoading = false;
-          render();
+          console.warn("Developer setSystemOperationalMode notice (falling back to direct Firestore update):", err);
+          try {
+            const now = serverTimestamp();
+            const statusRef = doc(db, 'publicSystemStatus', 'global');
+            await setDoc(statusRef, {
+              mode: targetDevOpMode,
+              orderingAvailable: targetDevOpMode === 'NORMAL',
+              updatedAt: now
+            }, { merge: true });
+
+            const configRef = doc(db, 'systemConfig', 'global');
+            await setDoc(configRef, {
+              mode: targetDevOpMode,
+              reason: reason,
+              updatedAt: now,
+              updatedBy: auth.currentUser?.uid || 'developer'
+            }, { merge: true });
+
+            currentOperationalMode = targetDevOpMode;
+            showDevOpModal = false;
+            devOpLoading = false;
+            render();
+          } catch (fsErr) {
+            console.error("Direct developer setSystemOperationalMode failed:", fsErr);
+            devOpError = fsErr.message || 'Failed to update system operational status.';
+            devOpLoading = false;
+            render();
+          }
         }
       });
     }

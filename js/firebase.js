@@ -141,9 +141,92 @@ export function subscribeOrders(callback) {
       };
     });
     callback(orders);
+    syncPublicLiveQueue(orders);
   }, (error) => {
     console.error("Error subscribing to orders:", error);
   });
+}
+
+let syncQueueTimeout = null;
+
+/**
+ * Synchronizes the public single-document TV projection (/publicLiveQueue/current).
+ * Can be called with an array of order objects or will query active orders.
+ * Guaranteed Zero-PII: projects strictly tokens and prep minutes.
+ */
+export async function syncPublicLiveQueue(orders = null) {
+  if (syncQueueTimeout) clearTimeout(syncQueueTimeout);
+
+  syncQueueTimeout = setTimeout(async () => {
+    try {
+      let activeOrders = orders;
+      if (!activeOrders) {
+        const ordersCol = collection(db, 'orders');
+        const q = query(ordersCol, where('status', 'in', ['placed', 'confirmed', 'preparing', 'ready']));
+        const snap = await getDocs(q);
+        activeOrders = snap.docs.map(d => d.data());
+      }
+
+      const confirmed = [];
+      const preparing = [];
+      const ready = [];
+      const confirmedTokens = [];
+      const preparingTokens = [];
+      const readyTokens = [];
+
+      // Sort FIFO by createdAt (oldest first)
+      const sorted = [...activeOrders].sort((a, b) => {
+        const getMs = (val) => {
+          if (!val) return 0;
+          if (val instanceof Date) return val.getTime();
+          if (typeof val.toDate === 'function') return val.toDate().getTime();
+          if (val.seconds) return val.seconds * 1000;
+          if (typeof val === 'string') return new Date(val).getTime();
+          return 0;
+        };
+        return getMs(a.createdAt) - getMs(b.createdAt);
+      });
+
+      for (const o of sorted) {
+        const token = (o.tokenNumber || '').trim();
+        if (!token) continue;
+
+        const status = (o.status || '').toLowerCase();
+        if (status === 'cancelled' || status === 'collected' || status === 'payment_pending') continue;
+
+        if (status === 'ready') {
+          ready.push({ token });
+          readyTokens.push(token);
+        } else if (status === 'preparing') {
+          preparing.push({
+            token,
+            estimatedMinutes: typeof o.estimatedMinutes === 'number' && o.estimatedMinutes > 0
+              ? o.estimatedMinutes
+              : null,
+          });
+          preparingTokens.push(token);
+        } else if (['confirmed', 'placed'].includes(status)) {
+          confirmed.push({ token });
+          confirmedTokens.push(token);
+        }
+      }
+
+      const payload = {
+        confirmedTokens,
+        preparingTokens,
+        readyTokens,
+        confirmed,
+        preparing,
+        ready,
+        activeCount: confirmedTokens.length + preparingTokens.length + readyTokens.length,
+        updatedAt: serverTimestamp()
+      };
+
+      await setDoc(doc(db, 'publicLiveQueue', 'current'), payload, { merge: true });
+    } catch (err) {
+      console.warn("Public live queue sync notice:", err);
+    }
+  }, 250);
 }
 
 /**
@@ -171,9 +254,11 @@ export async function updateOrderStatusInDb(orderId, newStatus) {
       await updateDoc(orderRef, updateData);
     } catch (fsErr) {
       console.error("Direct updateOrderStatus failed:", fsErr);
-      throw fnErr;
+      throw fsErr;
     }
   }
+  // Synchronize TV queue projection immediately after status update
+  syncPublicLiveQueue();
 }
 
 export const updateOrderStatus = updateOrderStatusInDb;
@@ -527,7 +612,7 @@ export async function unlockOrder(orderId, reason = 'Student presented physical 
       });
     } catch (fsErr) {
       console.error("Direct unlockOrder failed:", fsErr);
-      throw fnErr;
+      throw fsErr;
     }
   }
 }
@@ -551,7 +636,7 @@ export async function recordCashPayment(orderId) {
       });
     } catch (fsErr) {
       console.error("Direct recordCashPayment failed:", fsErr);
-      throw fnErr;
+      throw fsErr;
     }
   }
 }

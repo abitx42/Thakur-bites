@@ -258,29 +258,29 @@ export function renderPinPadModal(container, onUnlocked) {
 
     container.innerHTML = `
       <div class="pin-modal-overlay">
-        <div class="pin-modal-card" style="max-width: 480px; text-align: left;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-            <div class="pin-badge" style="margin: 0;">STAFF WORKSTATION RBAC</div>
-            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #16A34A; font-weight: 700;">● SECURE PORTAL</span>
+        <div class="pin-modal-card" style="max-width: min(100%, 460px); width: 100%; box-sizing: border-box; text-align: left;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 0.5rem;">
+            <div class="pin-badge" style="margin: 0; font-size: clamp(0.68rem, 2.5vw, 0.75rem);">STAFF WORKSTATION RBAC</div>
+            <span style="font-family: var(--font-mono); font-size: clamp(0.68rem, 2.5vw, 0.75rem); color: #16A34A; font-weight: 700;">● SECURE PORTAL</span>
           </div>
 
-          <h2 style="font-family: var(--font-display); font-size: 2rem; margin: 0.4rem 0 0.2rem 0; letter-spacing: 0.05em; color: var(--ink-primary);">
+          <h2 style="font-family: var(--font-display); font-size: clamp(1.5rem, 5.5vw, 2rem); margin: 0.4rem 0 0.2rem 0; letter-spacing: 0.04em; color: var(--ink-primary); line-height: 1.1;">
             CANTEEN STAFF ACCESS
           </h2>
-          <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-bottom: 1rem;">
-            Workstation Device ID: <code style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--brand-red); background: var(--bg-surface); padding: 2px 6px; border-radius: 4px;">${deviceId}</code>
+          <p style="font-family: var(--font-sans); font-size: 0.82rem; color: var(--ink-secondary); margin-bottom: 0.9rem; word-break: break-all;">
+            Workstation Device ID: <code style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--brand-red); background: var(--bg-surface); padding: 2px 6px; border-radius: 4px; word-break: break-all;">${deviceId}</code>
           </p>
 
           <!-- Auth Mode Tabs -->
-          <div style="display: flex; gap: 6px; margin-bottom: 1.2rem; background: var(--bg-surface); padding: 4px; border-radius: 10px; border: 1.5px solid var(--border-light);">
-            <button id="tab-pin" style="flex: 1; padding: 8px; border-radius: 8px; border: none; font-family: var(--font-sans); font-size: 0.8rem; font-weight: 700; cursor: pointer; background: ${activeTab === 'pin' ? '#FFF' : 'transparent'}; color: ${activeTab === 'pin' ? 'var(--brand-red)' : 'var(--ink-secondary)'}; box-shadow: ${activeTab === 'pin' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'};">
+          <div style="display: flex; gap: 4px; margin-bottom: 1.1rem; background: var(--bg-surface); padding: 4px; border-radius: 10px; border: 1.5px solid var(--border-light);">
+            <button id="tab-pin" style="flex: 1; min-width: 0; padding: 7px 2px; border-radius: 8px; border: none; font-family: var(--font-sans); font-size: clamp(0.7rem, 2.5vw, 0.78rem); font-weight: 700; cursor: pointer; background: ${activeTab === 'pin' ? '#FFF' : 'transparent'}; color: ${activeTab === 'pin' ? 'var(--brand-red)' : 'var(--ink-secondary)'}; box-shadow: ${activeTab === 'pin' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'}; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">
               🔑 Shift PIN
             </button>
-            <button id="tab-email" style="flex: 1; padding: 8px; border-radius: 8px; border: none; font-family: var(--font-sans); font-size: 0.8rem; font-weight: 700; cursor: pointer; background: ${activeTab === 'email' ? '#FFF' : 'transparent'}; color: ${activeTab === 'email' ? 'var(--brand-red)' : 'var(--ink-secondary)'}; box-shadow: ${activeTab === 'email' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'};">
-              ✉️ Email & Password
+            <button id="tab-email" style="flex: 1; min-width: 0; padding: 7px 2px; border-radius: 8px; border: none; font-family: var(--font-sans); font-size: clamp(0.7rem, 2.5vw, 0.78rem); font-weight: 700; cursor: pointer; background: ${activeTab === 'email' ? '#FFF' : 'transparent'}; color: ${activeTab === 'email' ? 'var(--brand-red)' : 'var(--ink-secondary)'}; box-shadow: ${activeTab === 'email' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'}; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">
+              ✉️ Email
             </button>
-            <button id="tab-enroll" style="flex: 1; padding: 8px; border-radius: 8px; border: none; font-family: var(--font-sans); font-size: 0.8rem; font-weight: 700; cursor: pointer; background: ${activeTab === 'enroll' ? '#FFF' : 'transparent'}; color: ${activeTab === 'enroll' ? 'var(--brand-red)' : 'var(--ink-secondary)'}; box-shadow: ${activeTab === 'enroll' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'};">
-              🖥️ ${regWs ? 'Terminal OK' : 'Enroll Terminal'}
+            <button id="tab-enroll" style="flex: 1; min-width: 0; padding: 7px 2px; border-radius: 8px; border: none; font-family: var(--font-sans); font-size: clamp(0.7rem, 2.5vw, 0.78rem); font-weight: 700; cursor: pointer; background: ${activeTab === 'enroll' ? '#FFF' : 'transparent'}; color: ${activeTab === 'enroll' ? 'var(--brand-red)' : 'var(--ink-secondary)'}; box-shadow: ${activeTab === 'enroll' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'}; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">
+              🖥️ ${regWs ? 'Bound' : 'Terminal'}
             </button>
           </div>
 
@@ -291,13 +291,13 @@ export function renderPinPadModal(container, onUnlocked) {
             <!-- Shift PIN Keypad Form -->
             <div>
               ${regWs ? `
-                <div style="background: #F0FDF4; border: 1px solid #BBF7D0; padding: 6px 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; color: #15803D; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                <div style="background: #F0FDF4; border: 1px solid #BBF7D0; padding: 6px 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; color: #15803D; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
                   <span>🖥️ Bound: <strong>${regWs.name || regWs.id}</strong> (${regWs.role || 'kitchen'})</span>
                   <span style="color: #16A34A; font-weight: 700;">ACTIVE</span>
                 </div>
               ` : `
-                <div style="background: #FFFBEB; border: 1px solid #FDE68A; padding: 6px 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; color: #B45309; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
-                  <span>⚠️ Unregistered terminal hardware.</span>
+                <div style="background: #FFFBEB; border: 1px solid #FDE68A; padding: 6px 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; color: #B45309; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
+                  <span>⚠️ Unregistered terminal.</span>
                   <a href="#" id="link-enroll-shortcut" style="color: var(--brand-red); font-weight: 700; text-decoration: underline;">Enroll Now</a>
                 </div>
               `}
@@ -305,9 +305,9 @@ export function renderPinPadModal(container, onUnlocked) {
               <label style="display: block; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: var(--ink-secondary); margin-bottom: 6px;">
                 SELECT ROLE:
               </label>
-              <div style="display: flex; gap: 6px; margin-bottom: 12px;">
-                ${['kitchen', 'pickup', 'cashier', 'admin'].map(r => `
-                  <button class="shift-role-btn" data-role="${r}" style="flex: 1; padding: 8px; border-radius: 8px; border: 1.5px solid ${selectedPinRole === r ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedPinRole === r ? '#FEE2E2' : '#FFF'}; color: ${selectedPinRole === r ? 'var(--brand-red)' : 'var(--ink-primary)'}; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; text-transform: uppercase;">
+              <div style="display: flex; gap: 6px; margin-bottom: 12px; width: 100%;">
+                ${['kitchen', 'pickup', 'admin'].map(r => `
+                  <button class="btn ${selectedPinRole === r ? 'btn--primary' : 'btn--secondary'} btn--sm shift-role-btn" data-role="${r}" style="flex: 1; min-width: 0; padding: 7px 4px; text-transform: uppercase;">
                     ${r}
                   </button>
                 `).join('')}
@@ -322,12 +322,13 @@ export function renderPinPadModal(container, onUnlocked) {
                 maxlength="6"
                 placeholder="••••••" 
                 value="${enteredPin}"
-                style="width: 100%; padding: 12px; border-radius: 10px; border: 2px solid var(--border-light); font-family: var(--font-mono); font-size: 1.6rem; letter-spacing: 0.3em; text-align: center; box-sizing: border-box; margin-bottom: 14px;"
+                style="width: 100%; padding: 10px 8px; border-radius: 10px; border: 2px solid var(--border-light); font-family: var(--font-mono); font-size: clamp(1.2rem, 5vw, 1.6rem); letter-spacing: 0.25em; text-align: center; box-sizing: border-box; margin-bottom: 14px;"
               />
 
               <button 
                 id="submit-shift-pin-btn"
-                style="width: 100%; padding: 12px; border-radius: 10px; background: var(--brand-red); color: #FFF; border: none; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; cursor: pointer;"
+                class="btn btn--primary btn--lg"
+                style="width: 100%;"
               >
                 Unlock Workstation Session →
               </button>
@@ -361,7 +362,8 @@ export function renderPinPadModal(container, onUnlocked) {
               </div>
               <button 
                 type="submit" 
-                style="width: 100%; padding: 12px; border-radius: 10px; background: var(--brand-red); color: #FFF; border: none; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; cursor: pointer;"
+                class="btn btn--primary btn--lg"
+                style="width: 100%;"
               >
                 Authenticate Staff Session →
               </button>
@@ -379,7 +381,7 @@ export function renderPinPadModal(container, onUnlocked) {
                     <div>Label: <strong>${regWs.name || 'Terminal'}</strong></div>
                     <div>Role: <strong>${regWs.role || 'all'}</strong></div>
                   </div>
-                  <button id="unlink-workstation-btn" style="margin-top: 10px; background: #FEE2E2; color: #DC2626; border: 1px solid #FCA5A5; padding: 6px 12px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+                  <button id="unlink-workstation-btn" class="btn btn--outline-danger btn--sm" style="margin-top: 10px;">
                     Unlink This Terminal Hardware
                   </button>
                 </div>
@@ -412,7 +414,8 @@ export function renderPinPadModal(container, onUnlocked) {
                 </div>
                 <button 
                   id="submit-enroll-btn" 
-                  style="width: 100%; padding: 12px; border-radius: 10px; background: #0F172A; color: #FFF; border: none; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; cursor: pointer; margin-top: 6px;"
+                  class="btn btn--secondary btn--lg"
+                  style="width: 100%; margin-top: 6px; background: #0F172A; color: #FFF;"
                 >
                   Authorize & Bind Terminal →
                 </button>

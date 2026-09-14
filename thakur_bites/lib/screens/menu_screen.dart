@@ -96,6 +96,17 @@ class _MenuScreenState extends State<MenuScreen> {
     return _cachedUserOrdersStream!;
   }
 
+  Stream<app.Order?>? _cachedSingleOrderStream;
+  String? _cachedSingleOrderId;
+
+  Stream<app.Order?> _getSingleOrderStream(String orderId) {
+    if (_cachedSingleOrderId != orderId || _cachedSingleOrderStream == null) {
+      _cachedSingleOrderId = orderId;
+      _cachedSingleOrderStream = _firestore.orderStream(orderId);
+    }
+    return _cachedSingleOrderStream!;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1279,13 +1290,13 @@ class _MenuScreenState extends State<MenuScreen> {
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFEFF6FF),
+                    color: AppColors.infoBg,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFBFDBFE), width: 1.5),
+                    border: Border.all(color: AppColors.info.withAlpha(80), width: 1.5),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.cloud_sync_outlined, size: 22, color: Color(0xFF1D4ED8)),
+                      const Icon(Icons.cloud_sync_outlined, size: 22, color: AppColors.info),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
@@ -1293,12 +1304,12 @@ class _MenuScreenState extends State<MenuScreen> {
                           children: [
                             Text(
                               'Ordering as Guest',
-                              style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w700, color: const Color(0xFF1E40AF)),
+                              style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.info),
                             ),
                             const SizedBox(height: 2),
                             Text(
                               'Save your order history & tickets across visits with Google.',
-                              style: AppFonts.body(fontSize: 11.5, color: const Color(0xFF1E3A8A)),
+                              style: AppFonts.body(fontSize: 11.5, color: AppColors.inkSecondary),
                             ),
                           ],
                         ),
@@ -1306,11 +1317,11 @@ class _MenuScreenState extends State<MenuScreen> {
                       const SizedBox(width: 8),
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2563EB),
+                          backgroundColor: AppColors.info,
                           foregroundColor: Colors.white,
                           elevation: 0,
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusSm),
                         ),
                         onPressed: () async {
                           try {
@@ -1425,8 +1436,8 @@ class _MenuScreenState extends State<MenuScreen> {
                     _buildProfileMenuTile(
                       icon: Icons.tune_rounded,
                       iconColor: AppColors.mustardInk,
-                      title: 'Dietary & Notification Preferences',
-                      subtitle: 'Mild spices, less sugar, eco-friendly cutlery & push alerts',
+                      title: 'Notification Preferences',
+                      subtitle: 'Push alerts & order update chimes',
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const PreferencesScreen()),
                       ),
@@ -1528,6 +1539,7 @@ class _MenuScreenState extends State<MenuScreen> {
     final nameController = TextEditingController(text: student.cleanDisplayName);
     final rollController = TextEditingController(text: student.rollNo ?? '');
     final deptController = TextEditingController(text: student.department ?? '');
+    final yearController = TextEditingController(text: student.year ?? '');
     final phoneController = TextEditingController(text: student.phone ?? '');
 
     final formKey = GlobalKey<FormState>();
@@ -1704,6 +1716,35 @@ class _MenuScreenState extends State<MenuScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 12),
+
+                    // Academic Year
+                    TextFormField(
+                      controller: yearController,
+                      maxLength: 10,
+                      textCapitalization: TextCapitalization.characters,
+                      decoration: InputDecoration(
+                        labelText: 'Academic Year (e.g. FE, SE, TE, BE)',
+                        counterText: '',
+                        labelStyle: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
+                        prefixIcon: const Icon(Icons.calendar_today_outlined, size: 20, color: AppColors.inkSoft),
+                        filled: true,
+                        fillColor: AppColors.surface2,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.line),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.red, width: 1.5),
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 20),
 
                     // Save Button
@@ -1720,6 +1761,7 @@ class _MenuScreenState extends State<MenuScreen> {
                                   displayName: nameController.text.trim(),
                                   rollNo: rollController.text.trim().toUpperCase(),
                                   department: deptController.text.trim(),
+                                  year: yearController.text.trim().toUpperCase(),
                                   phone: phoneController.text.trim(),
                                 );
 
@@ -1961,7 +2003,7 @@ class _MenuScreenState extends State<MenuScreen> {
               !_recoveredActiveOrder!.isCollected &&
               _recoveredActiveOrder!.status != 'cancelled') {
             return StreamBuilder<app.Order?>(
-              stream: _firestore.orderStream(_recoveredActiveOrder!.id),
+              stream: _getSingleOrderStream(_recoveredActiveOrder!.id),
               initialData: _recoveredActiveOrder,
               builder: (context, orderSnap) {
                 final order = orderSnap.data ?? _recoveredActiveOrder!;
@@ -1983,7 +2025,7 @@ class _MenuScreenState extends State<MenuScreen> {
         !_recoveredActiveOrder!.isCollected &&
         _recoveredActiveOrder!.status != 'cancelled') {
       return StreamBuilder<app.Order?>(
-        stream: _firestore.orderStream(_recoveredActiveOrder!.id),
+        stream: _getSingleOrderStream(_recoveredActiveOrder!.id),
         initialData: _recoveredActiveOrder,
         builder: (context, orderSnap) {
           final order = orderSnap.data ?? _recoveredActiveOrder!;
@@ -2081,9 +2123,9 @@ class _OrderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isReady = order.status == 'ready';
-    final isCollected = order.status == 'collected';
-    final isPreparing = order.status == 'preparing';
+    final isReady = order.isReady;
+    final isCollected = order.isCollected;
+    final isPreparing = order.isPreparing;
 
     Color statusColor;
     Color statusBg;
@@ -2135,9 +2177,9 @@ class _OrderCard extends StatelessWidget {
                         horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
                       color: isReady
-                          ? const Color(0xFFDCFCE7)
+                          ? AppColors.successBg
                           : AppColors.surface2,
-                      borderRadius: BorderRadius.circular(999),
+                      borderRadius: AppRadius.radiusPill,
                     ),
                     child: Text(
                       isReady
@@ -2151,7 +2193,7 @@ class _OrderCard extends StatelessWidget {
                         fontSize: 11,
                         fontWeight: isReady ? FontWeight.w700 : FontWeight.w500,
                         color: isReady
-                            ? const Color(0xFF15803D)
+                            ? AppColors.greenInk
                             : AppColors.inkSoft,
                       ),
                     ),
@@ -2307,21 +2349,8 @@ class _OrderCard extends StatelessWidget {
       if (liveItem != null && liveItem.isInStock) {
         cart.setQty(liveItem, item.quantity);
         addedCount++;
-      } else if (liveItem != null) {
-        unavailableCount++;
       } else {
-        // Fallback item definition if Firestore lookup fails
-        final isInstant = ['cold_drink', 'chocolate', 'chips'].contains(item.menuItemId);
-        final fallback = MenuItem(
-          id: item.menuItemId,
-          name: item.name,
-          price: item.price,
-          category: isInstant ? 'snacks' : 'dosa',
-          type: isInstant ? 'instant' : 'cooked',
-          prepMinutes: isInstant ? 0 : 6,
-        );
-        cart.setQty(fallback, item.quantity);
-        addedCount++;
+        unavailableCount++;
       }
     }
 
@@ -2335,7 +2364,7 @@ class _OrderCard extends StatelessWidget {
                 ? 'Added $addedCount items ($unavailableCount out of stock today).'
                 : 'Reordered $addedCount items with today\'s live prices! 🛒',
           ),
-          backgroundColor: unavailableCount > 0 ? const Color(0xFFD97706) : AppColors.green,
+          backgroundColor: unavailableCount > 0 ? AppColors.warning : AppColors.green,
           duration: const Duration(seconds: 3),
           action: SnackBarAction(
             label: 'View Cart',
@@ -2379,22 +2408,22 @@ class _ActiveOrderBanner extends StatelessWidget {
     final isPreparing = order.isPreparing;
 
     final Color bgColor = isReady
-        ? const Color(0xFFDCFCE7)
+        ? AppColors.successBg
         : isPaymentPending
-            ? const Color(0xFFFEF3C7)
-            : const Color(0xFFEFF6FF);
+            ? AppColors.warningBg
+            : AppColors.infoBg;
 
     final Color borderColor = isReady
-        ? const Color(0xFF86EFAC)
+        ? AppColors.green.withAlpha(100)
         : isPaymentPending
-            ? const Color(0xFFFCD34D)
-            : const Color(0xFFBFDBFE);
+            ? AppColors.warning.withAlpha(100)
+            : AppColors.info.withAlpha(100);
 
     final Color textColor = isReady
-        ? const Color(0xFF15803D)
+        ? AppColors.greenInk
         : isPaymentPending
-            ? const Color(0xFFB45309)
-            : const Color(0xFF1D4ED8);
+            ? AppColors.mustardInk
+            : AppColors.info;
 
     final String title = isReady
         ? '🎉 Token #${order.tokenNumber} is READY!'

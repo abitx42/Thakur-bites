@@ -38,14 +38,14 @@ class CanteenStatusBanner extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: const Color(0xFFFFFBEB), // Warm amber background
-              border: Border.all(color: const Color(0xFFFDE68A), width: 1.2),
+              color: AppColors.amberBg,
+              border: Border.all(color: AppColors.amberBorder, width: 1.2),
               borderRadius: BorderRadius.circular(12),
-              boxShadow: const [
+              boxShadow: [
                 BoxShadow(
-                  color: Color(0x08000000),
+                  color: AppColors.ink.withValues(alpha: 0.05),
                   blurRadius: 6,
-                  offset: Offset(0, 2),
+                  offset: const Offset(0, 2),
                 ),
               ],
             ),
@@ -55,7 +55,7 @@ class CanteenStatusBanner extends StatelessWidget {
                   width: 34,
                   height: 34,
                   decoration: const BoxDecoration(
-                    color: Color(0xFFFEF3C7),
+                    color: AppColors.warningBg,
                     shape: BoxShape.circle,
                   ),
                   child: Center(
@@ -64,7 +64,7 @@ class CanteenStatusBanner extends StatelessWidget {
                           ? Icons.block_rounded
                           : Icons.pause_circle_filled_rounded,
                       size: 20,
-                      color: const Color(0xFFD97706),
+                      color: AppColors.warning,
                     ),
                   ),
                 ),
@@ -79,7 +79,7 @@ class CanteenStatusBanner extends StatelessWidget {
                         style: AppFonts.body(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
-                          color: const Color(0xFF92400E),
+                          color: AppColors.chai,
                         ),
                       ),
                       const SizedBox(height: 2),
@@ -90,7 +90,7 @@ class CanteenStatusBanner extends StatelessWidget {
                         style: AppFonts.body(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w500,
-                          color: const Color(0xFFB45309),
+                          color: AppColors.mustardInk,
                         ),
                       ),
                     ],
@@ -100,16 +100,16 @@ class CanteenStatusBanner extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEF3C7),
+                    color: AppColors.warningBg,
                     borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: const Color(0xFFFCD34D), width: 0.8),
+                    border: Border.all(color: AppColors.amberBorder, width: 0.8),
                   ),
                   child: Text(
                     'Info',
                     style: AppFonts.mono(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w700,
-                      color: const Color(0xFF92400E),
+                      color: AppColors.chai,
                     ),
                   ),
                 ),
@@ -165,7 +165,7 @@ void showCanteenStatusSheet(
                 width: 48,
                 height: 48,
                 decoration: const BoxDecoration(
-                  color: Color(0xFFFEF3C7),
+                  color: AppColors.warningBg,
                   shape: BoxShape.circle,
                 ),
                 child: Center(
@@ -173,7 +173,7 @@ void showCanteenStatusSheet(
                     status.isHalted
                         ? Icons.storefront_outlined
                         : Icons.pause_circle_outline_rounded,
-                    color: const Color(0xFFD97706),
+                    color: AppColors.warning,
                     size: 28,
                   ),
                 ),
@@ -207,9 +207,9 @@ void showCanteenStatusSheet(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: const Color(0xFFFFFBEB),
+              color: AppColors.amberBg,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFFDE68A), width: 1),
+              border: Border.all(color: AppColors.amberBorder, width: 1),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -223,7 +223,7 @@ void showCanteenStatusSheet(
                       style: AppFonts.body(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
-                        color: const Color(0xFF92400E),
+                        color: AppColors.chai,
                       ),
                     ),
                   ],
@@ -236,7 +236,7 @@ void showCanteenStatusSheet(
                   style: AppFonts.body(
                     fontSize: 13,
                     height: 1.45,
-                    color: const Color(0xFF78350F),
+                    color: AppColors.chai,
                   ),
                 ),
               ],

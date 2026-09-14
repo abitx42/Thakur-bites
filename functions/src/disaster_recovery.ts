@@ -560,59 +560,66 @@ export const adminRestoreOperationalMode = onCall<{
       requestedByUid = txnResult.requestedBy;
 
     } else if (breakGlassToken && typeof breakGlassToken === 'string') {
-      // Path 2: Cryptographic Break-Glass — server verifies token hash
-      const challengeSnap = await db.collection('systemConfig').doc('breakGlassChallenge').get();
+      // Path 2: Cryptographic Break-Glass — server verifies token hash atomically via transaction (BUG-11)
+      const challengeRef = db.collection('systemConfig').doc('breakGlassChallenge');
+      const challengeData = await db.runTransaction(async (transaction) => {
+        const challengeSnap = await transaction.get(challengeRef);
 
-      if (!challengeSnap.exists) {
-        throw new HttpsError(
-          'failed-precondition',
-          'No break-glass challenge token has been provisioned. A security_admin must generate one first.'
-        );
-      }
+        if (!challengeSnap.exists) {
+          throw new HttpsError(
+            'failed-precondition',
+            'No break-glass challenge token has been provisioned. A security_admin must generate one first.'
+          );
+        }
 
-      const challengeData = challengeSnap.data() as BreakGlassChallenge;
+        const data = challengeSnap.data() as BreakGlassChallenge;
 
-      // Verify token has not been consumed (single-use)
-      if (challengeData.consumed) {
-        throw new HttpsError(
-          'failed-precondition',
-          'Break-glass token has already been consumed. It is single-use. A new token must be provisioned.'
-        );
-      }
+        // Verify token has not been consumed (single-use)
+        if (data.consumed) {
+          throw new HttpsError(
+            'failed-precondition',
+            'Break-glass token has already been consumed. It is single-use. A new token must be provisioned.'
+          );
+        }
 
-      // Verify token has not expired
-      const now = Timestamp.now();
-      if (now.toMillis() > challengeData.expiresAt.toMillis()) {
-        throw new HttpsError(
-          'failed-precondition',
-          'Break-glass token has expired. A new token must be provisioned.'
-        );
-      }
+        // Dual-custody enforcement: Approving admin cannot consume their own break-glass token (Four-eyes invariant)
+        if (data.createdBy === approvingAdminUid) {
+          throw new HttpsError(
+            'permission-denied',
+            'Dual-custody invariant violation: The administrator who generated the break-glass token cannot approve its consumption.'
+          );
+        }
 
-      // Cryptographic verification: compute SHA-256 of provided token and compare
-      const providedHash = createHash('sha256').update(breakGlassToken).digest('hex');
-      const storedHashBuffer = Buffer.from(challengeData.tokenHash, 'hex');
-      const providedHashBuffer = Buffer.from(providedHash, 'hex');
+        // Verify token has not expired
+        const now = Timestamp.now();
+        if (now.toMillis() > data.expiresAt.toMillis()) {
+          throw new HttpsError(
+            'failed-precondition',
+            'Break-glass token has expired. A new token must be provisioned.'
+          );
+        }
 
-      if (storedHashBuffer.length !== providedHashBuffer.length ||
-          !timingSafeEqual(storedHashBuffer, providedHashBuffer)) {
-        await logSecurityEvent({
-          eventType: 'BREAK_GLASS_TOKEN_REJECTED',
-          severity: 'CRITICAL',
-          actorUid: approvingAdminUid,
-          details: { reason: 'Cryptographic hash mismatch — invalid token provided.' },
+        // Cryptographic verification: compute SHA-256 of provided token and compare
+        const providedHash = createHash('sha256').update(breakGlassToken).digest('hex');
+        const storedHashBuffer = Buffer.from(data.tokenHash, 'hex');
+        const providedHashBuffer = Buffer.from(providedHash, 'hex');
+
+        if (storedHashBuffer.length !== providedHashBuffer.length ||
+            !timingSafeEqual(storedHashBuffer, providedHashBuffer)) {
+          throw new HttpsError(
+            'failed-precondition',
+            'Break-glass token verification failed: invalid token.'
+          );
+        }
+
+        // Atomically mark token as consumed (single-use)
+        transaction.update(challengeRef, {
+          consumed: true,
+          consumedAt: Timestamp.now(),
+          consumedBy: approvingAdminUid,
         });
-        throw new HttpsError(
-          'failed-precondition',
-          'Break-glass token verification failed: invalid token.'
-        );
-      }
 
-      // Atomically mark token as consumed (single-use)
-      await db.collection('systemConfig').doc('breakGlassChallenge').update({
-        consumed: true,
-        consumedAt: Timestamp.now(),
-        consumedBy: approvingAdminUid,
+        return data;
       });
 
       isBreakGlass = true;

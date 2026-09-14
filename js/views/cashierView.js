@@ -10,6 +10,17 @@ let selectedOrder = null;
 let tenderedAmount = null;
 let isProcessingPayment = false;
 let feedbackMessage = null;
+let cashierAudioCtx = null;
+
+function getCashierAudioContext() {
+  if (!cashierAudioCtx || cashierAudioCtx.state === 'closed') {
+    cashierAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (cashierAudioCtx.state === 'suspended') {
+    cashierAudioCtx.resume().catch(() => {});
+  }
+  return cashierAudioCtx;
+}
 
 export function renderCashierView(container) {
   if (unsubscribeCashOrders) {
@@ -19,11 +30,20 @@ export function renderCashierView(container) {
 
   function playSound(isSuccess) {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = getCashierAudioContext();
+      if (!ctx) return;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
+
+      osc.onended = () => {
+        try {
+          gain.disconnect();
+          osc.disconnect();
+        } catch (_) {}
+      };
+
       if (isSuccess) {
         osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
         osc.frequency.setValueAtTime(880, ctx.currentTime + 0.1); // A5
@@ -46,6 +66,9 @@ export function renderCashierView(container) {
   function render() {
     const cleanSearch = (cashierSearchQuery || '').trim().toLowerCase();
     const filteredOrders = currentCashOrders.filter(o => {
+      if (o.status === 'cancelled' || o.status === 'expired' || o.paymentStatus === 'cancelled' || o.paymentStatus === 'expired') {
+        return false;
+      }
       if (!cleanSearch) return true;
       const tokenMatch = (o.tokenNumber || '').toLowerCase().includes(cleanSearch);
       const idMatch = (o.id || o.orderId || '').toLowerCase().includes(cleanSearch);
@@ -216,9 +239,8 @@ export function renderCashierView(container) {
                       { label: '₹500', val: 500 },
                     ].filter(c => c.label === 'Exact' || c.val >= orderTotal).map(chip => `
                       <button 
-                        class="quick-tender-btn ${currentTendered === chip.val ? 'active' : ''}" 
+                        class="btn ${currentTendered === chip.val ? 'btn--primary' : 'btn--secondary'} btn--sm quick-tender-btn" 
                         data-val="${chip.val}"
-                        style="padding: 6px 14px; border-radius: 8px; border: 1.5px solid ${currentTendered === chip.val ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${currentTendered === chip.val ? 'var(--brand-red)' : 'var(--bg-surface)'}; color: ${currentTendered === chip.val ? '#FFF' : 'var(--ink-primary)'}; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;"
                       >
                         ${chip.label}
                       </button>
@@ -244,8 +266,9 @@ export function renderCashierView(container) {
               <div>
                 <button 
                   id="confirm-cash-settle-btn" 
+                  class="btn ${canSettle ? 'btn--success' : 'btn--secondary'} btn--xl ${isProcessingPayment ? 'is-loading' : ''}"
                   ${!canSettle ? 'disabled' : ''}
-                  style="width: 100%; padding: 16px; border-radius: 12px; background: ${canSettle ? '#16A34A' : '#94A3B8'}; color: #FFF; border: none; font-family: var(--font-display); font-size: 1.6rem; letter-spacing: 0.05em; cursor: ${canSettle ? 'pointer' : 'not-allowed'}; box-shadow: ${canSettle ? '0 4px 12px rgba(22,163,74,0.3)' : 'none'}; transition: all 0.15s ease;"
+                  style="width: 100%; font-family: var(--font-display); font-size: 1.6rem; letter-spacing: 0.05em;"
                 >
                   ${isProcessingPayment ? 'PROCESSING LEDGER COMMIT...' : `✓ CONFIRM CASH ₹${orderTotal.toFixed(2)} →`}
                 </button>
@@ -357,17 +380,35 @@ export function renderCashierView(container) {
   );
 
   unsubscribeCashOrders = onSnapshot(q, (snapshot) => {
-    currentCashOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    currentCashOrders = snapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .filter(o => o.status !== 'cancelled' && o.status !== 'expired' && o.paymentStatus !== 'cancelled' && o.paymentStatus !== 'expired');
     // Client-side fallback sort by creation time
     currentCashOrders.sort((a, b) => {
       const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
       const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
       return timeA - timeB;
     });
+    if (selectedOrder && !currentCashOrders.some(o => (o.id || o.orderId) === (selectedOrder.id || selectedOrder.orderId))) {
+      selectedOrder = null;
+      tenderedAmount = null;
+    }
     render();
   }, (err) => {
     console.warn('Cashier orders listener notice:', err);
   });
 
   render();
+}
+
+export function cleanupCashierView() {
+  if (unsubscribeCashOrders) {
+    unsubscribeCashOrders();
+    unsubscribeCashOrders = null;
+  }
+  if (cashierAudioCtx) {
+    try { cashierAudioCtx.close(); } catch (_) {}
+    cashierAudioCtx = null;
+  }
+  currentCashOrders = [];
 }

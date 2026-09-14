@@ -316,6 +316,21 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
     throw new HttpsError('invalid-argument', 'Action, challengeId, challengeNonce, and reason are required.');
   }
 
+  if (action === 'UNFREEZE_PLATFORM') {
+    const activeCriticalSnap = await db
+      .collection('integrityAnomalies')
+      .where('status', 'in', ['ACTIVE', 'REPAIR_ATTEMPTED'])
+      .where('severity', '==', 'CRITICAL')
+      .get();
+
+    if (!activeCriticalSnap.empty) {
+      throw new HttpsError(
+        'failed-precondition',
+        `Unfreeze rejected: ${activeCriticalSnap.size} unresolved or unverified CRITICAL integrity anomalies remain. Resolve all critical anomalies before restoring platform.`
+      );
+    }
+  }
+
   const sessionRef = db.collection('stepUpSessions').doc(challengeId);
   const systemConfigRef = db.collection('systemConfig').doc('global');
   const publicStatusRef = db.collection('publicSystemStatus').doc('current');

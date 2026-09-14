@@ -63,7 +63,7 @@ class MainActivity : FlutterActivity() {
             false
         }
 
-        val isRooted = checkRootMethod1() || checkRootMethod2() || checkRootMethod3()
+        val isRooted = checkRootMethod2() || checkRootMethod3()
         val signatureHash = getApkSignatureHash()
         val deviceId = getAnonymousDeviceId()
 

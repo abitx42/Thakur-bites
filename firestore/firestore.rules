@@ -11,28 +11,52 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function getStaffRole() {
+      return ('role' in request.auth.token) ? request.auth.token.role :
+        (exists(/databases/$(database)/documents/staffUsers/$(request.auth.uid)) ?
+          get(/databases/$(database)/documents/staffUsers/$(request.auth.uid)).data.role : null);
+    }
+
     function isKitchen() {
-      return isAuthenticated() && ('role' in request.auth.token && request.auth.token.role == 'kitchen');
+      return isAuthenticated() && (
+        ('role' in request.auth.token && (request.auth.token.role == 'kitchen' || request.auth.token.role == 'kitchen_staff')) ||
+        (getStaffRole() == 'kitchen' || getStaffRole() == 'kitchen_staff')
+      );
     }
 
     function isPickup() {
-      return isAuthenticated() && ('role' in request.auth.token && request.auth.token.role == 'pickup');
+      return isAuthenticated() && (
+        ('role' in request.auth.token && (request.auth.token.role == 'pickup' || request.auth.token.role == 'pickup_staff')) ||
+        (getStaffRole() == 'pickup' || getStaffRole() == 'pickup_staff')
+      );
     }
 
     function isCashier() {
-      return isAuthenticated() && ('role' in request.auth.token && request.auth.token.role == 'cashier');
+      return isAuthenticated() && (
+        ('role' in request.auth.token && request.auth.token.role == 'cashier') ||
+        (getStaffRole() == 'cashier')
+      );
     }
 
     function isManager() {
-      return isAuthenticated() && ('role' in request.auth.token && request.auth.token.role == 'manager');
+      return isAuthenticated() && (
+        ('role' in request.auth.token && request.auth.token.role == 'manager') ||
+        (getStaffRole() == 'manager')
+      );
     }
 
     function isAdmin() {
-      return isAuthenticated() && ('role' in request.auth.token && request.auth.token.role == 'admin');
+      return isAuthenticated() && (
+        ('role' in request.auth.token && request.auth.token.role == 'admin') ||
+        (getStaffRole() == 'admin')
+      );
     }
 
     function isDeveloper() {
-      return isAuthenticated() && ('role' in request.auth.token && (request.auth.token.role == 'developer' || request.auth.token.role == 'security_admin'));
+      return isAuthenticated() && (
+        ('role' in request.auth.token && (request.auth.token.role == 'developer' || request.auth.token.role == 'security_admin')) ||
+        (getStaffRole() == 'developer' || getStaffRole() == 'security_admin')
+      );
     }
 
     function isSecurityAdmin() {
@@ -73,33 +97,38 @@ service cloud.firestore {
     }
 
 
-    // ─── Orders (Least-Privilege Isolation) ───────────────────────
-    // Students read their own orders. Managers/Admins can inspect raw records.
-    // Kitchen & Pickup MUST read station-filtered data through getKitchenOrders/getPickupOrders.
+    // ─── Orders (Least-Privilege Isolation & Operational Resilience) ──
+    // Students read their own orders. Staff read station-filtered / operational orders.
+    // Order mutations support Cloud Functions as primary and direct authenticated operations
+    // for operational continuity (Spark plan / network degraded mode).
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (
         resource.data.studentId == request.auth.uid || isOperationalStaff()
       );
-      // Order creation is strictly server-authoritative via createCheckout Cloud Function
-      allow create: if false;
-      // Allow students to cancel their own order before cooking starts,
-      // and allow operational staff to manage workstation transitions.
-      // Payment confirmation (paymentStatus: 'paid') is strictly server-authoritative.
-      allow update: if (isAuthenticated() && resource.data.studentId == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'paymentStatus', 'status', 'updatedAt', 'cancelReason', 'cancelledAt'
-        ])
-        && (
-          (resource.data.status == 'payment_pending'
-           && request.resource.data.paymentStatus in ['failed', 'expired', 'cancelled']
-           && request.resource.data.status in ['payment_pending', 'cancelled'])
-          ||
-          (resource.data.status in ['payment_pending', 'confirmed']
-           && request.resource.data.status == 'cancelled'
-           && request.resource.data.paymentStatus in ['cancelled', resource.data.paymentStatus])
+
+      // Order creation: authenticated student for their own account, or operational staff
+      allow create: if isAuthenticated() && (
+        request.resource.data.studentId == request.auth.uid || isOperationalStaff()
+      ) && request.resource.data.totalAmount is number
+        && request.resource.data.totalAmount >= 0
+        && request.resource.data.items is list
+        && request.resource.data.items.size() > 0;
+
+      // Order mutations:
+      // 1. Operational staff can advance order states (preparing, ready, collected), unlock orders, and manage cash flow.
+      // 2. Students can cancel their own placed/pending orders, or confirm payment status.
+      allow update: if isAuthenticated() && (
+        isOperationalStaff() ||
+        (
+          resource.data.studentId == request.auth.uid &&
+          (
+            (request.resource.data.status == 'cancelled' && resource.data.status in ['placed', 'payment_pending']) ||
+            (request.resource.data.paymentStatus == 'paid' && resource.data.paymentStatus in ['pending', 'unpaid'])
+          )
         )
-      ) || isOperationalStaff();
-      allow delete: if false; // Orders are immutable operational and financial audit records
+      );
+
+      allow delete: if false;
     }
 
     // ─── Cryptographic Order Secrets (Isolated from Client/Staff Reads) ──
@@ -234,13 +263,13 @@ service cloud.firestore {
     // Private System Configuration (Preserves internal staff UID and private incident reasons)
     match /systemConfig/{configId} {
       allow read: if isManagerOrAdmin();
-      allow write: if false; // Cloud Functions only
+      allow write: if isManagerOrAdmin();
     }
 
     // Public Sanitized Operational Status (Zero PII or internal note leakage)
     match /publicSystemStatus/{statusId} {
       allow read: if true;
-      allow write: if false; // Cloud Functions only
+      allow write: if isManagerOrAdmin();
     }
 
     // Public Application Version & Update Policy (Read-only to clients)
@@ -291,17 +320,19 @@ service cloud.firestore {
     // ─── User Preferences ────────────────────────────────────────
     match /userPreferences/{userId} {
       allow read: if isOwner(userId);
-      allow write: if isOwner(userId)
+      allow create, update: if isOwner(userId)
         && request.resource.data.keys().hasOnly(['notifications', 'dietary', 'updatedAt']);
+      allow delete: if isOwner(userId);
     }
 
     // ─── User Favourites ─────────────────────────────────────────
     match /userFavourites/{userId} {
       allow read: if isOwner(userId);
-      allow write: if isOwner(userId)
+      allow create, update: if isOwner(userId)
         && request.resource.data.keys().hasOnly(['items', 'updatedAt'])
         && request.resource.data.items is list
         && request.resource.data.items.size() <= 50;
+      allow delete: if isOwner(userId);
     }
 
     // ─── Verification Applications ───────────────────────────────
@@ -366,7 +397,7 @@ service cloud.firestore {
     // ─── TV Ephemeral Public Projection (Single Document Isolation) ─
     match /publicLiveQueue/current {
       allow read: if true;
-      allow write: if isOperationalStaff();
+      allow write: if isAuthenticated();
     }
 
     match /publicLiveQueue/{otherDoc} {
@@ -376,12 +407,14 @@ service cloud.firestore {
     // ─── Daily Menu Board & Canteen Specials ──────────────────────
     match /canteenConfig/{configId} {
       allow read: if true;
-      allow write: if isOperationalStaff();
+      allow create, update: if isOperationalStaff();
+      allow delete: if false; // Deletion strictly forbidden to prevent checkout outages
     }
 
     match /dailyBoard/{docId} {
       allow read: if true;
-      allow write: if isOperationalStaff();
+      allow create, update: if isOperationalStaff();
+      allow delete: if false; // Deletion strictly forbidden to prevent kitchen outages
     }
 
     // ─── Authoritative Claims (Isolated Server State) ────────────

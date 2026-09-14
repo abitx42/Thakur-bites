@@ -195,8 +195,8 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
     if (current.status === 'cancelled' && !cancellation) {
       throw new HttpsError('failed-precondition', 'Order is already cancelled.');
     }
-    if (current.status === 'collected' && !cancellation) {
-      throw new HttpsError('failed-precondition', 'Order is already collected.');
+    if (current.status === 'collected' && !cancellation && actorRole !== 'admin' && actorRole !== 'manager') {
+      throw new HttpsError('failed-precondition', 'Order is already collected. Only managers or administrators can authorize returns on collected orders.');
     }
     if (current.paymentStatus !== 'paid' && current.paymentStatus !== 'partially_refunded') {
       throw new HttpsError('failed-precondition', 'Order is not eligible for a refund.');

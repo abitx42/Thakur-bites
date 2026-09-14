@@ -94,11 +94,14 @@ export const createMealRating = onCall<MealRatingRequest>(async (request) => {
     const itemSnap = await transaction.get(itemRef);
     if (itemSnap.exists) {
       const itemData = itemSnap.data()!;
-      const currentCount = Number(itemData.ratingCount || 0);
-      const currentTotal = Number(itemData.ratingTotal || 0);
+      const rawCount = Number(itemData.ratingCount || 0);
+      const rawTotal = Number(itemData.ratingTotal || 0);
 
-      const newCount = currentCount + 1;
-      const newTotal = currentTotal + rating;
+      const safeCount = (Number.isSafeInteger(rawCount) && rawCount >= 0) ? rawCount : 0;
+      const safeTotal = (Number.isFinite(rawTotal) && rawTotal >= 0) ? rawTotal : 0;
+
+      const newCount = safeCount + 1;
+      const newTotal = safeTotal + rating;
       const newAverage = Number((newTotal / newCount).toFixed(2));
 
       transaction.update(itemRef, {

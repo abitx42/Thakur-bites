@@ -22,12 +22,10 @@ class PreferencesService extends ChangeNotifier {
     return _db.collection('userFavourites').doc(uid).snapshots().map((snap) {
       if (!snap.exists || snap.data() == null) {
         _cachedFavourites = {};
-        notifyListeners();
         return {};
       }
       final items = (snap.data()?['items'] as List<dynamic>?)?.map((e) => e.toString()).toSet() ?? {};
       _cachedFavourites = items;
-      notifyListeners();
       return items;
     });
   }
@@ -85,6 +83,15 @@ class PreferencesService extends ChangeNotifier {
       }
       return UserPreferences.fromFirestore(uid, snap.data()!);
     });
+  }
+
+  /// Get user preferences
+  Future<UserPreferences> getPreferences(String uid) async {
+    final snap = await _db.collection('userPreferences').doc(uid).get();
+    if (!snap.exists || snap.data() == null) {
+      return UserPreferences(uid: uid);
+    }
+    return UserPreferences.fromFirestore(uid, snap.data()!);
   }
 
   /// Save preferences to Firestore

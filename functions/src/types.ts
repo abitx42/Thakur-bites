@@ -59,6 +59,8 @@ export interface CheckoutRequest {
   readyMadePreference?: string;
   deviceId?: string;
   appVersion?: string;
+  dietaryPreferences?: string[];
+  dietaryNotes?: string;
 }
 
 export interface OrderItemSnapshot {
@@ -111,6 +113,8 @@ export interface OrderDocument {
   priorityLevel?: PriorityLevel;
   priorityReason?: string;
   deviceId?: string | null;
+  dietaryPreferences?: string[];
+  dietaryNotes?: string;
   updatedAt?: Timestamp;
 }
 

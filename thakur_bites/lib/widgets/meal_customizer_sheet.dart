@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/daily_board.dart';
 import '../models/menu_item.dart';
 import '../providers/cart_provider.dart';
+import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 
 /// Modal bottom sheet allowing students to customize their daily meal
@@ -44,7 +45,7 @@ class MealCustomizerSheet extends StatefulWidget {
 class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
   late String _selectedBread;
   late String _selectedGravy;
-  final TextEditingController _noteController = TextEditingController();
+  late final Stream<DailyBoard> _dailyBoardStream;
 
   bool get _isThali =>
       widget.item.id.toLowerCase().contains('thali') ||
@@ -52,9 +53,9 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
       widget.item.subCategory.toLowerCase().contains('thali');
 
   @override
-  @override
   void initState() {
     super.initState();
+    _dailyBoardStream = FirestoreService().dailyBoardStream();
     final board = widget.dailyBoard;
     // Auto-selection rule:
     // If both available: ask student, default selection is 4 Tawa Rotis
@@ -82,21 +83,11 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
     }
   }
 
-  @override
-  void dispose() {
-    _noteController.dispose();
-    super.dispose();
-  }
-
   String _buildCustomizationSummary() {
     final parts = <String>[];
     parts.add(_selectedBread);
     if (!_isThali && _selectedGravy.isNotEmpty) {
       parts.add(_selectedGravy);
-    }
-    final note = _noteController.text.trim();
-    if (note.isNotEmpty) {
-      parts.add(note);
     }
     return parts.join(' • ');
   }
@@ -112,9 +103,9 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
       margin: const EdgeInsets.fromLTRB(20, 4, 20, 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFFBEB),
+        color: AppColors.amberBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFFDE68A), width: 1.5),
+        border: Border.all(color: AppColors.amberBorder, width: 1.5),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -122,7 +113,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
           Container(
             padding: const EdgeInsets.all(5),
             decoration: const BoxDecoration(
-              color: Color(0xFFFEF3C7),
+              color: AppColors.warningBg,
               shape: BoxShape.circle,
             ),
             child: Text(
@@ -144,7 +135,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                       style: AppFonts.mono(
                         fontSize: 10.5,
                         fontWeight: FontWeight.w800,
-                        color: const Color(0xFF92400E),
+                        color: AppColors.chai,
                         letterSpacing: 0.4,
                       ),
                     ),
@@ -152,7 +143,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFEE2E2),
+                        color: AppColors.dangerBg,
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
@@ -160,7 +151,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                         style: AppFonts.mono(
                           fontSize: 9,
                           fontWeight: FontWeight.w700,
-                          color: const Color(0xFF991B1B),
+                          color: AppColors.redDeep,
                         ),
                       ),
                     ),
@@ -172,7 +163,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                   style: AppFonts.body(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: const Color(0xFF78350F),
+                    color: AppColors.chai,
                     height: 1.25,
                   ),
                 ),
@@ -181,7 +172,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                   'Order will be prepared with the available bread so there is no delay at pickup.',
                   style: AppFonts.body(
                     fontSize: 11,
-                    color: const Color(0xFFB45309),
+                    color: AppColors.mustardInk,
                     height: 1.2,
                   ),
                 ),
@@ -195,9 +186,38 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final board = widget.dailyBoard;
+    return StreamBuilder<DailyBoard>(
+      stream: _dailyBoardStream,
+      initialData: widget.dailyBoard,
+      builder: (context, snapshot) {
+        final board = snapshot.data ?? widget.dailyBoard;
 
-    return Container(
+        // Auto-heal selected bread if canteen updated availability while sheet was open
+        if (_selectedBread == '4 Tawa Rotis' && !board.rotiAvailable) {
+          if (board.puriAvailable) {
+            _selectedBread = '4 Fresh Puris';
+          } else {
+            _selectedBread = 'No Breads Available';
+          }
+        } else if (_selectedBread == '4 Fresh Puris' && !board.puriAvailable) {
+          if (board.rotiAvailable) {
+            _selectedBread = '4 Tawa Rotis';
+          } else {
+            _selectedBread = 'No Breads Available';
+          }
+        } else if (_selectedBread == 'No Breads Available') {
+          if (board.rotiAvailable) {
+            _selectedBread = '4 Tawa Rotis';
+          } else if (board.puriAvailable) {
+            _selectedBread = '4 Fresh Puris';
+          }
+        }
+
+        final isBreadSelectionValid = board.hasAnyBread &&
+            ((_selectedBread == '4 Tawa Rotis' && board.rotiAvailable) ||
+             (_selectedBread == '4 Fresh Puris' && board.puriAvailable));
+
+        return Container(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom + 16,
       ),
@@ -307,7 +327,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                     fontWeight: FontWeight.w700,
                     color: !board.hasAnyBread
                         ? AppColors.red
-                        : (!board.bothBreadsAvailable ? const Color(0xFFB45309) : AppColors.inkSoft),
+                        : (!board.bothBreadsAvailable ? AppColors.mustardInk : AppColors.inkSoft),
                     letterSpacing: 0.5,
                   ),
                 ),
@@ -333,7 +353,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                             'Chapatis are finished for today! Your meal will be served with fresh puris.',
                             style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w600),
                           ),
-                          backgroundColor: const Color(0xFFB45309),
+                          backgroundColor: AppColors.mustardInk,
                           duration: const Duration(seconds: 3),
                           behavior: SnackBarBehavior.floating,
                         ),
@@ -363,7 +383,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                             'Puris are finished for today! Your meal will be served with fresh tawa rotis.',
                             style: AppFonts.body(fontSize: 13, fontWeight: FontWeight.w600),
                           ),
-                          backgroundColor: const Color(0xFFB45309),
+                          backgroundColor: AppColors.mustardInk,
                           duration: const Duration(seconds: 3),
                           behavior: SnackBarBehavior.floating,
                         ),
@@ -461,36 +481,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 16),
                 ],
-
-                // Optional kitchen note
-                TextField(
-                  controller: _noteController,
-                  maxLength: 50,
-                  style: AppFonts.body(fontSize: 13, color: AppColors.ink),
-                  decoration: InputDecoration(
-                    hintText: 'Special kitchen note (e.g. Less spicy, no pickle)',
-                    hintStyle: AppFonts.body(fontSize: 12.5, color: AppColors.inkSoft),
-                    counterText: '',
-                    filled: true,
-                    fillColor: AppColors.surface2,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: AppColors.line),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: AppColors.line),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: AppColors.ink),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  ),
-                ),
-                const SizedBox(height: 12),
               ],
             ),
           ),
@@ -499,7 +490,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
             child: ElevatedButton(
-              onPressed: !board.hasAnyBread
+              onPressed: !isBreadSelectionValid
                   ? null
                   : () {
                       final customization = _buildCustomizationSummary();
@@ -536,17 +527,21 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
               child: Text(
                 !board.hasAnyBread
                     ? 'All Breads Sold Out for Today'
-                    : 'Add to Cart • ₹${widget.item.price.toInt()}',
+                    : (!isBreadSelectionValid
+                        ? 'Selected Bread Unavailable'
+                        : 'Add to Cart • ₹${widget.item.price.toInt()}'),
                 style: AppFonts.body(
                   fontSize: 14.5,
                   fontWeight: FontWeight.w700,
-                  color: !board.hasAnyBread ? AppColors.inkSoft : Colors.white,
+                  color: !isBreadSelectionValid ? AppColors.inkSoft : Colors.white,
                 ),
               ),
             ),
           ),
         ],
       ),
+    );
+      },
     );
   }
 
@@ -571,12 +566,12 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
         decoration: BoxDecoration(
           color: !isEnabled
-              ? const Color(0xFFF8FAFC)
+              ? AppColors.bg
               : (effectiveSelected ? AppColors.surface2 : AppColors.surface),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: !isEnabled
-                ? const Color(0xFFE2E8F0)
+                ? AppColors.line
                 : (effectiveSelected ? AppColors.ink : AppColors.line),
             width: effectiveSelected ? 1.8 : 1.0,
           ),
@@ -608,8 +603,8 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                           padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                           decoration: BoxDecoration(
                             color: !isEnabled
-                                ? const Color(0xFFFEE2E2)
-                                : const Color(0xFFDCFCE7),
+                                ? AppColors.dangerBg
+                                : AppColors.successBg,
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
@@ -618,8 +613,8 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                               fontSize: 9.5,
                               fontWeight: FontWeight.w700,
                               color: !isEnabled
-                                  ? const Color(0xFFDC2626)
-                                  : const Color(0xFF166534),
+                                  ? AppColors.danger
+                                  : AppColors.greenInk,
                             ),
                           ),
                         ),
@@ -631,7 +626,7 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                     subtitle,
                     style: AppFonts.body(
                       fontSize: 11.5,
-                      color: isEnabled ? AppColors.inkSoft : const Color(0xFF94A3B8),
+                      color: isEnabled ? AppColors.inkSoft : AppColors.muted,
                     ),
                   ),
                 ],
@@ -644,16 +639,16 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                 shape: BoxShape.circle,
                 border: Border.all(
                   color: !isEnabled
-                      ? const Color(0xFFCBD5E1)
+                      ? AppColors.mutedBorder
                       : (effectiveSelected ? AppColors.ink : AppColors.line),
                   width: 2,
                 ),
                 color: !isEnabled
-                    ? const Color(0xFFF1F5F9)
+                    ? AppColors.mutedBg
                     : (effectiveSelected ? AppColors.ink : Colors.transparent),
               ),
               child: !isEnabled
-                  ? const Center(child: Icon(Icons.block, size: 11, color: Color(0xFF94A3B8)))
+                  ? const Center(child: Icon(Icons.block, size: 11, color: AppColors.muted))
                   : (effectiveSelected
                       ? const Icon(Icons.check, size: 13, color: Colors.white)
                       : null),

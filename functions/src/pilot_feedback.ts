@@ -92,6 +92,11 @@ export const submitPilotStudentFeedback = onCall<PilotStudentFeedbackRequest>(as
       throw new HttpsError('permission-denied', 'Cannot submit feedback on another student’s order.');
     }
 
+    // Invariant BUG-07: Feedback can only be submitted on collected orders
+    if (orderData.status !== 'collected') {
+      throw new HttpsError('failed-precondition', 'Pilot feedback can only be submitted once the order has been collected.');
+    }
+
     const cleanComment = comment.trim().slice(0, 280);
     const validTags = tags.filter((t) =>
       ['payment_seamless', 'payment_problem', 'app_confusing', 'order_delayed', 'food_not_found', 'great_experience'].includes(t)
@@ -123,10 +128,19 @@ export const submitPilotStaffFeedback = onCall<PilotStaffFeedbackRequest>(async 
   }
 
   const staffUid = request.auth.uid;
-  const { role, station = 'general', screenClarity, queueManageability, notes = '' } = request.data;
+  await enforceRateLimit(staffUid, 'rating');
 
-  if (!role || !screenClarity || screenClarity < 1 || screenClarity > 5 || !queueManageability) {
-    throw new HttpsError('invalid-argument', 'Valid role, screenClarity (1-5), and queueManageability are required.');
+  // Verify staff capability / role (BUG-08)
+  const callerRole = (request.auth.token.role as string | undefined) || '';
+  if (!['kitchen', 'pickup', 'cashier', 'manager', 'admin'].includes(callerRole)) {
+    throw new HttpsError('permission-denied', 'Staff authorization with valid operational role is required.');
+  }
+
+  const { station = 'general', screenClarity, queueManageability, notes = '' } = request.data || {};
+  const role = callerRole;
+
+  if (!screenClarity || screenClarity < 1 || screenClarity > 5 || !queueManageability) {
+    throw new HttpsError('invalid-argument', 'Valid screenClarity (1-5) and queueManageability are required.');
   }
 
   const feedbackId = `fb_staff_${Date.now()}_${staffUid.slice(0, 6)}`;

@@ -1,6 +1,10 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 
+export interface PublicConfirmedTicket {
+  token: string;
+}
+
 export interface PublicPreparingTicket {
   token: string;
   estimatedMinutes: number | null;
@@ -11,8 +15,10 @@ export interface PublicReadyTicket {
 }
 
 export interface PublicLiveQueueDocument {
+  confirmedTokens: string[];
   readyTokens: string[];
   preparingTokens: string[];
+  confirmed: PublicConfirmedTicket[];
   preparing: PublicPreparingTicket[];
   ready: PublicReadyTicket[];
   activeCount: number;
@@ -30,23 +36,38 @@ export function buildPublicQueuePayload(
     status?: string;
     estimatedMinutes?: number | null;
     createdAt?: Timestamp | Date;
+    isOnlyReadyMade?: boolean;
   }>
 ): PublicLiveQueueDocument {
+  const confirmed: PublicConfirmedTicket[] = [];
   const preparing: PublicPreparingTicket[] = [];
   const ready: PublicReadyTicket[] = [];
+  const confirmedTokens: string[] = [];
   const readyTokens: string[] = [];
   const preparingTokens: string[] = [];
 
-  for (const o of orders) {
+  // Chronological FIFO sorting: display tickets in order of creation
+  const getTimeMs = (raw: Timestamp | Date | undefined): number => {
+    if (!raw) return 0;
+    if (raw instanceof Date) return raw.getTime();
+    if (typeof (raw as any).toMillis === 'function') return (raw as any).toMillis();
+    return 0;
+  };
+
+  const sortedOrders = [...orders].sort((a, b) => getTimeMs(a.createdAt) - getTimeMs(b.createdAt));
+
+  for (const o of sortedOrders) {
     const token = (o.tokenNumber || '').trim();
     if (!token) continue;
 
     const status = (o.status || '').toLowerCase();
+    const isOnlyReadyMade = o.isOnlyReadyMade === true;
 
-    if (status === 'ready') {
+    // Pure ready-made orders bypass cooking and appear directly in Ready for Pickup on TV
+    if (status === 'ready' || (isOnlyReadyMade && ['confirmed', 'placed', 'preparing'].includes(status))) {
       ready.push({ token });
       readyTokens.push(token);
-    } else if (['preparing', 'confirmed', 'placed'].includes(status)) {
+    } else if (status === 'preparing') {
       preparing.push({
         token,
         estimatedMinutes: typeof o.estimatedMinutes === 'number' && o.estimatedMinutes > 0
@@ -54,17 +75,36 @@ export function buildPublicQueuePayload(
           : null,
       });
       preparingTokens.push(token);
+    } else if (['confirmed', 'placed'].includes(status)) {
+      confirmed.push({ token });
+      confirmedTokens.push(token);
     }
   }
 
   return {
+    confirmedTokens,
     readyTokens,
     preparingTokens,
+    confirmed,
     preparing,
     ready,
-    activeCount: readyTokens.length + preparingTokens.length,
+    activeCount: readyTokens.length + preparingTokens.length + confirmedTokens.length,
     updatedAt: Timestamp.now(),
   };
+}
+
+/**
+ * Computes midnight IST (Asia/Kolkata) as a Firestore Timestamp
+ */
+function getTodayStartTimestamp(): Timestamp {
+  const dateStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const istStart = new Date(`${dateStr}T00:00:00+05:30`);
+  return Timestamp.fromDate(istStart);
 }
 
 /**
@@ -73,9 +113,11 @@ export function buildPublicQueuePayload(
  */
 export async function updatePublicLiveQueueProjection(db: admin.firestore.Firestore): Promise<void> {
   try {
+    const startOfDay = getTodayStartTimestamp();
     const activeOrdersSnap = await db
       .collection('orders')
       .where('status', 'in', ['placed', 'confirmed', 'preparing', 'ready'])
+      .where('createdAt', '>=', startOfDay)
       .get();
 
     const ordersData = activeOrdersSnap.docs.map((doc) => doc.data());

@@ -285,6 +285,7 @@ class AuthService {
       if (profile.phone != null) 'phone': profile.phone!.trim(),
       if (profile.rollNo != null) 'rollNo': profile.rollNo!.trim().toUpperCase(),
       if (profile.department != null) 'department': profile.department!.trim(),
+      if (profile.year != null) 'year': profile.year!.trim(),
       if (profile.photoURL != null) 'photoURL': profile.photoURL!,
       'updatedAt': Timestamp.now(),
     };

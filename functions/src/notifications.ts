@@ -96,6 +96,11 @@ export const onOrderStatusNotification = onDocumentUpdated('orders/{orderId}', a
   const studentId = afterData.studentId;
   const tokenNumber = afterData.tokenNumber || 'TB-XXX';
 
+  // Guard against guest orders or POS counter walk-ins with no registered studentId (BUG-02)
+  if (!studentId || typeof studentId !== 'string' || !studentId.trim()) {
+    return;
+  }
+
   const notification = buildOrderNotification(orderId, tokenNumber, fromStatus, toStatus);
   if (!notification) return;
 
@@ -127,7 +132,7 @@ export const onOrderStatusNotification = onDocumentUpdated('orders/{orderId}', a
     const fcmTokens: string[] = userDoc.data()?.fcmTokens || [];
 
     if (fcmTokens.length > 0) {
-      await admin.messaging().sendEachForMulticast({
+      const batchResponse = await admin.messaging().sendEachForMulticast({
         tokens: fcmTokens,
         notification: {
           title: notification.title,
@@ -155,6 +160,26 @@ export const onOrderStatusNotification = onDocumentUpdated('orders/{orderId}', a
           },
         },
       });
+
+      // Prune dead/unregistered FCM tokens (BUG-03)
+      const deadTokens: string[] = [];
+      batchResponse.responses.forEach((resp, index) => {
+        if (!resp.success && resp.error) {
+          const errCode = resp.error.code;
+          if (
+            errCode === 'messaging/registration-token-not-registered' ||
+            errCode === 'messaging/invalid-registration-token'
+          ) {
+            deadTokens.push(fcmTokens[index]);
+          }
+        }
+      });
+
+      if (deadTokens.length > 0) {
+        await db.collection('users').doc(studentId).update({
+          fcmTokens: admin.firestore.FieldValue.arrayRemove(...deadTokens),
+        }).catch(() => {});
+      }
     }
   } catch (err: any) {
     await logSecurityEvent({

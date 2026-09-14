@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import { PaymentRecord, FinancialTransactionRecord } from './types';
 import { commitInventoryInTransaction } from './inventory_reservation';
 import { logSecurityEvent } from './security_logger';
+import { updatePublicLiveQueueProjection } from './tv_projection';
 
 const db = admin.firestore();
 
@@ -23,7 +24,7 @@ export interface FinalizePaymentResult {
   orderId: string;
   tokenNumber: string;
   amountPaise: number;
-  status: 'confirmed' | 'cancelled';
+  status: 'confirmed' | 'ready' | 'cancelled';
   orphaned?: boolean;
 }
 
@@ -55,7 +56,7 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
   const finTxId = isCash ? `cash_fin_${orderId}` : `pay_fin_${gatewayPaymentId}`;
   const finTxRef = db.collection('financialTransactions').doc(finTxId);
 
-  return await db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     // ═════════════════════════════════════════════════════════════
     // PHASE 1: ALL READS FIRST (Strict Firestore Transaction Invariant)
     // ═════════════════════════════════════════════════════════════
@@ -83,7 +84,7 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
         orderId,
         tokenNumber: orderData.tokenNumber || '',
         amountPaise: expectedPaise,
-        status: orderData.status === 'cancelled' ? 'cancelled' : 'confirmed',
+        status: (orderData.status === 'cancelled' ? 'cancelled' : 'confirmed') as 'confirmed' | 'cancelled',
         orphaned: orderData.status === 'cancelled',
       };
     }
@@ -151,11 +152,12 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
 
       const orphanSnap = await transaction.get(orphanRef);
       if (!orphanSnap.exists) {
+        const isCash = source === 'cashier_counter';
         const orphanRecord = {
           paymentId,
           orderId,
           studentId: orderData.studentId || 'unknown',
-          gateway: source === 'webhook' ? 'razorpay_webhook' : 'razorpay_direct',
+          gateway: isCash ? 'counter_cash' : (source === 'webhook' ? 'razorpay_webhook' : 'razorpay_direct'),
           gatewayOrderId,
           gatewayPaymentId,
           amountPaise: expectedPaise,
@@ -163,7 +165,7 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
           currency: expectedCurrency,
           orderStatusAtCapture: orderData.status,
           capturedAt: now,
-          refundStatus: 'REFUND_QUEUED',
+          refundStatus: isCash ? 'MANUAL_CASH_REFUND_REQUIRED' : 'REFUND_QUEUED',
         };
         transaction.set(orphanRef, orphanRecord);
 
@@ -176,7 +178,7 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
           currency: 'INR',
           postings: [
             {
-              account: 'GATEWAY_RECEIVABLE',
+              account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE',
               debitPaise: expectedPaise,
               creditPaise: 0,
             },
@@ -221,7 +223,7 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
         orderId,
         tokenNumber: orderData.tokenNumber || '',
         amountPaise: expectedPaise,
-        status: 'confirmed' as const,
+        status: (orderData.status || (orderData.isOnlyReadyMade === true ? 'ready' : 'confirmed')) as 'confirmed' | 'ready',
       };
     }
 
@@ -275,10 +277,11 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     };
     transaction.set(finTxRef, finRecord);
 
-    // 8. Update order state machine: payment_pending -> confirmed
-    transaction.update(orderRef, {
+    // 8. Update order state machine: payment_pending -> confirmed (or ready for pure ready-made)
+    const nextStatus = orderData.isOnlyReadyMade === true ? 'ready' : 'confirmed';
+    const updatePayload: Record<string, any> = {
       paymentStatus: 'paid',
-      status: 'confirmed',
+      status: nextStatus,
       gatewayPaymentId,
       // These are the authoritative financial values consumed by every refund path.
       amountPaidPaise: expectedPaise,
@@ -286,14 +289,18 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       amountRefundablePaise: expectedPaise,
       paidAt: now,
       updatedAt: now,
-    });
+    };
+    if (nextStatus === 'ready') {
+      updatePayload.readyAt = now;
+    }
+    transaction.update(orderRef, updatePayload);
 
     // 8. Create immutable orderEvent
     const eventRef = db.collection('orderEvents').doc();
     transaction.set(eventRef, {
       orderId,
       fromStatus: orderData.status || 'payment_pending',
-      toStatus: 'confirmed',
+      toStatus: nextStatus,
       actorId,
       actorRole: source === 'webhook' ? 'system' : (source === 'cashier_counter' ? 'cashier' : 'student'),
       timestamp: now,
@@ -307,7 +314,16 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       orderId,
       tokenNumber: orderData.tokenNumber,
       amountPaise: expectedPaise,
-      status: 'confirmed' as const,
+      status: nextStatus as 'confirmed' | 'ready',
     };
   });
+
+  // Synchronize TV queue projection immediately upon payment finalization (BUG-01)
+  if (!result.alreadyCaptured && (result.status === 'confirmed' || result.status === 'ready')) {
+    await updatePublicLiveQueueProjection(db).catch((err) => {
+      console.warn('Failed to update public live queue projection after payment finalize:', err);
+    });
+  }
+
+  return result;
 }

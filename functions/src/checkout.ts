@@ -42,9 +42,20 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   }
 
   await enforceRateLimit(studentId, 'checkout');
-  const { idempotencyKey, items, paymentMethod = 'online', readyMadePreference, deviceId } = request.data || {};
+  const { idempotencyKey, items, paymentMethod = 'online', readyMadePreference, deviceId, dietaryPreferences, dietaryNotes } = request.data || {};
   const sanitizedDeviceId = typeof deviceId === 'string' && deviceId.trim().length > 0
     ? deviceId.trim().slice(0, 128)
+    : undefined;
+
+  const sanitizedDietaryPreferences: string[] = Array.isArray(dietaryPreferences)
+    ? dietaryPreferences
+        .filter((p: any) => typeof p === 'string' && p.trim().length > 0)
+        .map((p: string) => p.trim().slice(0, 50))
+        .slice(0, 5)
+    : [];
+
+  const sanitizedDietaryNotes = typeof dietaryNotes === 'string' && dietaryNotes.trim().length > 0
+    ? dietaryNotes.trim().slice(0, 200)
     : undefined;
 
   // Strict Payment Method Enum Validation (TB-NEW-008 Remediation)
@@ -139,13 +150,42 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       ]);
 
       if (idempotencySnap.exists) {
-        const existingOrderId = idempotencySnap.data()?.orderId;
+        const idempData = idempotencySnap.data() || {};
+        const existingOrderId = idempData.orderId;
         if (existingOrderId) {
-          const existingOrderDoc = await transaction.get(db.collection('orders').doc(existingOrderId));
+          const [existingOrderDoc, existingSecretDoc] = await Promise.all([
+            transaction.get(db.collection('orders').doc(existingOrderId)),
+            transaction.get(db.collection('orderSecrets').doc(existingOrderId)),
+          ]);
           if (existingOrderDoc.exists) {
+            const existingData = existingOrderDoc.data()!;
+            const secretData = existingSecretDoc.exists ? existingSecretDoc.data() : null;
+            let replayedQrPayload: string | undefined;
+            if (secretData && secretData.qrNonce && secretData.qrExpiresAt) {
+              const qrSigningSecret = getRequiredSecret('QR_SIGNING_SECRET');
+              const sig = crypto.createHmac('sha256', qrSigningSecret)
+                .update(`${existingOrderId}:${studentId}:${secretData.qrNonce}:${secretData.qrExpiresAt}`)
+                .digest('hex');
+              replayedQrPayload = `${existingOrderId}.${studentId}.${secretData.qrNonce}.${secretData.qrExpiresAt}.${sig}`;
+            }
+
+            const replayedPin = idempData.rawPin || '';
+            const existingAmountPaise = Number(existingData.totalAmountPaise !== undefined
+              ? existingData.totalAmountPaise
+              : Math.round(Number(existingData.totalAmount || 0) * 100));
+
             return {
               orderId: existingOrderId,
-              order: existingOrderDoc.data(),
+              order: {
+                ...existingData,
+                ...(replayedPin ? { pickupPin: replayedPin } : {}),
+                ...(replayedQrPayload ? { signedQrPayload: replayedQrPayload } : {}),
+              },
+              rawPin: replayedPin,
+              signedQrPayload: replayedQrPayload,
+              gatewayOrderId: existingData.gatewayOrderId || null,
+              amountPaise: existingAmountPaise,
+              keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_Tbboxi8EfG7NMJ',
               isReplay: true,
             };
           }
@@ -240,14 +280,34 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
           const rotiAvailable = dailyData.rotiAvailable !== false;
           const puriAvailable = dailyData.puriAvailable !== false;
 
-          const itemsWithCustom = consolidatedLineItems.filter(i => i.itemId === req.itemId && i.customization);
-          for (const itemWithCustom of itemsWithCustom) {
-            const custLower = itemWithCustom.customization!.toLowerCase();
-            if (!rotiAvailable && (custLower.includes('roti') || custLower.includes('chapati'))) {
-              throw new HttpsError('failed-precondition', 'Fresh Chapatis are sold out for today. Please select Puris or update your cart.');
+          const itemNameLower = (menuData.name || '').toLowerCase();
+          const itemSubLower = (menuData.subCategory || '').toLowerCase();
+          const itemCatLower = (menuData.category || '').toLowerCase();
+          const isBreadMeal = itemCatLower === 'rotibhaji' ||
+            itemNameLower.includes('thali') || itemSubLower.includes('thali') ||
+            itemNameLower.includes('roti') || itemNameLower.includes('puri');
+
+          if (isBreadMeal) {
+            if (!rotiAvailable && !puriAvailable) {
+              throw new HttpsError('failed-precondition', 'All fresh breads (Chapatis & Puris) are sold out for today.');
             }
-            if (!puriAvailable && (custLower.includes('puri') || custLower.includes('poori'))) {
-              throw new HttpsError('failed-precondition', 'Fresh Puris are sold out for today. Please select Rotis or update your cart.');
+
+            const itemsWithCustom = consolidatedLineItems.filter(i => i.itemId === req.itemId && i.customization);
+            if (itemsWithCustom.length === 0) {
+              // Default uncustomized meal requires standard bread (Chapatis)
+              if (!rotiAvailable) {
+                throw new HttpsError('failed-precondition', 'Fresh Chapatis are sold out for today. Please customize your meal with Puris.');
+              }
+            } else {
+              for (const itemWithCustom of itemsWithCustom) {
+                const custLower = itemWithCustom.customization!.toLowerCase();
+                if (!rotiAvailable && (custLower.includes('roti') || custLower.includes('chapati'))) {
+                  throw new HttpsError('failed-precondition', 'Fresh Chapatis are sold out for today. Please select Puris or update your cart.');
+                }
+                if (!puriAvailable && (custLower.includes('puri') || custLower.includes('poori'))) {
+                  throw new HttpsError('failed-precondition', 'Fresh Puris are sold out for today. Please select Rotis or update your cart.');
+                }
+              }
             }
           }
         }
@@ -361,6 +421,10 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         readyMadePreference: finalReadyMadePreference,
         priorityLevel: assignedPriority,
         priorityReason: priorityReason,
+        dietaryPreferences: sanitizedDietaryPreferences.length > 0
+          ? sanitizedDietaryPreferences
+          : (Array.isArray(userData.dietaryPreferences) ? userData.dietaryPreferences.slice(0, 5) : undefined),
+        ...(sanitizedDietaryNotes ? { dietaryNotes: sanitizedDietaryNotes } : {}),
         createdAt: now,
         readyAt: Timestamp.fromDate(readyAtDate),
         reservationExpiresAt: Timestamp.fromDate(new Date(Date.now() + 15 * 60000)),
@@ -394,6 +458,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         orderId: newOrderRef.id,
         studentId,
         idempotencyKey,
+        rawPin,
         createdAt: now,
       });
 

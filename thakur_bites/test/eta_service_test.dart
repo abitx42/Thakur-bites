@@ -46,7 +46,17 @@ void main() {
       expect(maxEta, equals(45));
     });
 
-    test('Returns friendly user-facing labels', () {
+    test('Allows 0-minute instant pickup for shelf items with empty queue', () {
+      final instantEta = EtaService.calculateDynamicEta(
+        baseEstimatedMinutes: 0,
+        activeKitchenOrders: 0,
+      );
+      expect(instantEta, equals(0));
+    });
+
+    test('Returns friendly user-facing labels including overdue/immediate orders', () {
+      expect(EtaService.getWaitTimeLabel(0), contains('Ready Any Moment'));
+      expect(EtaService.getWaitTimeLabel(-5), contains('Ready Any Moment'));
       expect(EtaService.getWaitTimeLabel(4), contains('Fast Pickup'));
       expect(EtaService.getWaitTimeLabel(12), contains('Normal Queue'));
       expect(EtaService.getWaitTimeLabel(25), contains('High Demand'));

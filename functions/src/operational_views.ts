@@ -76,11 +76,11 @@ export const getKitchenOrders = onCall<void, Promise<KitchenOrderView[]>>(async 
     throw new HttpsError('permission-denied', 'Permission denied: Kitchen role required.');
   }
 
-  // TB-R2-008: Strict FIFO ordering to prevent queue starvation under peak rush
+  // TB-R2-008 & TB-BUG-09: Generous queue capacity (250) to prevent starvation of priority orders under rush hour
   const snap = await db.collection('orders')
     .where('status', 'in', ['confirmed', 'preparing', 'placed'])
     .orderBy('createdAt', 'asc')
-    .limit(100)
+    .limit(250)
     .get();
 
   const now = new Date();
@@ -218,18 +218,23 @@ export const getCashierOrders = onCall<void, Promise<CashierOrderView[]>>(async 
     .get();
 
 
-  return snap.docs.map(doc => {
-    const data = doc.data();
-    const hasValidPaise = typeof data.totalAmountPaise === 'number' && Number.isSafeInteger(data.totalAmountPaise) && data.totalAmountPaise >= 0;
+  return snap.docs
+    .filter(doc => {
+      const status = doc.data().status;
+      return status !== 'cancelled' && status !== 'expired';
+    })
+    .map(doc => {
+      const data = doc.data();
+      const hasValidPaise = typeof data.totalAmountPaise === 'number' && Number.isSafeInteger(data.totalAmountPaise) && data.totalAmountPaise >= 0;
 
-    return {
-      orderId: doc.id,
-      tokenNumber: data.tokenNumber || 'TB-???',
-      totalAmountPaise: hasValidPaise ? data.totalAmountPaise : -1,
-      isAmountCorrupt: !hasValidPaise,
-      paymentStatus: data.paymentStatus,
-      paymentMethod: data.paymentMethod,
-      createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
-    };
-  });
+      return {
+        orderId: doc.id,
+        tokenNumber: data.tokenNumber || 'TB-???',
+        totalAmountPaise: hasValidPaise ? data.totalAmountPaise : -1,
+        isAmountCorrupt: !hasValidPaise,
+        paymentStatus: data.paymentStatus,
+        paymentMethod: data.paymentMethod,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : new Date().toISOString(),
+      };
+    });
 });

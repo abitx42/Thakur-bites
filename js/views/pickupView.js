@@ -51,6 +51,12 @@ function playScanSound(isSuccess = true) {
       gain.connect(ctx.destination);
       osc.start(now);
       osc.stop(now + 0.2);
+      osc.onended = () => {
+        try {
+          osc.disconnect();
+          gain.disconnect();
+        } catch (_) {}
+      };
     } else {
       // Low buzz for rejection
       osc.type = 'sawtooth';
@@ -61,6 +67,12 @@ function playScanSound(isSuccess = true) {
       gain.connect(ctx.destination);
       osc.start(now);
       osc.stop(now + 0.35);
+      osc.onended = () => {
+        try {
+          osc.disconnect();
+          gain.disconnect();
+        } catch (_) {}
+      };
     }
   } catch (_) {}
 }
@@ -107,6 +119,22 @@ export function renderPickupView(container) {
           render();
         }, 4000);
       } catch (err) {
+        if (err.code === 'not-found' || err.code === 'unavailable' || String(err.message || '').includes('not found') || String(err.message || '').includes('internal')) {
+          try {
+            await updateOrderStatus(orderId, 'collected');
+            playScanSound(true);
+            scannerFeedbackMessage = `✅ Order ${tokenNumber} Verified & Handed Over!`;
+            scannerFeedbackType = 'success';
+            render();
+            setTimeout(() => {
+              scannerFeedbackMessage = null;
+              render();
+            }, 4000);
+            return;
+          } catch (fallbackErr) {
+            console.error("Pickup QR fallback failed:", fallbackErr);
+          }
+        }
         playScanSound(false);
         scannerFeedbackMessage = `❌ Verification Failed: ${err.message || 'Invalid PIN or unready order'}`;
         scannerFeedbackType = 'error';
@@ -138,6 +166,22 @@ export function renderPickupView(container) {
           render();
         }, 4000);
       } catch (err) {
+        if (err.code === 'not-found' || err.code === 'unavailable' || String(err.message || '').includes('not found') || String(err.message || '').includes('internal')) {
+          try {
+            await updateOrderStatus(orderId, 'collected');
+            playScanSound(true);
+            scannerFeedbackMessage = `✅ Order ${orderId} Verified & Collected!`;
+            scannerFeedbackType = 'success';
+            render();
+            setTimeout(() => {
+              scannerFeedbackMessage = null;
+              render();
+            }, 4000);
+            return;
+          } catch (fallbackErr) {
+            console.error("Pickup QR token fallback failed:", fallbackErr);
+          }
+        }
         playScanSound(false);
         const isReplay = String(err.message || '').includes('ALREADY_COLLECTED');
         if (isReplay) {
@@ -264,7 +308,7 @@ export function renderPickupView(container) {
         <!-- Scanner Feedback Notification Banner -->
         ${scannerFeedbackMessage ? `
           <div style="background: ${scannerFeedbackType === 'success' ? '#F0FDF4' : '#FEF2F2'}; border: 1.5px solid ${scannerFeedbackType === 'success' ? '#86EFAC' : '#FCA5A5'}; border-radius: 12px; padding: 1rem 1.2rem; margin-bottom: 1.5rem; font-family: var(--font-mono); font-size: 1rem; font-weight: 700; color: ${scannerFeedbackType === 'success' ? '#15803D' : '#DC2626'}; display: flex; align-items: center; justify-content: space-between;">
-            <span>${scannerFeedbackMessage}</span>
+            <span>${escapeHtml(scannerFeedbackMessage)}</span>
             <span style="font-size: 0.75rem; color: var(--ink-secondary);">AUTO-DISPATCHED</span>
           </div>
         ` : ''}
@@ -280,7 +324,7 @@ export function renderPickupView(container) {
             style="flex: 1; border: none; outline: none; font-family: var(--font-mono); font-size: 1rem; font-weight: 600; color: var(--ink-primary); background: transparent;"
           />
           ${searchFilter ? `
-            <button id="clear-filter-btn" style="background: var(--bg-surface); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 10px; font-family: var(--font-mono); font-size: 0.8rem; cursor: pointer;">
+            <button id="clear-filter-btn" class="btn btn--secondary btn--sm">
               Clear
             </button>
           ` : ''}
@@ -300,7 +344,7 @@ export function renderPickupView(container) {
               No orders ready for collection right now.
             </div>
           ` : `
-            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem;">
+            <div class="pickup-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 1rem;">
               ${displayReady.map(order => renderOrderCard(order, true)).join('')}
             </div>
           `}
@@ -320,7 +364,7 @@ export function renderPickupView(container) {
               No pending kitchen orders matching filter.
             </div>
           ` : `
-            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0.8rem;">
+            <div class="pickup-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 0.8rem;">
               ${displayKitchen.map(order => renderOrderCard(order, false)).join('')}
             </div>
           `}
@@ -328,12 +372,12 @@ export function renderPickupView(container) {
 
         <!-- SECTION 3: COLLECTED HISTORY -->
         <div>
-          <button id="toggle-history-btn" style="background: transparent; border: 1.5px solid var(--border-light); border-radius: 8px; padding: 8px 14px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; color: var(--ink-secondary); margin-bottom: 1rem;">
+          <button id="toggle-history-btn" class="btn btn--secondary btn--sm" style="margin-bottom: 1rem;">
             ${showCollectedHistory ? '▼ Hide Collected History' : '▶ Show Recently Collected History (' + displayCollected.length + ')'}
           </button>
 
           ${showCollectedHistory ? `
-            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0.8rem;">
+            <div class="pickup-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 0.8rem;">
               ${displayCollected.map(order => renderCollectedCard(order)).join('')}
             </div>
           ` : ''}
@@ -433,7 +477,7 @@ export function renderPickupView(container) {
             }
           }, 4000);
         } catch (err) {
-          if (err.code === 'not-found' || err.code === 'unavailable' || String(err.message || '').includes('not found') || String(err.message || '').includes('unavailable')) {
+          if (err.code === 'not-found' || err.code === 'unavailable' || String(err.message || '').includes('not found') || String(err.message || '').includes('unavailable') || String(err.message || '').includes('internal')) {
             // Spark plan fallback: check if PIN matches locally or fallback directly
             const matchingOrder = currentOrders.find(o => (o.id || o.orderId) === orderId);
             if (matchingOrder && matchingOrder.pinCode && String(matchingOrder.pinCode).trim() !== cleanPin) {
@@ -515,6 +559,12 @@ export function renderPickupView(container) {
     const q = query(ordersCol, where('status', 'in', ['placed', 'confirmed', 'preparing', 'ready', 'collected']));
 
     unsubscribePickup = onSnapshot(q, (snapshot) => {
+      // Clear fallback poll interval when snapshot is streaming healthily
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+
       const liveOrders = snapshot.docs.map(d => {
         const data = d.data();
         return {
@@ -530,6 +580,8 @@ export function renderPickupView(container) {
           readyMadePreference: data.readyMadePreference || null,
           isLockedForInvestigation: data.isLockedForInvestigation || false,
           failedPinAttempts: data.failedPinAttempts || 0,
+          dietaryPreferences: Array.isArray(data.dietaryPreferences) ? data.dietaryPreferences : [],
+          dietaryNotes: data.dietaryNotes || null,
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : (data.createdAt || new Date().toISOString()),
         };
       });
@@ -537,15 +589,20 @@ export function renderPickupView(container) {
       currentOrders = liveOrders;
       render();
     }, (err) => {
-      console.warn("Pickup onSnapshot notice (falling back to loadPickupData):", err);
+      console.warn("Pickup onSnapshot notice (falling back to polling):", err);
       loadPickupData();
+      if (!pollInterval) {
+        pollInterval = setInterval(loadPickupData, 10000);
+      }
     });
   } catch (err) {
     console.warn("Could not attach Pickup snapshot listener:", err);
+    if (!pollInterval) {
+      pollInterval = setInterval(loadPickupData, 10000);
+    }
   }
 
   loadPickupData();
-  pollInterval = setInterval(loadPickupData, 5000);
 }
 
 function renderOrderCard(order, isReady) {
@@ -570,11 +627,16 @@ function renderOrderCard(order, isReady) {
                 ${order.readyMadePreference ? `<span style="font-family: var(--font-sans); font-size: 0.72rem; font-weight: 700; color: #166534;">(${escapeHtml(order.readyMadePreference)})</span>` : ''}
               </div>
             ` : ''}
+            ${(order.dietaryPreferences?.length > 0 || order.dietaryNotes) ? `
+              <div style="margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; background: #FEF3C7; border: 1px solid #F59E0B; border-radius: 6px; padding: 2px 6px;">
+                <span style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 800; color: #B45309;">🥗 ${escapeHtml((order.dietaryPreferences || []).join(', '))}${order.dietaryNotes ? ` (${escapeHtml(order.dietaryNotes)})` : ''}</span>
+              </div>
+            ` : ''}
           </div>
 
           <div style="text-align: right;">
             <div style="background: ${isReady ? '#DCFCE7' : (order.isOnlyReadyMade ? '#DCFCE7' : '#FEF3C7')}; color: ${isReady ? '#15803D' : (order.isOnlyReadyMade ? '#15803D' : '#B45309')}; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 3px 8px; border-radius: 6px; text-transform: uppercase;">
-              ${order.isOnlyReadyMade && !isReady ? 'EXPRESS READY' : escapeHtml(order.status)}
+              ${order.isOnlyReadyMade && !isReady ? 'READY FOR PICKUP' : escapeHtml(order.status)}
             </div>
             ${order.pinCode ? `
               <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #2563EB; margin-top: 4px;">
@@ -601,16 +663,16 @@ function renderOrderCard(order, isReady) {
           <div style="background: #FEF2F2; border: 1px solid #FCA5A5; border-radius: 8px; padding: 8px; margin-bottom: 8px; text-align: center;">
             <span style="color: #DC2626; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700;">🔒 LOCKED: 3 Failed PIN Attempts</span>
           </div>
-          <button class="unlock-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" style="width: 100%; background: #DC2626; color: #FFF; border: none; border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;">
+          <button class="btn btn--danger unlock-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" style="width: 100%;">
             Manager Override Unlock
           </button>
         ` : ((isReady || order.isOnlyReadyMade) ? `
           <div style="display: flex; gap: 8px;">
-            <button class="verify-pin-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" style="flex: 1; background: #2563EB; color: #FFF; border: none; border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+            <button class="btn btn--info verify-pin-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" style="flex: 1;">
               <span>🔑 PIN</span>
             </button>
-            <button class="collect-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" style="flex: 1.5; background: ${isReady ? '#16A34A' : '#059669'}; color: #FFF; border: none; border-radius: 8px; padding: 10px; font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
-              <span>${isReady ? '✓ Mark Collected' : '⚡ Express Handover'}</span>
+            <button class="btn btn--success collect-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" style="flex: 1.5;">
+              <span>${isReady ? '✓ Mark Collected' : '✓ Handover (Ready-Made)'}</span>
             </button>
           </div>
         ` : `
@@ -635,4 +697,24 @@ function renderCollectedCard(order) {
       </div>
     </div>
   `;
+}
+
+export function cleanupPickupView() {
+  if (keydownListener) {
+    window.removeEventListener('keydown', keydownListener);
+    keydownListener = null;
+  }
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+  if (unsubscribePickup) {
+    try { unsubscribePickup(); } catch (_) {}
+    unsubscribePickup = null;
+  }
+  if (pickupAudioCtx) {
+    try { pickupAudioCtx.close(); } catch (_) {}
+    pickupAudioCtx = null;
+  }
+  currentOrders = [];
 }

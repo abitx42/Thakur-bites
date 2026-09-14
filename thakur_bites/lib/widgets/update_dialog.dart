@@ -78,7 +78,7 @@ class UpdateDialog extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppColors.surface2,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: AppRadius.radiusMd,
                   border: Border.all(color: AppColors.line),
                 ),
                 child: Text(
@@ -110,7 +110,7 @@ class UpdateDialog extends StatelessWidget {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: AppColors.surface2,
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: AppRadius.radiusLg,
                   border: Border.all(color: AppColors.line),
                 ),
                 child: Column(
@@ -153,45 +153,53 @@ class UpdateDialog extends StatelessWidget {
             const SizedBox(height: 24),
 
             // Buttons
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                if (onUpdate != null) {
-                  onUpdate!();
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.red,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+            Semantics(
+              button: true,
+              label: 'Update application now',
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  if (onUpdate != null) {
+                    onUpdate!();
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: AppRadius.radiusLg,
+                  ),
+                  elevation: 0,
                 ),
-                elevation: 0,
-              ),
-              child: Text(
-                'Update Now',
-                style: AppFonts.body(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+                child: Text(
+                  'Update Now',
+                  style: AppFonts.body(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
             const SizedBox(height: 8),
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                if (onLater != null) {
-                  onLater!();
-                }
-              },
-              child: Text(
-                'Maybe Later',
-                style: AppFonts.body(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.inkSoft,
+            Semantics(
+              button: true,
+              label: 'Maybe later, dismiss update dialog',
+              child: TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  if (onLater != null) {
+                    onLater!();
+                  }
+                },
+                child: Text(
+                  'Maybe Later',
+                  style: AppFonts.body(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.inkSoft,
+                  ),
                 ),
               ),
             ),

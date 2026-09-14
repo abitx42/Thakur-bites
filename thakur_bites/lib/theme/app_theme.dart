@@ -6,20 +6,82 @@ import 'package:google_fonts/google_fonts.dart';
 class AppColors {
   AppColors._();
 
-  static const bg = Color(0xFFEDEAE0);
+  // Neutral & Paper Surfaces
+  static const bg = Color(0xFFF5F1E9);
   static const surface = Color(0xFFFBF8EF);
   static const surface2 = Color(0xFFF3EFE2);
-  static const ink = Color(0xFF221C15);
-  static const inkSoft = Color(0xFF7A7266);
-  static const red = Color(0xFFD6402B);
-  static const redDeep = Color(0xFFB7301E);
-  static const mustard = Color(0xFFEFA727);
-  static const mustardSoft = Color(0xFFFBE7BE);
-  static const mustardInk = Color(0xFF6B4408);
-  static const green = Color(0xFF4F7A3C);
-  static const greenSoft = Color(0xFFDCEACB);
-  static const greenInk = Color(0xFF2C4A1E);
-  static const line = Color(0xFFDAD3C0);
+  static const ink = Color(0xFF18181B);
+  static const inkSecondary = Color(0xFF52525B);
+  static const inkSoft = Color(0xFF71717A);
+  static const line = Color(0xFFE4DCD0);
+  static const lineDark = Color(0xFF18181B);
+
+  // Brand Spice Accents
+  static const red = Color(0xFFDC2626);
+  static const redDeep = Color(0xFFB91C1C);
+  static const redSoft = Color(0xFFFEE2E2);
+  static const mustard = Color(0xFFD97706);
+  static const mustardSoft = Color(0xFFFEF3C7);
+  static const mustardInk = Color(0xFFB45309);
+  static const green = Color(0xFF16A34A);
+  static const greenSoft = Color(0xFFDCFCE7);
+  static const greenInk = Color(0xFF15803D);
+  static const chai = Color(0xFF78350F);
+  static const chaiSoft = Color(0xFFF5EBE1);
+
+  // Semantic Status Tokens
+  static const success = Color(0xFF16A34A);
+  static const successBg = Color(0xFFDCFCE7);
+  static const warning = Color(0xFFD97706);
+  static const warningBg = Color(0xFFFEF3C7);
+  static const amberBg = Color(0xFFFFFBEB);
+  static const amberBorder = Color(0xFFFDE68A);
+  static const danger = Color(0xFFDC2626);
+  static const dangerBg = Color(0xFFFEE2E2);
+  static const info = Color(0xFF2563EB);
+  static const infoBg = Color(0xFFEFF6FF);
+  static const infoBorder = Color(0xFF93C5FD);
+  static const infoDeep = Color(0xFF1E40AF);
+  static const muted = Color(0xFF94A3B8);
+  static const mutedBg = Color(0xFFF1F5F9);
+  static const mutedBorder = Color(0xFFCBD5E1);
+}
+
+/// Harmonic 4-point spacing scale (4, 8, 12, 16, 24, 32px)
+class AppSpacing {
+  AppSpacing._();
+
+  static const double xs = 4.0;
+  static const double sm = 8.0;
+  static const double md = 12.0;
+  static const double lg = 16.0;
+  static const double xl = 24.0;
+  static const double xxl = 32.0;
+}
+
+/// 4-tier border radius system (6, 10, 16, 999px)
+class AppRadius {
+  AppRadius._();
+
+  static const double sm = 6.0;
+  static const double md = 10.0;
+  static const double lg = 16.0;
+  static const double pill = 999.0;
+
+  static final radiusSm = BorderRadius.circular(sm);
+  static final radiusMd = BorderRadius.circular(md);
+  static final radiusLg = BorderRadius.circular(lg);
+  static final radiusPill = BorderRadius.circular(pill);
+}
+
+/// Motion duration and curve tokens
+class AppMotion {
+  AppMotion._();
+
+  static const Duration fast = Duration(milliseconds: 120);
+  static const Duration normal = Duration(milliseconds: 200);
+  static const Duration slow = Duration(milliseconds: 320);
+  static const Curve curve = Curves.easeOutCubic;
 }
 
 /// Three-font split matching the HTML mockup:

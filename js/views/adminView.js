@@ -1,6 +1,7 @@
 // Phase 11 — Live Menu & Stock Management View with Distinct Cooked vs Store Item Logic
 import { 
   db,
+  auth,
   functions,
   subscribeMenuItems, 
   toggleItemAvailability, 
@@ -13,7 +14,7 @@ import {
 } from '../firebase.js?v=5';
 import { renderMenuVisualHtml, VISUAL_FAMILIES } from '../menuVisualResolver.js';
 import { staffAuth } from '../auth.js?v=8';
-import { doc, onSnapshot, collection, query, where } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { doc, onSnapshot, collection, query, where, setDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
 import { renderDailyBoardModal } from './dailyBoardModal.js?v=1';
@@ -155,16 +156,16 @@ export function renderAdminView(container, options = {}) {
           </div>
 
           <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-            <button class="mode-btn" data-mode="NORMAL" ${modeLoading || currentMode === 'NORMAL' ? 'disabled' : ''} style="padding: 7px 14px; border-radius: 8px; border: 1.5px solid #16A34A; background: #FFF; color: #166534; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+            <button class="btn btn--outline-success btn--sm mode-btn" data-mode="NORMAL" ${modeLoading || currentMode === 'NORMAL' ? 'disabled' : ''}>
               NORMAL
             </button>
-            <button class="mode-btn" data-mode="DEGRADED" ${modeLoading || currentMode === 'DEGRADED' ? 'disabled' : ''} style="padding: 7px 14px; border-radius: 8px; border: 1.5px solid #D97706; background: #FFF; color: #92400E; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+            <button class="btn btn--outline-warning btn--sm mode-btn" data-mode="DEGRADED" ${modeLoading || currentMode === 'DEGRADED' ? 'disabled' : ''}>
               PAUSE ONLINE (DEGRADED)
             </button>
-            <button class="mode-btn" data-mode="FINANCIAL_FROZEN" ${modeLoading || currentMode === 'FINANCIAL_FROZEN' ? 'disabled' : ''} style="padding: 7px 14px; border-radius: 8px; border: 1.5px solid #DC2626; background: #FFF; color: #991B1B; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+            <button class="btn btn--outline-danger btn--sm mode-btn" data-mode="FINANCIAL_FROZEN" ${modeLoading || currentMode === 'FINANCIAL_FROZEN' ? 'disabled' : ''}>
               FREEZE CHECKOUT
             </button>
-            <button class="mode-btn" data-mode="EMERGENCY_HALT" ${modeLoading || currentMode === 'EMERGENCY_HALT' ? 'disabled' : ''} style="padding: 7px 14px; border-radius: 8px; border: 1.5px solid #991B1B; background: #7F1D1D; color: #FFF; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+            <button class="btn btn--danger btn--sm mode-btn" data-mode="EMERGENCY_HALT" ${modeLoading || currentMode === 'EMERGENCY_HALT' ? 'disabled' : ''}>
               EMERGENCY HALT
             </button>
           </div>
@@ -190,14 +191,14 @@ export function renderAdminView(container, options = {}) {
           <div style="display: flex; gap: 10px; flex-wrap: wrap;">
             <button 
               id="admin-open-daily-board-btn"
-              style="padding: 10px 18px; border-radius: 999px; background: #FFFBEB; color: #92400E; border: 1.5px solid #F59E0B; font-family: var(--font-sans); font-size: 0.92rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(245,158,11,0.2);"
+              class="btn btn--outline-warning btn--pill btn--md"
             >
               <span>🍱</span>
               <span>Today's Daily Board</span>
             </button>
             <button 
               id="open-add-modal-btn"
-              style="padding: 10px 20px; border-radius: 999px; background: var(--brand-red); color: #FFF; border: none; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(214,64,43,0.25);"
+              class="btn btn--primary btn--pill btn--md"
             >
               <span>+</span>
               <span>Add New Dish</span>
@@ -293,16 +294,15 @@ export function renderAdminView(container, options = {}) {
 
                   <div style="display: flex; gap: 8px; margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--border-light);">
                     <button 
-                      class="approve-app-btn" 
+                      class="btn btn--success btn--sm approve-app-btn" 
                       data-app-id="${escapeHtml(app.applicationId || app.id)}"
-                      style="flex: 1; padding: 8px; border-radius: 8px; border: none; background: #16A34A; color: #FFF; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;"
+                      style="flex: 1;"
                     >
                       ✓ Approve Faculty
                     </button>
                     <button 
-                      class="reject-app-btn" 
+                      class="btn btn--outline-danger btn--sm reject-app-btn" 
                       data-app-id="${escapeHtml(app.applicationId || app.id)}"
-                      style="padding: 8px 12px; border-radius: 8px; border: 1px solid #DC2626; background: #FFF; color: #DC2626; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;"
                     >
                       ✕ Reject
                     </button>
@@ -558,19 +558,17 @@ export function renderAdminView(container, options = {}) {
                     <!-- Kitchen Item Control: Big Stock Toggle & Edit -->
                     <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 1rem; border-top: 1.5px solid var(--border-light); margin-top: 1rem;">
                       <button 
-                        class="toggle-cooked-btn" 
+                        class="btn ${isAvailable ? 'btn--outline-success' : 'btn--outline-danger'} btn--sm btn--pill toggle-cooked-btn" 
                         data-item-id="${item.id}" 
                         data-available="${isAvailable}"
-                        style="padding: 8px 16px; border-radius: 999px; border: 1.5px solid ${isAvailable ? '#22C55E' : '#EF4444'}; background: ${isAvailable ? '#F0FDF4' : '#FEF2F2'}; color: ${isAvailable ? '#15803D' : '#B91C1C'}; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; cursor: pointer; display: flex; align-items: center; gap: 6px;"
                       >
                         <span>${isAvailable ? '✓' : '✕'}</span>
                         <span>${isAvailable ? 'In Stock (Open)' : 'Out of Stock (Closed)'}</span>
                       </button>
 
                       <button 
-                        class="edit-item-btn" 
+                        class="btn btn--secondary btn--sm edit-item-btn" 
                         data-item-id="${item.id}"
-                        style="background: var(--bg-surface); border: 1px solid var(--border-light); padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--ink-primary);"
                       >
                         ✏️ Edit
                       </button>
@@ -698,11 +696,10 @@ export function renderAdminView(container, options = {}) {
                         <div style="display: flex; gap: 4px; align-items: center; flex-wrap: wrap;">
                           ${[5, 10, 25].map(add => `
                             <button 
-                              class="quick-restock-btn" 
+                              class="btn btn--secondary btn--sm quick-restock-btn" 
                               data-item-id="${item.id}" 
                               data-current-stock="${stock}" 
                               data-add="${add}"
-                              style="padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer; color: var(--ink-primary);"
                             >
                               +${add}
                             </button>
@@ -710,21 +707,19 @@ export function renderAdminView(container, options = {}) {
 
                           ${isInStock ? `
                             <button 
-                              class="mark-soldout-btn" 
+                              class="btn btn--outline-danger btn--sm mark-soldout-btn" 
                               data-item-id="${item.id}" 
                               title="Set quantity to 0 and mark sold out"
-                              style="padding: 2px 8px; border-radius: 4px; border: 1px solid #FCA5A5; background: #FEF2F2; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer; color: #DC2626;"
                             >
                               ✕ Sold Out
                             </button>
                           ` : `
                             <button 
-                              class="quick-restock-btn" 
+                              class="btn btn--outline-success btn--sm quick-restock-btn" 
                               data-item-id="${item.id}" 
                               data-current-stock="0" 
-                              data-add="10"
+                              data-add="10" 
                               title="Restock 10 units"
-                              style="padding: 2px 8px; border-radius: 4px; border: 1px solid #86EFAC; background: #F0FDF4; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer; color: #166534;"
                             >
                               ✓ In Stock (+10)
                             </button>
@@ -732,9 +727,8 @@ export function renderAdminView(container, options = {}) {
                         </div>
 
                         <button 
-                          class="edit-item-btn" 
+                          class="btn btn--secondary btn--sm edit-item-btn" 
                           data-item-id="${item.id}"
-                          style="background: transparent; border: 1px solid var(--border-light); padding: 4px 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--ink-primary);"
                         >
                           ✏️ Edit
                         </button>
@@ -1203,10 +1197,10 @@ export function renderAdminView(container, options = {}) {
 
               <!-- Action Buttons -->
               <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                <button id="cancel-op-modal-btn" type="button" style="padding: 10px 16px; border-radius: 8px; background: transparent; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer; color: var(--ink-secondary);">
+                <button id="cancel-op-modal-btn" type="button" class="btn btn--ghost btn--md">
                   Cancel
                 </button>
-                <button id="submit-op-modal-btn" ${operationalModeLoading ? 'disabled' : ''} style="padding: 10px 20px; border-radius: 8px; background: ${targetOperationalMode === 'NORMAL' ? '#16A34A' : (targetOperationalMode === 'DEGRADED' ? '#D97706' : '#DC2626')}; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                <button id="submit-op-modal-btn" class="btn ${targetOperationalMode === 'NORMAL' ? 'btn--success' : (targetOperationalMode === 'DEGRADED' ? 'btn--warning' : 'btn--danger')} btn--md ${operationalModeLoading ? 'is-loading' : ''}" ${operationalModeLoading ? 'disabled' : ''} style="display: flex; align-items: center; gap: 6px;">
                   ${operationalModeLoading ? 'Applying Transition...' : `Confirm: Switch to ${targetOperationalMode} →`}
                 </button>
               </div>
@@ -1646,10 +1640,34 @@ export function renderAdminView(container, options = {}) {
           operationalModeLoading = false;
           render();
         } catch (err) {
-          console.error("setSystemOperationalMode error:", err);
-          operationalModeError = err.message || 'Failed to update system operational status.';
-          operationalModeLoading = false;
-          render();
+          console.warn("setSystemOperationalMode notice (falling back to direct Firestore update):", err);
+          try {
+            const now = serverTimestamp();
+            const statusRef = doc(db, 'publicSystemStatus', 'global');
+            await setDoc(statusRef, {
+              mode: targetOperationalMode,
+              orderingAvailable: targetOperationalMode === 'NORMAL',
+              updatedAt: now
+            }, { merge: true });
+
+            const configRef = doc(db, 'systemConfig', 'global');
+            await setDoc(configRef, {
+              mode: targetOperationalMode,
+              reason: reason,
+              updatedAt: now,
+              updatedBy: auth.currentUser?.uid || 'admin'
+            }, { merge: true });
+
+            currentMode = targetOperationalMode;
+            showOperationalModal = false;
+            operationalModeLoading = false;
+            render();
+          } catch (fsErr) {
+            console.error("Direct setSystemOperationalMode failed:", fsErr);
+            operationalModeError = fsErr.message || 'Failed to update system operational status.';
+            operationalModeLoading = false;
+            render();
+          }
         }
       });
     }
@@ -1930,6 +1948,16 @@ export function renderAdminView(container, options = {}) {
       console.warn("Could not query shift PINs:", err);
     }
   }
+}
+
+export function cleanupAdminView() {
+  if (unsubscribeMenu) { unsubscribeMenu(); unsubscribeMenu = null; }
+  if (unsubscribeStatus) { unsubscribeStatus(); unsubscribeStatus = null; }
+  if (unsubscribeApps) { unsubscribeApps(); unsubscribeApps = null; }
+  if (unsubscribePins) { unsubscribePins(); unsubscribePins = null; }
+  currentItems = [];
+  currentApplications = [];
+  currentShiftPins = [];
 }
 
 

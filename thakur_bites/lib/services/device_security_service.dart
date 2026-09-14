@@ -1,4 +1,3 @@
-import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -49,7 +48,7 @@ class DeviceSecurityService extends ChangeNotifier {
   /// Evaluates device security posture against native sentinel
   Future<void> checkSecurityPosture() async {
     if (kIsWeb) return;
-    if (!Platform.isAndroid) return;
+    if (defaultTargetPlatform != TargetPlatform.android) return;
 
     _isChecking = true;
     notifyListeners();
@@ -88,7 +87,7 @@ class DeviceSecurityService extends ChangeNotifier {
 
   /// Launches native Android Developer Options settings so the user can easily toggle it off
   Future<bool> openDeveloperSettings() async {
-    if (kIsWeb || !Platform.isAndroid) return false;
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
     try {
       final success = await _channel.invokeMethod<bool>('openDeveloperSettings');
       return success ?? false;

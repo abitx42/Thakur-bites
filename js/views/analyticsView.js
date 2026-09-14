@@ -139,8 +139,9 @@ export function renderAnalyticsView(container) {
 
           <button 
             id="run-simulation-btn" 
-            style="padding: 10px 20px; border-radius: 999px; background: ${isSimulating ? '#9CA3AF' : 'var(--brand-red)'}; color: #FFF; border: none; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: ${isSimulating ? 'not-allowed' : 'pointer'}; display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+            class="btn btn--primary btn--md btn--pill ${isSimulating ? 'is-loading' : ''}"
             ${isSimulating ? 'disabled' : ''}
+            style="display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
           >
             <span>⚡</span>
             <span>${isSimulating ? 'Simulating Peak Rush...' : 'Simulate Lunch Rush (50 Orders)'}</span>
@@ -437,10 +438,9 @@ export function renderAnalyticsView(container) {
                 <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary);">Enable student Flutter app orders</div>
               </div>
               <button 
-                class="flag-toggle-btn" 
+                class="btn ${currentFeatureFlags.onlineOrderingEnabled ? 'btn--success' : 'btn--danger'} btn--sm btn--pill flag-toggle-btn" 
                 data-flag="onlineOrderingEnabled" 
                 data-val="${currentFeatureFlags.onlineOrderingEnabled ? 'false' : 'true'}"
-                style="padding: 6px 14px; border-radius: 999px; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; background: ${currentFeatureFlags.onlineOrderingEnabled ? '#DCFCE7' : '#FEE2E2'}; color: ${currentFeatureFlags.onlineOrderingEnabled ? '#166534' : '#991B1B'};"
               >
                 ${currentFeatureFlags.onlineOrderingEnabled ? 'ENABLED' : 'PAUSED'}
               </button>
@@ -453,10 +453,9 @@ export function renderAnalyticsView(container) {
                 <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary);">Fast-track Teacher tickets</div>
               </div>
               <button 
-                class="flag-toggle-btn" 
+                class="btn ${currentFeatureFlags.priorityQueueEnabled ? 'btn--warning' : 'btn--danger'} btn--sm btn--pill flag-toggle-btn" 
                 data-flag="priorityQueueEnabled" 
                 data-val="${currentFeatureFlags.priorityQueueEnabled ? 'false' : 'true'}"
-                style="padding: 6px 14px; border-radius: 999px; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; background: ${currentFeatureFlags.priorityQueueEnabled ? '#FEF3C7' : '#FEE2E2'}; color: ${currentFeatureFlags.priorityQueueEnabled ? '#92400E' : '#991B1B'};"
               >
                 ${currentFeatureFlags.priorityQueueEnabled ? 'ACTIVE' : 'DISABLED'}
               </button>
@@ -469,10 +468,9 @@ export function renderAnalyticsView(container) {
                 <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary);">Accept physical cash orders</div>
               </div>
               <button 
-                class="flag-toggle-btn" 
+                class="btn ${currentFeatureFlags.cashCounterEnabled ? 'btn--success' : 'btn--danger'} btn--sm btn--pill flag-toggle-btn" 
                 data-flag="cashCounterEnabled" 
                 data-val="${currentFeatureFlags.cashCounterEnabled ? 'false' : 'true'}"
-                style="padding: 6px 14px; border-radius: 999px; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; background: ${currentFeatureFlags.cashCounterEnabled ? '#DCFCE7' : '#FEE2E2'}; color: ${currentFeatureFlags.cashCounterEnabled ? '#166534' : '#991B1B'};"
               >
                 ${currentFeatureFlags.cashCounterEnabled ? 'ENABLED' : 'PAUSED'}
               </button>
@@ -486,7 +484,7 @@ export function renderAnalyticsView(container) {
               </div>
               <button 
                 id="adjust-rush-multiplier-btn"
-                style="padding: 6px 14px; border-radius: 8px; border: 1.5px solid #2563EB; background: #EFF6FF; color: #1E40AF; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;"
+                class="btn btn--outline-info btn--sm"
               >
                 ${currentFeatureFlags.rushMultiplier}x (Change)
               </button>

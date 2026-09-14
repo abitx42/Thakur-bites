@@ -60,6 +60,8 @@ export const DEFAULT_ENDPOINT_LIMITS: Record<string, RateLimitConfig> = {
   cashier_view: { maxRequests: 60, windowSeconds: 60 },
   developer_telemetry: { maxRequests: 20, windowSeconds: 60 },
   permission_simulation: { maxRequests: 30, windowSeconds: 60 },
+  shift_pin_verification: { maxRequests: 5, windowSeconds: 60 },
+  security_report: { maxRequests: 10, windowSeconds: 60 },
 };
 
 export const ENDPOINT_LIMITS: Record<string, RateLimitConfig> = DEFAULT_ENDPOINT_LIMITS;

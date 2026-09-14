@@ -24,10 +24,15 @@ class _TicketScreenState extends State<TicketScreen>
   late Animation<double> _slideAnim;
   late Animation<double> _fadeAnim;
   String? _cachedPin;
+  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _orderSnapshotStream;
 
   @override
   void initState() {
     super.initState();
+    _orderSnapshotStream = FirebaseFirestore.instance
+        .collection('orders')
+        .doc(widget.order.id)
+        .snapshots();
     _cachedPin = widget.order.pinCode;
     if (_cachedPin == null || _cachedPin!.isEmpty) {
       SharedPreferences.getInstance().then((prefs) {
@@ -70,10 +75,7 @@ class _TicketScreenState extends State<TicketScreen>
       backgroundColor: AppColors.bg,
       body: SafeArea(
         child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance
-              .collection('orders')
-              .doc(widget.order.id)
-              .snapshots(),
+          stream: _orderSnapshotStream,
           builder: (context, snapshot) {
             app.Order currentOrder = widget.order;
             final effectivePin = widget.order.pinCode.isNotEmpty
@@ -229,15 +231,17 @@ class _TicketScreenState extends State<TicketScreen>
   }
 
   Widget _buildTicket(app.Order order) {
+    final resolvedPin = order.pinCode.isNotEmpty ? order.pinCode : (_cachedPin ?? '');
+
     final statusColor = order.isReady
-        ? const Color(0xFF16A34A)
+        ? AppColors.green
         : order.isPreparing
-            ? const Color(0xFFD97706)
+            ? AppColors.warning
             : order.isCollected
-                ? const Color(0xFF6B7280)
+                ? AppColors.inkSoft
                 : order.isPaymentPending
-                    ? const Color(0xFFD97706)
-                    : AppColors.red;
+                    ? AppColors.warning
+                    : AppColors.danger;
 
     final statusText = order.isReady
         ? 'READY FOR PICKUP 🟢'
@@ -318,7 +322,7 @@ class _TicketScreenState extends State<TicketScreen>
                       border: Border.all(color: AppColors.line, width: 1),
                     ),
                     child: Text(
-                      'PICKUP PIN: ${order.pinCode.isEmpty ? "••••" : order.pinCode}',
+                      'PICKUP PIN: ${resolvedPin.isEmpty ? "••••" : resolvedPin}',
                       style: AppFonts.mono(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
@@ -330,9 +334,9 @@ class _TicketScreenState extends State<TicketScreen>
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFEF3C7),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: const Color(0xFFFDE68A), width: 1),
+                      color: AppColors.warningBg,
+                      borderRadius: AppRadius.radiusPill,
+                      border: Border.all(color: AppColors.warning.withAlpha(100), width: 1),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -344,7 +348,7 @@ class _TicketScreenState extends State<TicketScreen>
                           style: AppFonts.mono(
                             fontSize: 10.5,
                             fontWeight: FontWeight.w700,
-                            color: const Color(0xFF92400E),
+                            color: AppColors.mustardInk,
                           ),
                         ),
                       ],
@@ -357,9 +361,9 @@ class _TicketScreenState extends State<TicketScreen>
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF0FDF4),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: const Color(0xFF86EFAC), width: 1.2),
+                      color: AppColors.successBg,
+                      borderRadius: AppRadius.radiusMd,
+                      border: Border.all(color: AppColors.green.withAlpha(100), width: 1.2),
                     ),
                     child: Column(
                       children: [
@@ -369,11 +373,11 @@ class _TicketScreenState extends State<TicketScreen>
                             const Text('⚡', style: TextStyle(fontSize: 14)),
                             const SizedBox(width: 6),
                             Text(
-                              'EXPRESS READY-MADE ORDER',
+                              'READY-MADE ORDER',
                               style: AppFonts.mono(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w800,
-                                color: const Color(0xFF15803D),
+                                color: AppColors.greenInk,
                               ),
                             ),
                           ],
@@ -385,16 +389,16 @@ class _TicketScreenState extends State<TicketScreen>
                             style: AppFonts.body(
                               fontSize: 11.5,
                               fontWeight: FontWeight.w600,
-                              color: const Color(0xFF166534),
+                              color: AppColors.greenInk,
                             ),
                           ),
                         ],
                         const SizedBox(height: 2),
                         Text(
-                          'Collect immediately at Express Counter (0 min wait)',
+                          'Directly head to counter to collect (0 min wait)',
                           style: AppFonts.body(
                             fontSize: 10.5,
-                            color: const Color(0xFF166534),
+                            color: AppColors.greenInk,
                           ),
                         ),
                       ],
@@ -466,7 +470,7 @@ class _TicketScreenState extends State<TicketScreen>
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: QrImageView(
-                      data: 'TB:${order.id}:${order.tokenNumber}:${order.pinCode}',
+                      data: 'TB:${order.id}:${order.tokenNumber}:$resolvedPin',
                       version: QrVersions.auto,
                       size: 96,
                       backgroundColor: Colors.white,
@@ -510,14 +514,14 @@ class _TicketScreenState extends State<TicketScreen>
                 // Ready time & timestamp
                 Text(
                   order.isOnlyReadyMade
-                      ? '⚡ Ready now at Express Counter'
+                      ? '⚡ Ready for pickup — Head directly to counter'
                       : (order.estimatedMinutes > 0
                           ? 'Ready in ~${order.estimatedMinutes} min'
                           : 'Ready now'),
                   style: AppFonts.body(
                     fontSize: 13.5,
                     fontWeight: FontWeight.w600,
-                    color: order.isOnlyReadyMade ? const Color(0xFF16A34A) : AppColors.ink,
+                    color: order.isOnlyReadyMade ? AppColors.green : AppColors.ink,
                   ),
                 ),
                 const SizedBox(height: 2),

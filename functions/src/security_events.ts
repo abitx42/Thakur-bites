@@ -1,5 +1,6 @@
 import { onCall, HttpsError, CallableRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import * as crypto from 'crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
@@ -27,7 +28,11 @@ export const reportSecurityViolation = onCall(
     enforceAppCheck(request);
 
     const actorUid = request.auth?.uid || 'anonymous';
-    await enforceRateLimit(actorUid, 'security_report');
+    const rawDevId = typeof request.data?.deviceId === 'string' ? request.data.deviceId.trim().slice(0, 128) : '';
+    const clientIp = request.rawRequest?.ip || '0.0.0.0';
+    const anonHash = crypto.createHash('sha256').update(`${clientIp}_${rawDevId || 'anon'}`).digest('hex').slice(0, 16);
+    const actorKey = request.auth?.uid || `anon_${anonHash}`;
+    await enforceRateLimit(actorKey, 'security_report');
 
     const { violationType, deviceId, details = {} } = request.data || {};
 
@@ -91,21 +96,38 @@ export const reportSecurityViolation = onCall(
         }
       }
 
-      // Blacklist physical device hash
+      // Blacklist physical device hash for authenticated sessions, or quarantine for admin triage (TB-BUG-11)
       if (sanitizedDeviceId) {
-        const deviceRef = db.collection('bannedDevices').doc(sanitizedDeviceId);
-        batch.set(
-          deviceRef,
-          {
-            deviceId: sanitizedDeviceId,
-            bannedAt: now,
-            reason: type,
-            incidentId,
-            associatedUid: request.auth?.uid || null,
-            details,
-          },
-          { merge: true }
-        );
+        if (request.auth?.uid) {
+          const deviceRef = db.collection('bannedDevices').doc(sanitizedDeviceId);
+          batch.set(
+            deviceRef,
+            {
+              deviceId: sanitizedDeviceId,
+              bannedAt: now,
+              reason: type,
+              incidentId,
+              associatedUid: request.auth.uid,
+              details,
+            },
+            { merge: true }
+          );
+        } else {
+          // Unauthenticated reports are quarantined for admin triage rather than executing an instant DoS
+          const triageRef = db.collection('suspiciousDeviceReports').doc(`${sanitizedDeviceId}_${now.toMillis()}`);
+          batch.set(
+            triageRef,
+            {
+              deviceId: sanitizedDeviceId,
+              reportedAt: now,
+              reason: type,
+              incidentId,
+              details,
+              status: 'PENDING_ADMIN_TRIAGE',
+            },
+            { merge: true }
+          );
+        }
       }
 
       await batch.commit();

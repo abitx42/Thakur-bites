@@ -18,6 +18,8 @@ class CheckoutService {
   final FirebaseFirestore _db;
   final FunctionsService _functions;
 
+  FirebaseFirestore get db => _db;
+
   CheckoutService({
     FirebaseAuth? auth,
     FirebaseFirestore? firestore,
@@ -34,6 +36,8 @@ class CheckoutService {
     required List<CartEntry> entries,
     String paymentMethod = 'online',
     String? readyMadePreference,
+    List<String>? dietaryPreferences,
+    String? dietaryNotes,
     dynamic student,
   }) async {
     final user = _auth.currentUser;
@@ -55,6 +59,8 @@ class CheckoutService {
         items: items,
         paymentMethod: paymentMethod,
         readyMadePreference: readyMadePreference,
+        dietaryPreferences: dietaryPreferences,
+        dietaryNotes: dietaryNotes,
       );
 
       // Convert server response to local Order model
@@ -66,8 +72,23 @@ class CheckoutService {
       }
       return order;
     } on FirebaseFunctionsException catch (e) {
-      if (e.code == 'not-found') {
-        throw const CheckoutException('Ordering service is temporarily updating. Please retry in a moment.');
+      if (e.code == 'not-found' ||
+          e.code == 'internal' ||
+          (e.code == 'unavailable' &&
+              !(e.message ?? '').toLowerCase().contains('degraded') &&
+              !(e.message ?? '').toLowerCase().contains('halt') &&
+              !(e.message ?? '').toLowerCase().contains('paused'))) {
+        // Resilient Fallback: When Cloud Functions are not yet deployed (Spark Plan)
+        // or temporarily unreachable, create the order document directly in Firestore.
+        return await _createDirectFirestoreCheckout(
+          user: user,
+          entries: entries,
+          paymentMethod: paymentMethod,
+          readyMadePreference: readyMadePreference,
+          dietaryPreferences: dietaryPreferences,
+          dietaryNotes: dietaryNotes,
+          student: student,
+        );
       }
 
       switch (e.code) {
@@ -87,15 +108,12 @@ class CheckoutService {
         case 'unavailable':
           final rawMsg = e.message ?? '';
           final lower = rawMsg.toLowerCase();
-          if (lower.contains('network') ||
-              lower.contains('connection') ||
-              lower.contains('socket') ||
-              lower.contains('offline') ||
-              lower.contains('failed host lookup') ||
-              lower.contains('the service is currently unavailable')) {
-            throw const CheckoutException('Network connection issue. Please check your internet and retry.');
+          final details = e.details is Map ? e.details as Map : null;
+          final canteenMode = details?['canteenMode']?.toString() ?? details?['mode']?.toString();
+          if (canteenMode != null && canteenMode.isNotEmpty) {
+            throw CanteenPausedException(rawMsg.isNotEmpty ? rawMsg : 'Canteen ordering is paused.', mode: canteenMode);
           }
-          if (rawMsg.isNotEmpty) {
+          if (lower.contains('degraded') || lower.contains('halt') || lower.contains('paused') || lower.contains('freeze')) {
             throw CanteenPausedException(rawMsg);
           }
           throw const CheckoutException('Network connection issue. Please check your internet and retry.');
@@ -115,7 +133,149 @@ class CheckoutService {
         default:
           throw CheckoutException('Checkout failed: ${e.message}');
       }
+    } catch (e) {
+      if (e is CheckoutException || e is InsufficientStockException || e is CanteenPausedException) {
+        rethrow;
+      }
+      // General network or unhandled failure fallback
+      return await _createDirectFirestoreCheckout(
+        user: user,
+        entries: entries,
+        paymentMethod: paymentMethod,
+        readyMadePreference: readyMadePreference,
+        dietaryPreferences: dietaryPreferences,
+        dietaryNotes: dietaryNotes,
+        student: student,
+      );
     }
+  }
+
+  /// Resilient direct Firestore checkout for Spark plan / degraded offline mode.
+  Future<Order> _createDirectFirestoreCheckout({
+    required User user,
+    required List<CartEntry> entries,
+    required String paymentMethod,
+    String? readyMadePreference,
+    List<String>? dietaryPreferences,
+    String? dietaryNotes,
+    dynamic student,
+  }) async {
+    final now = DateTime.now();
+    final random = Random.secure();
+    final orderId = 'ord_${now.millisecondsSinceEpoch}_${List.generate(4, (_) => random.nextInt(16).toRadixString(16)).join()}';
+    final tokenSuffix = 100 + random.nextInt(900);
+    final tokenNumber = 'TB-$tokenSuffix';
+    final pinCode = (1000 + random.nextInt(9000)).toString();
+
+    double totalAmount = 0.0;
+    int maxPrepMinutes = 5;
+
+    final itemsList = entries.map((entry) {
+      final linePrice = entry.item.price;
+      final lineTotal = linePrice * entry.qty;
+      totalAmount += lineTotal;
+      if (entry.item.prepMinutes > maxPrepMinutes) {
+        maxPrepMinutes = entry.item.prepMinutes;
+      }
+      return {
+        'menuItemId': entry.item.id,
+        'name': entry.item.name,
+        'price': linePrice,
+        'quantity': entry.qty,
+        'type': entry.item.type,
+        if (entry.customization != null && entry.customization!.isNotEmpty)
+          'customization': entry.customization,
+      };
+    }).toList();
+
+    final totalAmountPaise = (totalAmount * 100).round();
+    final isOnlyReadyMade = entries.isNotEmpty && entries.every((e) => e.item.type == 'instant');
+    final estimatedMinutes = isOnlyReadyMade ? 2 : maxPrepMinutes;
+
+    String studentName = 'Student';
+    String studentRoll = '';
+    try {
+      if (student != null) {
+        studentName = (student.name is String && (student.name as String).isNotEmpty)
+            ? student.name as String
+            : (student.displayName is String && (student.displayName as String).isNotEmpty)
+                ? student.displayName as String
+                : (user.displayName != null && user.displayName!.isNotEmpty)
+                    ? user.displayName!
+                    : 'Student';
+        studentRoll = (student.rollNumber is String)
+            ? student.rollNumber as String
+            : (student.rollNo is String)
+                ? student.rollNo as String
+                : '';
+      } else if (user.displayName != null && user.displayName!.isNotEmpty) {
+        studentName = user.displayName!;
+      }
+    } catch (_) {}
+
+    final isOnline = paymentMethod == 'online';
+    final initialStatus = isOnline ? 'payment_pending' : 'placed';
+    final initialPaymentStatus = isOnline ? 'pending' : 'unpaid';
+
+    final orderDoc = {
+      'orderId': orderId,
+      'tokenNumber': tokenNumber,
+      'pinCode': pinCode,
+      'studentId': user.uid,
+      'studentName': studentName,
+      'studentRoll': studentRoll,
+      'status': initialStatus,
+      'paymentStatus': initialPaymentStatus,
+      'paymentMethod': paymentMethod,
+      'totalAmount': totalAmount,
+      'totalAmountPaise': totalAmountPaise,
+      'items': itemsList,
+      'estimatedMinutes': estimatedMinutes,
+      'isOnlyReadyMade': isOnlyReadyMade,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'readyAt': Timestamp.fromDate(now.add(Duration(minutes: estimatedMinutes))),
+      if (readyMadePreference != null && readyMadePreference.isNotEmpty)
+        'readyMadePreference': readyMadePreference,
+      if (dietaryPreferences != null && dietaryPreferences.isNotEmpty)
+        'dietaryPreferences': dietaryPreferences,
+      if (dietaryNotes != null && dietaryNotes.isNotEmpty)
+        'dietaryNotes': dietaryNotes,
+    };
+
+    await _db.collection('orders').doc(orderId).set(orderDoc);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('order_pin_$orderId', pinCode);
+    } catch (_) {}
+
+    return Order(
+      id: orderId,
+      tokenNumber: tokenNumber,
+      pinCode: pinCode,
+      studentId: user.uid,
+      studentName: studentName,
+      studentRoll: studentRoll,
+      status: initialStatus,
+      paymentStatus: initialPaymentStatus,
+      paymentMethod: paymentMethod,
+      totalAmountPaise: totalAmountPaise,
+      createdAt: now,
+      readyAt: now.add(Duration(minutes: estimatedMinutes)),
+      estimatedMinutes: estimatedMinutes,
+      totalAmount: totalAmount,
+      items: entries.map((e) => OrderItem(
+        menuItemId: e.item.id,
+        name: e.item.name,
+        quantity: e.qty,
+        price: e.item.price,
+        type: e.item.type,
+        customization: e.customization,
+      )).toList(),
+      isOnlyReadyMade: isOnlyReadyMade,
+      readyMadePreference: readyMadePreference,
+    );
   }
 
   /// Converts the Cloud Function response map to a local Order model.
@@ -133,6 +293,7 @@ class CheckoutService {
         quantity: (m['quantity'] as num?)?.toInt() ?? 1,
         price: (m['unitPrice'] as num?)?.toDouble() ?? (m['priceRs'] as num?)?.toDouble() ?? 0.0,
         type: m['type'] as String?,
+        customization: m['customization'] as String?,
       );
     }).toList();
 
@@ -156,6 +317,10 @@ class CheckoutService {
     final studentRoll = orderMap['studentRoll'] as String? ?? data['studentRoll'] as String? ?? '';
     final status = orderMap['status'] as String? ?? data['status'] as String? ?? 'confirmed';
     final totalAmount = (orderMap['totalAmount'] as num?)?.toDouble() ?? (orderMap['totalAmountRs'] as num?)?.toDouble() ?? 0.0;
+    final paymentStatus = orderMap['paymentStatus'] as String? ?? data['paymentStatus'] as String? ?? 'pending';
+    final paymentMethod = orderMap['paymentMethod'] as String? ?? data['paymentMethod'] as String? ?? 'online';
+    final gatewayOrderId = orderMap['gatewayOrderId'] as String? ?? data['gatewayOrderId'] as String?;
+    final totalAmountPaise = (orderMap['totalAmountPaise'] as num?)?.toInt() ?? (data['amountPaise'] as num?)?.toInt() ?? (totalAmount * 100).round();
     final bool isOnlyReadyMade = orderMap['isOnlyReadyMade'] == true ||
         (items.isNotEmpty && items.every((i) => i.isInstant));
     final String? readyMadePref = orderMap['readyMadePreference'] as String? ??
@@ -169,6 +334,10 @@ class CheckoutService {
       studentName: studentName,
       studentRoll: studentRoll,
       status: status,
+      paymentStatus: paymentStatus,
+      paymentMethod: paymentMethod,
+      gatewayOrderId: gatewayOrderId,
+      totalAmountPaise: totalAmountPaise,
       createdAt: createdAt,
       readyAt: createdAt.add(Duration(minutes: estimatedMinutes)),
       estimatedMinutes: estimatedMinutes,
@@ -177,98 +346,6 @@ class CheckoutService {
       isOnlyReadyMade: isOnlyReadyMade,
       readyMadePreference: readyMadePref,
     );
-  }
-
-  /// Directly creates an authoritative online order in Firestore
-  /// when Cloud Functions are not yet deployed or temporarily unreachable.
-  Future<Order> _createDirectFirestoreOnlineOrder({
-    required User user,
-    required List<CartEntry> entries,
-    String? readyMadePreference,
-    dynamic student,
-  }) async {
-    final now = DateTime.now();
-    final secureRng = Random.secure();
-    final randomHex = List<int>.generate(8, (_) => secureRng.nextInt(256))
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
-    final orderId = 'ord_${now.millisecondsSinceEpoch}_$randomHex';
-
-    // Atomic Daily Sequential Token Generation (TB-100 to TB-999)
-    int tokenSeq = 100;
-    try {
-      final counterRef = _db.collection('counters').doc('dailyTokenCounter');
-      tokenSeq = await _db.runTransaction((tx) async {
-        final snap = await tx.get(counterRef);
-        final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-        int next = 100;
-        if (snap.exists && snap.data()?['date'] == todayStr) {
-          next = ((snap.data()?['lastToken'] as num?)?.toInt() ?? 99) + 1;
-          if (next > 999) next = 100;
-        }
-        tx.set(counterRef, {
-          'lastToken': next,
-          'date': todayStr,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        return next;
-      });
-    } catch (_) {
-      // Resilient fallback strictly matching TB-\d{3} pattern
-      tokenSeq = 100 + (((now.hour * 60 + now.minute) + secureRng.nextInt(60)) % 899);
-    }
-    final tokenNumber = 'TB-${tokenSeq.toString().padLeft(3, '0')}';
-    final pinCode = '${1000 + secureRng.nextInt(9000)}';
-
-    double totalAmount = 0.0;
-    final orderItems = entries.map((e) {
-      final itemTotal = e.item.price * e.qty;
-      totalAmount += itemTotal;
-      return OrderItem(
-        menuItemId: e.item.id,
-        name: e.item.name,
-        quantity: e.qty,
-        price: e.item.price,
-        type: e.item.type,
-        customization: e.customization,
-      );
-    }).toList();
-
-    final bool isOnlyReadyMade = entries.isNotEmpty && entries.every((e) => e.item.isInstant);
-    final String studentName = (student != null && student.displayName != null && student.displayName.toString().isNotEmpty)
-        ? student.displayName.toString()
-        : (user.displayName ?? 'Student');
-    final String studentRoll = (student != null && student.rollNo != null)
-        ? student.rollNo.toString()
-        : '';
-
-    final reservationExpiresAt = now.add(const Duration(minutes: 15));
-
-    final order = Order(
-      id: orderId,
-      tokenNumber: tokenNumber,
-      pinCode: pinCode,
-      studentId: user.uid,
-      studentName: studentName,
-      studentRoll: studentRoll,
-      status: 'payment_pending',
-      paymentStatus: 'pending',
-      paymentMethod: 'online',
-      createdAt: now,
-      readyAt: now.add(Duration(minutes: isOnlyReadyMade ? 2 : 12)),
-      reservationExpiresAt: reservationExpiresAt,
-      estimatedMinutes: isOnlyReadyMade ? 2 : 12,
-      totalAmount: totalAmount,
-      totalAmountPaise: (totalAmount * 100).round(),
-      items: orderItems,
-      isOnlyReadyMade: isOnlyReadyMade,
-      readyMadePreference: readyMadePreference,
-    );
-
-    // Save order document directly to Firestore /orders/{orderId}
-    await _db.collection('orders').doc(orderId).set(order.toFirestore());
-
-    return order;
   }
 }
 

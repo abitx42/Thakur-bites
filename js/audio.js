@@ -4,6 +4,17 @@
 class SoundFX {
   constructor() {
     this.ctx = null;
+    this._attachWakeListeners();
+  }
+
+  _attachWakeListeners() {
+    if (typeof window === 'undefined') return;
+    const wake = () => {
+      this.unlockAudio();
+    };
+    ['click', 'keydown', 'touchstart', 'pointerdown'].forEach(evt => {
+      window.addEventListener(evt, wake, { once: true, passive: true });
+    });
   }
 
   _initContext() {
@@ -14,7 +25,14 @@ class SoundFX {
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
+    }
+  }
+
+  unlockAudio() {
+    this._initContext();
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
     }
   }
 
@@ -39,6 +57,10 @@ class SoundFX {
 
       osc.connect(gain);
       gain.connect(this.ctx.destination);
+
+      osc.onended = () => {
+        try { gain.disconnect(); osc.disconnect(); } catch (_) {}
+      };
 
       osc.start(now);
       osc.stop(now + 0.4);
@@ -72,6 +94,10 @@ class SoundFX {
         osc.connect(gain);
         gain.connect(this.ctx.destination);
 
+        osc.onended = () => {
+          try { gain.disconnect(); osc.disconnect(); } catch (_) {}
+        };
+
         osc.start(start);
         osc.stop(start + 0.3);
       });
@@ -101,6 +127,10 @@ class SoundFX {
 
       osc.connect(gain);
       gain.connect(this.ctx.destination);
+
+      osc.onended = () => {
+        try { gain.disconnect(); osc.disconnect(); } catch (_) {}
+      };
 
       osc.start(now);
       osc.stop(now + 0.5);

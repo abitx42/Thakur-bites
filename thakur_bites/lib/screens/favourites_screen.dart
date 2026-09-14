@@ -72,15 +72,19 @@ class FavouritesScreen extends StatelessWidget {
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 20),
-                    ElevatedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.red,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    Semantics(
+                      button: true,
+                      label: 'Explore canteen menu',
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.red,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusMd),
+                        ),
+                        child: Text('Explore Menu 🍱', style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white)),
                       ),
-                      child: Text('Explore Menu 🍱', style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white)),
                     ),
                   ],
                 ),

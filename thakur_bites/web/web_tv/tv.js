@@ -19,8 +19,10 @@ const app = initializeApp(firebaseConfig, 'TB_TV_DISPLAY');
 const db = getFirestore(app);
 
 // DOM Elements
+const confirmedGrid = document.getElementById('confirmed-grid');
 const preparingGrid = document.getElementById('preparing-grid');
 const readyGrid = document.getElementById('ready-grid');
+const confirmedCountEl = document.getElementById('confirmed-count');
 const preparingCountEl = document.getElementById('preparing-count');
 const readyCountEl = document.getElementById('ready-count');
 const statusPill = document.getElementById('connection-status-pill');
@@ -38,23 +40,52 @@ let currentUnsubscribe = null;
 let reconnectDelayMs = 5000;
 const MAX_RECONNECT_DELAY_MS = 60000;
 
-// Initialize Web Audio API on first user interaction
+// Initialize Web Audio API on user interaction or wake-up
 function initAudio() {
-  if (!audioContext) {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioBanner) audioBanner.classList.add('hidden');
+  try {
+    if (!audioContext) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        audioContext = new AudioCtx();
+      }
+    }
+    if (audioContext && audioContext.state === 'suspended') {
+      audioContext.resume().catch(() => {});
+    }
+    if (audioBanner) {
+      audioBanner.classList.add('hidden');
+    }
+  } catch (err) {
+    console.warn("Audio init notice:", err);
   }
 }
 
-document.body.addEventListener('click', initAudio, { once: true });
-document.body.addEventListener('keydown', initAudio, { once: true });
+['click', 'keydown', 'touchstart', 'pointerdown'].forEach(evt => {
+  window.addEventListener(evt, initAudio, { passive: true });
+});
+if (audioBanner) {
+  audioBanner.addEventListener('click', initAudio);
+}
 
 /**
  * Synthesizes a clean, pleasant two-tone counter chime (800Hz -> 1060Hz)
  * Zero external MP3 downloads or network dependencies.
  */
 function playReadyChime() {
-  if (!audioContext) return;
+  if (!audioContext) {
+    initAudio();
+  }
+  if (!audioContext) {
+    if (audioBanner) {
+      audioBanner.classList.remove('hidden');
+      audioBanner.style.background = '#DC2626';
+      audioBanner.innerHTML = '<span>⚠️ AUDIO MUTED: Tap screen or press remote to enable pick-up chime!</span>';
+    }
+    return;
+  }
+  if (audioContext.state === 'suspended') {
+    audioContext.resume().catch(() => {});
+  }
 
   try {
     const now = audioContext.currentTime;
@@ -68,6 +99,14 @@ function playReadyChime() {
     gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
     osc1.connect(gain1);
     gain1.connect(audioContext.destination);
+
+    osc1.onended = () => {
+      try {
+        gain1.disconnect();
+        osc1.disconnect();
+      } catch (_) {}
+    };
+
     osc1.start(now);
     osc1.stop(now + 0.4);
 
@@ -80,6 +119,14 @@ function playReadyChime() {
     gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
     osc2.connect(gain2);
     gain2.connect(audioContext.destination);
+
+    osc2.onended = () => {
+      try {
+        gain2.disconnect();
+        osc2.disconnect();
+      } catch (_) {}
+    };
+
     osc2.start(now + 0.15);
     osc2.stop(now + 0.7);
   } catch (err) {
@@ -115,12 +162,25 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+const MAX_PER_SECTION = 8;
+
 /**
  * Render Tokens from the single sanitized publicLiveQueue/current projection
  */
 function renderQueueData(data) {
+  const confirmedTickets = Array.isArray(data?.confirmed) ? data.confirmed : [];
   const preparingTickets = Array.isArray(data?.preparing) ? data.preparing : [];
   const readyTickets = Array.isArray(data?.ready) ? data.ready : [];
+
+  const MAX_VISIBLE_CONFIRMED = 6;
+  const visibleConfirmed = confirmedTickets.slice(0, MAX_VISIBLE_CONFIRMED);
+  const overflowConfirmed = Math.max(0, confirmedTickets.length - MAX_VISIBLE_CONFIRMED);
+
+  const visiblePreparing = preparingTickets.slice(0, MAX_PER_SECTION);
+  const overflowPreparing = Math.max(0, preparingTickets.length - MAX_PER_SECTION);
+
+  const visibleReady = readyTickets.slice(0, MAX_PER_SECTION);
+  const overflowReady = Math.max(0, readyTickets.length - MAX_PER_SECTION);
 
   // Check for newly ready orders to trigger chime
   let hasNewReady = false;
@@ -148,51 +208,99 @@ function renderQueueData(data) {
   }
 
   // Update Counters
-  preparingCountEl.textContent = preparingTickets.length;
-  readyCountEl.textContent = readyTickets.length;
+  if (confirmedCountEl) confirmedCountEl.textContent = confirmedTickets.length;
+  if (preparingCountEl) preparingCountEl.textContent = preparingTickets.length;
+  if (readyCountEl) readyCountEl.textContent = readyTickets.length;
 
-  // Render Preparing Grid
-  if (preparingTickets.length === 0) {
-    preparingGrid.innerHTML = `
-      <div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 1rem;">
-        No tickets currently in kitchen queue
-      </div>
-    `;
-  } else {
-    preparingGrid.innerHTML = preparingTickets.map(item => {
-      const etaLabel = typeof item.estimatedMinutes === 'number' && item.estimatedMinutes > 0
-        ? `Est. ~${item.estimatedMinutes}m`
-        : `Est. Pending`;
-
-      return `
-        <div class="token-card preparing">
-          <div class="token-number">${escapeHtml(item.token || 'TB-???')}</div>
-          <div class="token-eta">${etaLabel}</div>
+  // 1. Render Confirmed Grid
+  if (confirmedGrid) {
+    if (confirmedTickets.length === 0) {
+      confirmedGrid.innerHTML = `
+        <div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 1rem;">
+          No incoming orders waiting
         </div>
       `;
-    }).join('');
+    } else {
+      let html = visibleConfirmed.map((item, idx) => `
+        <div class="token-card confirmed">
+          <div class="token-number">${escapeHtml(item.token || 'TB-???')}</div>
+          <div class="token-status">IN QUEUE &middot; #${idx + 1}</div>
+        </div>
+      `).join('');
+
+      if (overflowConfirmed > 0) {
+        html += `
+          <div class="token-overflow-pill confirmed">
+            +${overflowConfirmed} more in queue...
+          </div>
+        `;
+      }
+      confirmedGrid.innerHTML = html;
+    }
   }
 
-  // Render Ready Grid
-  if (readyTickets.length === 0) {
-    readyGrid.innerHTML = `
-      <div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 1rem;">
-        Ready orders will appear here
-      </div>
-    `;
-  } else {
-    readyGrid.innerHTML = readyTickets.map(item => {
-      return `
-        <div class="token-card ready">
-          <div class="token-number">${escapeHtml(item.token || 'TB-???')}</div>
-          <div class="token-ready-label">COLLECT AT COUNTER</div>
+  // 2. Render Preparing Grid
+  if (preparingGrid) {
+    if (preparingTickets.length === 0) {
+      preparingGrid.innerHTML = `
+        <div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 1rem;">
+          No tickets currently in kitchen queue
         </div>
       `;
-    }).join('');
+    } else {
+      let html = visiblePreparing.map(item => {
+        const etaLabel = typeof item.estimatedMinutes === 'number' && item.estimatedMinutes > 0
+          ? `Est. ~${item.estimatedMinutes}m`
+          : `Cooking 🔥`;
+
+        return `
+          <div class="token-card preparing">
+            <div class="token-number">${escapeHtml(item.token || 'TB-???')}</div>
+            <div class="token-eta">${etaLabel}</div>
+          </div>
+        `;
+      }).join('');
+
+      if (overflowPreparing > 0) {
+        html += `
+          <div class="token-overflow-pill preparing">
+            +${overflowPreparing} more cooking...
+          </div>
+        `;
+      }
+      preparingGrid.innerHTML = html;
+    }
+  }
+
+  // 3. Render Ready Grid
+  if (readyGrid) {
+    if (readyTickets.length === 0) {
+      readyGrid.innerHTML = `
+        <div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 1rem;">
+          Ready orders will appear here
+        </div>
+      `;
+    } else {
+      let html = visibleReady.map(item => `
+        <div class="token-card ready">
+          <div class="token-number">${escapeHtml(item.token || 'TB-???')}</div>
+          <div class="token-ready-label">COLLECT AT COUNTER 🟢</div>
+        </div>
+      `).join('');
+
+      if (overflowReady > 0) {
+        html += `
+          <div class="token-overflow-pill ready">
+            +${overflowReady} more ready...
+          </div>
+        `;
+      }
+      readyGrid.innerHTML = html;
+    }
   }
 
   // Standby Overlay State: If total active count is 0, show Standby Card
-  const totalActive = preparingTickets.length + readyTickets.length;
+  const totalActive = confirmedTickets.length + preparingTickets.length + readyTickets.length;
   if (totalActive === 0) {
     standbyOverlay.classList.remove('hidden');
   } else {
@@ -252,7 +360,7 @@ function startTVStream() {
         if (snapshot.exists()) {
           renderQueueData(snapshot.data());
         } else {
-          renderQueueData({ preparing: [], ready: [] });
+          renderQueueData({ confirmed: [], preparing: [], ready: [] });
         }
       },
       (error) => {

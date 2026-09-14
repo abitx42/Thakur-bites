@@ -164,6 +164,18 @@ export function validateFileBuffer(buffer: Buffer): FileValidationResult {
     buffer[10] === 0x42 &&
     buffer[11] === 0x50
   ) {
+    // Scan preview chunk for HTML/SVG polyglot tags (BUG-06)
+    const sample = buffer.subarray(0, Math.min(buffer.length, 2048)).toString('latin1');
+    for (const token of DANGEROUS_HTML_TOKENS) {
+      if (token.test(sample)) {
+        return {
+          isValid: false,
+          hasActiveContent: true,
+          rejectionReason: 'WebP file contains embedded script/HTML polyglot payload.',
+        };
+      }
+    }
+
     return {
       isValid: true,
       detectedType: 'WEBP',
@@ -231,8 +243,9 @@ export async function validateAndQuarantineFile(
       return { safe: false, reason: `File size (${fileSize} bytes) exceeds 5 MB limit.` };
     }
 
-    // Read initial 64 KB for magic bytes and active content check
-    const [buffer] = await file.download({ start: 0, end: Math.min(fileSize, 64 * 1024) - 1 });
+    // Read up to 512 KB for magic bytes and active content check (BUG-07)
+    const scanLimit = Math.min(fileSize, 512 * 1024);
+    const [buffer] = await file.download({ start: 0, end: scanLimit - 1 });
     const validation = validateFileBuffer(buffer);
 
     if (!validation.isValid) {

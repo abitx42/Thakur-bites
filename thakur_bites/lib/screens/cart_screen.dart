@@ -89,18 +89,18 @@ class _CartScreenState extends State<CartScreen> {
                   margin: const EdgeInsets.fromLTRB(18, 12, 18, 0),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEE2E2),
-                    border: Border.all(color: const Color(0xFFFCA5A5), width: 1),
-                    borderRadius: BorderRadius.circular(10),
+                    color: AppColors.dangerBg,
+                    border: Border.all(color: AppColors.danger.withAlpha(100), width: 1),
+                    borderRadius: AppRadius.radiusMd,
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.warning_amber_rounded, size: 20, color: AppColors.red),
+                      const Icon(Icons.warning_amber_rounded, size: 20, color: AppColors.danger),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           '${cart.outOfStockCount} item(s) in your cart are no longer available.',
-                          style: AppFonts.body(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.red),
+                          style: AppFonts.body(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.danger),
                         ),
                       ),
                       GestureDetector(
@@ -111,8 +111,8 @@ class _CartScreenState extends State<CartScreen> {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: AppColors.red,
-                            borderRadius: BorderRadius.circular(6),
+                            color: AppColors.danger,
+                            borderRadius: AppRadius.radiusSm,
                           ),
                           child: Text(
                             'Remove',
@@ -134,18 +134,18 @@ class _CartScreenState extends State<CartScreen> {
                   margin: const EdgeInsets.fromLTRB(18, 12, 18, 0),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEF3C7),
-                    border: Border.all(color: const Color(0xFFF59E0B), width: 1),
-                    borderRadius: BorderRadius.circular(10),
+                    color: AppColors.warningBg,
+                    border: Border.all(color: AppColors.warning.withAlpha(100), width: 1),
+                    borderRadius: AppRadius.radiusMd,
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline_rounded, size: 20, color: Color(0xFFB45309)),
+                      const Icon(Icons.info_outline_rounded, size: 20, color: AppColors.mustardInk),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           '${cart.priceChangeAlerts.length} item(s) updated prices while you were away.',
-                          style: AppFonts.body(fontSize: 12, fontWeight: FontWeight.w600, color: const Color(0xFF92400E)),
+                          style: AppFonts.body(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.mustardInk),
                         ),
                       ),
                       GestureDetector(
@@ -156,8 +156,8 @@ class _CartScreenState extends State<CartScreen> {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFB45309),
-                            borderRadius: BorderRadius.circular(6),
+                            color: AppColors.mustardInk,
+                            borderRadius: AppRadius.radiusSm,
                           ),
                           child: Text(
                             'OK',
@@ -270,14 +270,14 @@ class _CartItemRow extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: isAvailable ? AppColors.surface2 : const Color(0xFFFEE2E2),
+              color: isAvailable ? AppColors.surface2 : AppColors.dangerBg,
               shape: BoxShape.circle,
             ),
             child: Center(
               child: Icon(
                 _iconForKey(item.iconKey),
                 size: 20,
-                color: isAvailable ? AppColors.ink : AppColors.red,
+                color: isAvailable ? AppColors.ink : AppColors.danger,
               ),
             ),
           ),
@@ -302,7 +302,7 @@ class _CartItemRow extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
                       color: AppColors.mustardSoft,
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: AppRadius.radiusSm,
                       border: Border.all(color: AppColors.mustardInk.withAlpha(50), width: 0.8),
                     ),
                     child: Text(
@@ -321,16 +321,16 @@ class _CartItemRow extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFEF3C7),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: const Color(0xFFFDE68A), width: 0.8),
+                        color: AppColors.warningBg,
+                        borderRadius: AppRadius.radiusSm,
+                        border: Border.all(color: AppColors.warning.withAlpha(100), width: 0.8),
                       ),
                       child: Text(
                         '⚠️ Chapatis finished: Kitchen will fulfill with fresh puris',
                         style: AppFonts.body(
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
-                          color: const Color(0xFF92400E),
+                          color: AppColors.mustardInk,
                         ),
                       ),
                     ),
@@ -341,16 +341,16 @@ class _CartItemRow extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFEF3C7),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: const Color(0xFFFDE68A), width: 0.8),
+                        color: AppColors.warningBg,
+                        borderRadius: AppRadius.radiusSm,
+                        border: Border.all(color: AppColors.warning.withAlpha(100), width: 0.8),
                       ),
                       child: Text(
                         '⚠️ Puris finished: Kitchen will fulfill with fresh tawa rotis',
                         style: AppFonts.body(
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
-                          color: const Color(0xFF92400E),
+                          color: AppColors.mustardInk,
                         ),
                       ),
                     ),
@@ -361,12 +361,12 @@ class _CartItemRow extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFEE2E2),
-                      borderRadius: BorderRadius.circular(4),
+                      color: AppColors.dangerBg,
+                      borderRadius: AppRadius.radiusSm,
                     ),
                     child: Text(
                       'No longer available',
-                      style: AppFonts.mono(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.red),
+                      style: AppFonts.mono(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.danger),
                     ),
                   ),
                 ] else ...[
@@ -533,9 +533,9 @@ class ReadyMadePreferenceCard extends StatelessWidget {
       margin: const EdgeInsets.only(top: 8, bottom: 16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0FDF4),
-        border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
-        borderRadius: BorderRadius.circular(16),
+        color: AppColors.successBg,
+        border: Border.all(color: AppColors.green.withAlpha(100), width: 1.5),
+        borderRadius: AppRadius.radiusLg,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -545,9 +545,9 @@ class ReadyMadePreferenceCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFDCFCE7),
+                  color: AppColors.successBg,
                   shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF86EFAC), width: 1),
+                  border: Border.all(color: AppColors.green.withAlpha(100), width: 1),
                 ),
                 child: const Text('⚡', style: TextStyle(fontSize: 18)),
               ),
@@ -569,8 +569,8 @@ class ReadyMadePreferenceCard extends StatelessWidget {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF16A34A),
-                            borderRadius: BorderRadius.circular(6),
+                            color: AppColors.green,
+                            borderRadius: AppRadius.radiusSm,
                           ),
                           child: Text(
                             '0 MIN WAIT',
@@ -581,8 +581,8 @@ class ReadyMadePreferenceCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'No kitchen cooking required! Pick up immediately at Express Counter.',
-                      style: AppFonts.body(fontSize: 11.5, color: const Color(0xFF166534)),
+                      'No kitchen cooking required! Directly head to counter to collect your order.',
+                      style: AppFonts.body(fontSize: 11.5, color: AppColors.greenInk),
                     ),
                   ],
                 ),
@@ -590,13 +590,13 @@ class ReadyMadePreferenceCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          const Divider(color: Color(0xFFBBF7D0), height: 1),
+          Divider(color: AppColors.green.withAlpha(50), height: 1),
           const SizedBox(height: 10),
 
           // ── Temperature Preference ──
           Text(
             hasBeverage ? '🥤 Beverage Temperature Preference:' : '❄️ Temperature Preference:',
-            style: AppFonts.body(fontSize: 12, fontWeight: FontWeight.w700, color: const Color(0xFF14532D)),
+            style: AppFonts.body(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.greenInk),
           ),
           const SizedBox(height: 8),
           Row(
@@ -621,51 +621,21 @@ class ReadyMadePreferenceCard extends StatelessWidget {
             ],
           ),
 
-          const SizedBox(height: 12),
-
-          // ── Packaging / Handover Preference ──
-          Text(
-            '🛍️ Packaging & Pickup Mode:',
-            style: AppFonts.body(fontSize: 12, fontWeight: FontWeight.w700, color: const Color(0xFF14532D)),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              _buildChoiceChip(
-                label: 'Direct Handover ✋',
-                selected: cart.packagingPreference.contains('Direct'),
-                onTap: () {
-                  HapticFeedback.selectionClick();
-                  cart.setPackagingPreference('Direct Handover ✋');
-                },
-              ),
-              const SizedBox(width: 8),
-              _buildChoiceChip(
-                label: 'Carry Bag 🛍️',
-                selected: cart.packagingPreference.contains('Bag'),
-                onTap: () {
-                  HapticFeedback.selectionClick();
-                  cart.setPackagingPreference('Carry Bag 🛍️');
-                },
-              ),
-            ],
-          ),
-
           const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: const Color(0xFFDCFCE7),
-              borderRadius: BorderRadius.circular(8),
+              color: AppColors.successBg,
+              borderRadius: AppRadius.radiusSm,
             ),
             child: Row(
               children: [
-                const Icon(Icons.check_circle_outline_rounded, size: 14, color: Color(0xFF15803D)),
+                const Icon(Icons.check_circle_outline_rounded, size: 14, color: AppColors.greenInk),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     'Preference: ${cart.readyMadePreferenceSummary}',
-                    style: AppFonts.mono(fontSize: 11, fontWeight: FontWeight.w700, color: const Color(0xFF15803D)),
+                    style: AppFonts.mono(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.greenInk),
                   ),
                 ),
               ],
@@ -688,10 +658,10 @@ class ReadyMadePreferenceCard extends StatelessWidget {
           duration: const Duration(milliseconds: 150),
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
           decoration: BoxDecoration(
-            color: selected ? const Color(0xFF16A34A) : Colors.white,
-            borderRadius: BorderRadius.circular(10),
+            color: selected ? AppColors.green : Colors.white,
+            borderRadius: AppRadius.radiusMd,
             border: Border.all(
-              color: selected ? const Color(0xFF15803D) : const Color(0xFF86EFAC),
+              color: selected ? AppColors.greenInk : AppColors.green.withAlpha(100),
               width: 1.5,
             ),
           ),
@@ -701,7 +671,7 @@ class ReadyMadePreferenceCard extends StatelessWidget {
             style: AppFonts.body(
               fontSize: 12,
               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              color: selected ? Colors.white : const Color(0xFF166534),
+              color: selected ? Colors.white : AppColors.greenInk,
             ),
           ),
         ),
@@ -727,15 +697,44 @@ class _CartSummaryState extends State<_CartSummary> {
   String? _currentIdempotencyKey;
   app.Order? _activePendingOrder;
   bool _isProcessing = false;
+  bool _tapLocked = false;
   final String _selectedPaymentMethod = 'online';
 
+  @override
+  void initState() {
+    super.initState();
+    _restoreActiveOrder();
+  }
+
+  Future<void> _restoreActiveOrder() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedOrderId = prefs.getString('active_order_id');
+      if (savedOrderId != null && savedOrderId.isNotEmpty) {
+        final snap = await FirebaseFirestore.instance.collection('orders').doc(savedOrderId).get();
+        if (snap.exists && mounted) {
+          final order = app.Order.fromFirestore(snap.id, snap.data() ?? {});
+          if (order.isPaymentPending && !order.isCancelled) {
+            setState(() {
+              _activePendingOrder = order;
+            });
+          } else {
+            await prefs.remove('active_order_id');
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
   Future<void> _handleConfirmAndPay() async {
-    if (_isProcessing) return;
+    if (_isProcessing || _tapLocked) return;
+    _tapLocked = true;
     final cart = widget.cart;
     final authProvider = context.read<AuthProvider>();
 
     // If browsing as guest or unauthenticated, prompt to sign in before checkout
     if (!authProvider.isLoggedIn || authProvider.currentProfile == null || authProvider.isGuest) {
+      _tapLocked = false;
       LoginSheet.show(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -750,6 +749,7 @@ class _CartSummaryState extends State<_CartSummary> {
 
     // 1. If cart has items that went completely unavailable, prompt to clean
     if (cart.hasOutOfStockItems) {
+      _tapLocked = false;
       _showOutOfStockAlert(cart.outOfStockEntries);
       return;
     }
@@ -771,6 +771,7 @@ class _CartSummaryState extends State<_CartSummary> {
         }
 
         setState(() => _isProcessing = false);
+        _tapLocked = false;
 
         if (mounted) {
           _showStockLimitedAlert(stockIssues);
@@ -808,12 +809,20 @@ class _CartSummaryState extends State<_CartSummary> {
         // Reuse current pending order session
         order = _activePendingOrder!;
       } else {
-        // Cancel prior pending order if cart items or totals changed (TB-R2-004)
+        // Cancel prior pending order if cart items or totals changed (TB-R2-004 & TB-BUG-05)
         if (_activePendingOrder != null) {
           final oldOrderId = _activePendingOrder!.id;
           _activePendingOrder = null;
-          FunctionsService().cancelOrder(orderId: oldOrderId, reason: 'Cart modified before payment retry')
-              .catchError((_) {});
+          // Guard: Verify order is not captured/paid before issuing cancellation
+          FirebaseFirestore.instance.collection('orders').doc(oldOrderId).get().then((snap) {
+            if (snap.exists) {
+              final status = snap.data()?['paymentStatus'];
+              if (status != 'paid' && status != 'captured') {
+                FunctionsService().cancelOrder(orderId: oldOrderId, reason: 'Cart modified before payment retry')
+                    .catchError((_) => <String, dynamic>{});
+              }
+            }
+          }).catchError((_) {});
         }
 
         // Explicitly clear old idempotency key so retry generates fresh session
@@ -825,6 +834,8 @@ class _CartSummaryState extends State<_CartSummary> {
           entries: cart.entries,
           paymentMethod: _selectedPaymentMethod,
           readyMadePreference: cart.isOnlyReadyMade ? cart.readyMadePreferenceSummary : null,
+          dietaryPreferences: null,
+          dietaryNotes: null,
           student: student,
         );
         _activePendingOrder = order;
@@ -840,45 +851,61 @@ class _CartSummaryState extends State<_CartSummary> {
         await prefs.setString('active_order_id', order.id);
       } catch (_) {}
 
-      // 4. Online Payment via Razorpay
-      try {
-        final paymentService = PaymentService();
-        await paymentService.initiateOnlinePayment(
-          orderId: order.id,
-          totalAmountRs: order.totalAmount,
-          studentName: student?.displayName ?? order.studentName ?? 'Student',
-          studentEmail: student?.email ?? 'student@tcetmumbai.in',
-        );
-      } on PaymentException catch (pe) {
-        // Payment dismissed, declined, or timed out.
-        // DO NOT wipe the cart! Keep items so student can retry.
-        setState(() => _isProcessing = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(pe.message),
-              backgroundColor: AppColors.red,
-              duration: const Duration(seconds: 5),
-              action: SnackBarAction(
-                label: 'View Order',
-                textColor: Colors.white,
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => OrderStatusScreen(order: order),
-                    ),
-                  );
-                },
-              ),
-            ),
+      // 4. Online Payment via Razorpay (Bypass if 100% discounted / 0 paise)
+      if (order.totalAmount > 0) {
+        try {
+          final paymentService = PaymentService();
+          final payRes = await paymentService.initiateOnlinePayment(
+            orderId: order.id,
+            totalAmountRs: order.totalAmount,
+            studentName: student?.displayName ?? order.studentName ?? 'Student',
+            studentEmail: student?.email ?? 'student@tcetmumbai.in',
           );
+          // Directly confirm order in Firestore so Kitchen KDS immediately receives it
+          try {
+            await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
+              'status': 'confirmed',
+              'paymentStatus': 'paid',
+              'paidAt': FieldValue.serverTimestamp(),
+              'updatedAt': FieldValue.serverTimestamp(),
+              if (payRes.paymentId != null) 'gatewayPaymentId': payRes.paymentId,
+            });
+          } catch (updateErr) {
+            debugPrint('[CartScreen] Direct Firestore order confirmation notice: $updateErr');
+          }
+        } on PaymentException catch (pe) {
+          // Payment dismissed, declined, or timed out.
+          // DO NOT wipe the cart! Keep items so student can retry.
+          setState(() => _isProcessing = false);
+          _tapLocked = false;
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(pe.message),
+                backgroundColor: AppColors.red,
+                duration: const Duration(seconds: 5),
+                action: SnackBarAction(
+                  label: 'View Order',
+                  textColor: Colors.white,
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => OrderStatusScreen(order: order),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            );
+          }
+          return;
         }
-        return;
       }
 
       // 5. Payment verified — clear pending session, clear cart & show ticket
       _activePendingOrder = null;
       _currentIdempotencyKey = null;
+      _tapLocked = false;
       cart.clear();
 
       final confirmedOrder = order.copyWith(
@@ -895,6 +922,7 @@ class _CartSummaryState extends State<_CartSummary> {
       }
     } on CanteenPausedException catch (e) {
       setState(() => _isProcessing = false);
+      _tapLocked = false;
       if (mounted) {
         showCanteenStatusSheet(
           context,
@@ -904,6 +932,7 @@ class _CartSummaryState extends State<_CartSummary> {
       }
     } on InsufficientStockException catch (e) {
       setState(() => _isProcessing = false);
+      _tapLocked = false;
       cart.capItemQuantity(e.itemId, e.availableStock);
       if (mounted) {
         _showStockLimitedAlert({e.itemId: e.availableStock});
@@ -918,6 +947,7 @@ class _CartSummaryState extends State<_CartSummary> {
       }
     } catch (e) {
       setState(() => _isProcessing = false);
+      _tapLocked = false;
       final errStr = e.toString().toLowerCase();
       // Intercept local network and connectivity dropouts
       if (errStr.contains('socket') ||
@@ -1013,10 +1043,10 @@ class _CartSummaryState extends State<_CartSummary> {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: const BoxDecoration(
-                    color: Color(0xFFFEF3C7),
+                    color: AppColors.warningBg,
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.inventory_2_outlined, color: Color(0xFFB45309), size: 24),
+                  child: const Icon(Icons.inventory_2_outlined, color: AppColors.mustardInk, size: 24),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -1119,7 +1149,7 @@ class _CartSummaryState extends State<_CartSummary> {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: const BoxDecoration(
-                    color: Color(0xFFFEE2E2),
+                    color: AppColors.dangerBg,
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(Icons.remove_shopping_cart_rounded, color: AppColors.red, size: 24),
@@ -1221,15 +1251,15 @@ class _CartSummaryState extends State<_CartSummary> {
                         Icon(
                           cart.isOnlyReadyMade ? Icons.flash_on_rounded : Icons.access_time_rounded,
                           size: 14,
-                          color: cart.isOnlyReadyMade ? const Color(0xFF16A34A) : AppColors.inkSoft,
+                          color: cart.isOnlyReadyMade ? AppColors.green : AppColors.inkSoft,
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          cart.isOnlyReadyMade ? 'Ready now · Express Counter' : cart.readyTimeText,
+                          cart.isOnlyReadyMade ? 'Ready now · Direct counter pickup' : cart.readyTimeText,
                           style: AppFonts.body(
                             fontSize: 12,
                             fontWeight: cart.isOnlyReadyMade ? FontWeight.w700 : FontWeight.normal,
-                            color: cart.isOnlyReadyMade ? const Color(0xFF16A34A) : AppColors.inkSoft,
+                            color: cart.isOnlyReadyMade ? AppColors.green : AppColors.inkSoft,
                           ),
                         ),
                       ],
@@ -1238,13 +1268,13 @@ class _CartSummaryState extends State<_CartSummary> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFDCFCE7),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: const Color(0xFF86EFAC), width: 1),
+                          color: AppColors.successBg,
+                          borderRadius: AppRadius.radiusSm,
+                          border: Border.all(color: AppColors.green.withAlpha(100), width: 1),
                         ),
                         child: Text(
                           cart.temperaturePreference,
-                          style: AppFonts.mono(fontSize: 10, fontWeight: FontWeight.w700, color: const Color(0xFF15803D)),
+                          style: AppFonts.mono(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.greenInk),
                         ),
                       ),
                   ],
@@ -1285,9 +1315,9 @@ class _CartSummaryState extends State<_CartSummary> {
                       color: cart.isEmpty || _isProcessing
                           ? AppColors.line
                           : isCanteenPaused
-                              ? const Color(0xFFD97706)
+                              ? AppColors.warning
                               : hasStockIssue
-                                  ? const Color(0xFFEF4444)
+                                  ? AppColors.danger
                                   : AppColors.red,
                       borderRadius: BorderRadius.circular(14),
                     ),
@@ -1306,24 +1336,9 @@ class _CartSummaryState extends State<_CartSummary> {
                             ],
                           )
                         : isCanteenPaused
-                            ? Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.pause_circle_filled_rounded, size: 18, color: Colors.white),
-                                  const SizedBox(width: 8),
-                                  Flexible(
-                                    child: Text(
-                                      status.buttonText,
-                                      style: AppFonts.body(
-                                        fontSize: 13.5,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.white,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
+                            ? Text(
+                                status.buttonText,
+                                style: AppFonts.body(fontSize: 14.5, fontWeight: FontWeight.w700, color: Colors.white),
                               )
                             : Text(
                                 cart.isEmpty

@@ -77,16 +77,11 @@ void main() {
     test('Ready-made preference state management and summary', () {
       cart.addItem(coldDrink);
       expect(cart.temperaturePreference, equals('Chilled ❄️'));
-      expect(cart.packagingPreference, equals('Direct Handover ✋'));
-      expect(cart.readyMadePreferenceSummary, equals('Chilled ❄️ · Direct Handover ✋'));
+      expect(cart.readyMadePreferenceSummary, equals('Chilled ❄️'));
 
       cart.setTemperaturePreference('Room Temp 🥤');
       expect(cart.temperaturePreference, equals('Room Temp 🥤'));
-      expect(cart.readyMadePreferenceSummary, equals('Room Temp 🥤 · Direct Handover ✋'));
-
-      cart.setPackagingPreference('Carry Bag 🛍️');
-      expect(cart.packagingPreference, equals('Carry Bag 🛍️'));
-      expect(cart.readyMadePreferenceSummary, equals('Room Temp 🥤 · Carry Bag 🛍️'));
+      expect(cart.readyMadePreferenceSummary, equals('Room Temp 🥤'));
     });
 
     test('Order model correctly identifies isOnlyReadyMade and stores preference', () {
@@ -116,6 +111,63 @@ void main() {
       final reconstructed = Order.fromFirestore(order.id, firestoreMap);
       expect(reconstructed.isOnlyReadyMade, isTrue);
       expect(reconstructed.readyMadePreference, equals('Chilled ❄️ · Carry Bag 🛍️'));
+    });
+
+    test('Ready-made orders immediately report isReady, statusLabel and customerStatusIndex upon payment', () {
+      final now = DateTime.now();
+      final paidReadyMade = Order(
+        id: 'ord_rm_1',
+        tokenNumber: 'TB-101',
+        pinCode: '5566',
+        status: 'confirmed',
+        paymentStatus: 'paid',
+        createdAt: now,
+        estimatedMinutes: 0,
+        totalAmount: 40.0,
+        items: const [],
+        isOnlyReadyMade: true,
+      );
+
+      // When paid, ready-made order is immediately ready for counter pickup
+      expect(paidReadyMade.isReady, isTrue);
+      expect(paidReadyMade.statusLabel, equals('Ready for pickup'));
+      expect(paidReadyMade.customerStatusIndex, equals(3));
+      expect(paidReadyMade.canCancel, isFalse);
+
+      // When payment is pending, it should not be ready yet
+      final pendingReadyMade = Order(
+        id: 'ord_rm_2',
+        tokenNumber: 'TB-102',
+        pinCode: '5567',
+        status: 'payment_pending',
+        paymentStatus: 'pending',
+        createdAt: now,
+        estimatedMinutes: 0,
+        totalAmount: 40.0,
+        items: const [],
+        isOnlyReadyMade: true,
+      );
+      expect(pendingReadyMade.isReady, isFalse);
+      expect(pendingReadyMade.statusLabel, equals('Payment Pending'));
+      expect(pendingReadyMade.customerStatusIndex, equals(0));
+
+      // When collected, status advances to collected
+      final collectedReadyMade = Order(
+        id: 'ord_rm_3',
+        tokenNumber: 'TB-103',
+        pinCode: '5568',
+        status: 'collected',
+        paymentStatus: 'paid',
+        createdAt: now,
+        estimatedMinutes: 0,
+        totalAmount: 40.0,
+        items: const [],
+        isOnlyReadyMade: true,
+      );
+      expect(collectedReadyMade.isReady, isFalse);
+      expect(collectedReadyMade.isCollected, isTrue);
+      expect(collectedReadyMade.statusLabel, equals('Collected'));
+      expect(collectedReadyMade.customerStatusIndex, equals(4));
     });
   });
 
@@ -153,23 +205,16 @@ void main() {
       expect(find.text('🥤 Beverage Temperature Preference:'), findsOneWidget);
       expect(find.text('Chilled / Cold ❄️'), findsOneWidget);
       expect(find.text('Room Temp 🥤'), findsOneWidget);
-      expect(find.text('Direct Handover ✋'), findsOneWidget);
-      expect(find.text('Carry Bag 🛍️'), findsOneWidget);
-      expect(find.text('Preference: Chilled ❄️ · Direct Handover ✋'), findsOneWidget);
+      expect(find.text('Direct Handover ✋'), findsNothing);
+      expect(find.text('Carry Bag 🛍️'), findsNothing);
+      expect(find.text('Preference: Chilled ❄️'), findsOneWidget);
 
       // Tap on 'Room Temp 🥤'
       await tester.tap(find.text('Room Temp 🥤'));
       await tester.pumpAndSettle();
 
       expect(cart.temperaturePreference, equals('Room Temp 🥤'));
-      expect(find.text('Preference: Room Temp 🥤 · Direct Handover ✋'), findsOneWidget);
-
-      // Tap on 'Carry Bag 🛍️'
-      await tester.tap(find.text('Carry Bag 🛍️'));
-      await tester.pumpAndSettle();
-
-      expect(cart.packagingPreference, equals('Carry Bag 🛍️'));
-      expect(find.text('Preference: Room Temp 🥤 · Carry Bag 🛍️'), findsOneWidget);
+      expect(find.text('Preference: Room Temp 🥤'), findsOneWidget);
     });
   });
 }

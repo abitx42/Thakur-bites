@@ -1,5 +1,5 @@
 // Thakur Bites Platform 2.0 — Universal Operations & Application Portal Gateway
-import { staffAuth, renderPinPadModal, getOrCreateDeviceId } from './auth.js?v=8';
+import { staffAuth, renderPinPadModal, getOrCreateDeviceId } from './auth.js?v=12';
 import { initSecuritySentinel } from './securitySentinel.js?v=1';
 
 initSecuritySentinel({ blockShortcuts: false });
@@ -21,36 +21,36 @@ function initPortalGateway() {
       <div style="min-height: 100vh; background: var(--bg-primary); display: flex; flex-direction: column;">
         
         <!-- Gateway Header -->
-        <header class="app-header" style="background: #FFF; border-bottom: 2px solid var(--border-light); padding: 1rem 1.5rem;">
-          <div style="max-width: 1300px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+        <header class="app-header" style="background: #FFF; border-bottom: 2px solid var(--border-light); padding: 0.8rem 1rem;">
+          <div style="max-width: 1300px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.8rem;">
             
-            <div style="display: flex; align-items: center; gap: 12px;">
-              <div style="width: 42px; height: 42px; background: var(--brand-red); color: #FFF; font-family: var(--font-display); font-size: 1.6rem; display: flex; align-items: center; justify-content: center; border-radius: 10px; box-shadow: 0 2px 6px rgba(197,34,31,0.25);">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="width: 40px; height: 40px; background: var(--brand-red); color: #FFF; font-family: var(--font-display); font-size: 1.5rem; display: flex; align-items: center; justify-content: center; border-radius: 10px; box-shadow: 0 2px 6px rgba(197,34,31,0.25); flex-shrink: 0;">
                 TB
               </div>
               <div>
-                <div style="font-family: var(--font-display); font-size: 1.75rem; letter-spacing: 0.05em; line-height: 1; color: var(--ink-primary);">
+                <div style="font-family: var(--font-display); font-size: clamp(1.25rem, 4vw, 1.75rem); letter-spacing: 0.05em; line-height: 1.1; color: var(--ink-primary);">
                   THAKUR BITES · PORTAL GATEWAY
                 </div>
-                <div style="font-family: var(--font-mono); font-size: 0.75rem; color: #16A34A; font-weight: 700; display: flex; align-items: center; gap: 6px; margin-top: 3px;">
-                  <span style="display: inline-block; width: 7px; height: 7px; background: #22C55E; border-radius: 50%;"></span>
-                  TCET CAMPUS DINING PLATFORM 2.0 · ARCHITECTURE SEPARATED
+                <div style="font-family: var(--font-mono); font-size: clamp(0.65rem, 2.5vw, 0.75rem); color: #16A34A; font-weight: 700; display: flex; align-items: center; gap: 5px; margin-top: 2px;">
+                  <span style="display: inline-block; width: 6px; height: 6px; background: #22C55E; border-radius: 50%; flex-shrink: 0;"></span>
+                  CAMPUS DINING PLATFORM 2.0
                 </div>
               </div>
             </div>
 
             <!-- Session & Auth Controls -->
-            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
               ${isAuthenticated ? `
-                <div style="background: var(--bg-surface); border: 1.5px solid var(--border-light); padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; display: flex; align-items: center; gap: 8px;">
-                  <span style="color: var(--ink-secondary);">ACTIVE ROLE:</span>
+                <div style="background: var(--bg-surface); border: 1.5px solid var(--border-light); padding: 5px 10px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.78rem; display: flex; align-items: center; gap: 6px;">
+                  <span style="color: var(--ink-secondary);">ROLE:</span>
                   <strong style="color: var(--brand-red); text-transform: uppercase;">${currentRole}</strong>
                 </div>
-                <button id="gateway-signout-btn" style="background: transparent; border: 1.5px solid var(--border-light); padding: 7px 14px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; color: var(--ink-secondary);">
+                <button id="gateway-signout-btn" class="btn btn--secondary btn--sm" style="min-height: 38px;">
                   🔒 Sign Out
                 </button>
               ` : `
-                <button id="gateway-signin-btn" style="background: var(--brand-red); color: #FFF; border: none; padding: 8px 18px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer; box-shadow: 0 2px 6px rgba(197,34,31,0.25);">
+                <button id="gateway-signin-btn" class="btn btn--primary btn--sm" style="min-height: 40px; box-shadow: 0 2px 6px rgba(197,34,31,0.25);">
                   🔑 Staff & Admin Sign In
                 </button>
               `}
@@ -60,22 +60,22 @@ function initPortalGateway() {
         </header>
 
         <!-- Main Portal Selection Hub -->
-        <main style="max-width: 1300px; margin: 0 auto; padding: 2.5rem 1.5rem; flex: 1; width: 100%; box-sizing: border-box;">
+        <main style="max-width: 1300px; margin: 0 auto; padding: 1.5rem 1rem; flex: 1; width: 100%; box-sizing: border-box;">
           
-          <div style="margin-bottom: 2.5rem; text-align: center;">
-            <span style="background: #E2E8F0; color: #334155; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 4px 12px; border-radius: 999px; text-transform: uppercase;">
-              Role-Isolated Enterprise Portal Applications
+          <div style="margin-bottom: 2rem; text-align: center;">
+            <span style="background: #E2E8F0; color: #334155; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 4px 12px; border-radius: 999px; text-transform: uppercase; display: inline-block; max-width: 100%;">
+              Role-Isolated Portals
             </span>
-            <h1 style="font-family: var(--font-display); font-size: 2.8rem; letter-spacing: 0.04em; color: var(--ink-primary); margin: 0.75rem 0 0.5rem 0;">
+            <h1 style="font-family: var(--font-display); font-size: clamp(1.4rem, 5.2vw, 2.5rem); letter-spacing: 0.02em; color: var(--ink-primary); margin: 0.6rem 0 0.4rem 0; line-height: 1.15; text-wrap: balance; word-break: break-word;">
               AUTHORIZED ACCESS PORTALS
             </h1>
-            <p style="font-family: var(--font-sans); font-size: 1.05rem; color: var(--ink-secondary); max-width: 700px; margin: 0 auto;">
+            <p style="font-family: var(--font-sans); font-size: 0.95rem; color: var(--ink-secondary); max-width: 650px; margin: 0 auto; line-height: 1.4;">
               Select the dedicated workstation or management dashboard corresponding to your operational clearance and station hardware.
             </p>
           </div>
 
           <!-- 4 Dedicated Application Cards Grid -->
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 3rem;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 1.25rem; margin-bottom: 2.5rem;">
             
             <!-- PORTAL 1: STAFF WORKSTATION -->
             <div class="portal-card" style="background: #FFF; border: 2px solid var(--border-light); border-radius: 16px; padding: 1.8rem; display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.15s ease, box-shadow 0.15s ease;">
@@ -100,7 +100,7 @@ function initPortalGateway() {
                   • Terminal Shift PIN Auth
                 </div>
               </div>
-              <a href="staff.html" style="display: block; text-align: center; background: var(--brand-red); color: #FFF; padding: 12px; border-radius: 10px; font-family: var(--font-sans); font-size: 0.92rem; font-weight: 700; text-decoration: none; box-shadow: 0 2px 6px rgba(197,34,31,0.2);">
+              <a href="staff.html" class="btn btn--primary btn--lg" style="width: 100%; text-decoration: none;">
                 Launch Staff Workstation →
               </a>
             </div>
@@ -128,7 +128,7 @@ function initPortalGateway() {
                   • Daily Ledger Reconciliation
                 </div>
               </div>
-              <a href="admin.html" style="display: block; text-align: center; background: #0F172A; color: #FFF; padding: 12px; border-radius: 10px; font-family: var(--font-sans); font-size: 0.92rem; font-weight: 700; text-decoration: none;">
+              <a href="admin.html" class="btn btn--secondary btn--lg" style="width: 100%; text-decoration: none; background: #0F172A; color: #FFF;">
                 Launch Admin Portal →
               </a>
             </div>
@@ -156,7 +156,7 @@ function initPortalGateway() {
                   • Emergency Operational Freeze
                 </div>
               </div>
-              <a href="developer.html" style="display: block; text-align: center; background: #475569; color: #FFF; padding: 12px; border-radius: 10px; font-family: var(--font-sans); font-size: 0.92rem; font-weight: 700; text-decoration: none;">
+              <a href="developer.html" class="btn btn--secondary btn--lg" style="width: 100%; text-decoration: none; background: #475569; color: #FFF;">
                 Launch Developer Cockpit →
               </a>
             </div>
@@ -184,7 +184,7 @@ function initPortalGateway() {
                   • No Authentication Required
                 </div>
               </div>
-              <a href="tv.html" target="_blank" style="display: block; text-align: center; background: #22C55E; color: #000; padding: 12px; border-radius: 10px; font-family: var(--font-sans); font-size: 0.92rem; font-weight: 800; text-decoration: none;">
+              <a href="tv.html" target="_blank" class="btn btn--success btn--lg" style="width: 100%; text-decoration: none; color: #FFF;">
                 Open Token TV Board ↗
               </a>
             </div>
@@ -197,7 +197,7 @@ function initPortalGateway() {
               <span>Hardware Device ID:</span>
               <code style="color: var(--brand-red); font-weight: 700; background: var(--bg-surface); padding: 2px 8px; border-radius: 4px; margin-left: 4px;">${deviceId}</code>
             </div>
-            <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary); display: flex; gap: 1.5rem;">
+            <div style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-secondary); display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem;">
               <span>Defense: <strong>Sentinel 2.0 Hardened</strong></span>
               <span>Rate Limits: <strong>Firestore Dynamic</strong></span>
               <span>Backend: <strong>Live Cloud Functions</strong></span>

@@ -215,6 +215,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
     || request.rawRequest.ip
     || 'unknown';
   const ipBucket = crypto.createHash('sha256').update(`SHIFT_PIN_IP_${clientIp}`).digest('hex').slice(0, 32);
+  await enforceExponentialBackoff(ipBucket, 'staff_pin');
   await enforceRateLimit(ipBucket, 'shift_pin_verification', { isIpBased: true, natMultiplier: 3 });
 
   const todayStr = getMumbaiDateStr();
@@ -230,6 +231,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
 
   if (pinsSnap.empty) {
     await recordAuthFailure(hashedDeviceId, 'staff_pin');
+    await recordAuthFailure(ipBucket, 'staff_pin');
     await logSecurityEvent({
       eventType: 'SHIFT_PIN_VERIFICATION_NO_ACTIVE_SHIFT',
       severity: 'LOW',
@@ -262,6 +264,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
   // If no active candidate matched the PIN, record failed attempt and fail closed
   if (!candidateDoc) {
     await recordAuthFailure(hashedDeviceId, 'staff_pin');
+    await recordAuthFailure(ipBucket, 'staff_pin');
     const targetRef = pinsSnap.docs[0].ref;
     await db.runTransaction(async (t) => {
       const snap = await t.get(targetRef);
@@ -347,6 +350,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
     });
   } catch (err: any) {
     await recordAuthFailure(hashedDeviceId, 'staff_pin');
+    await recordAuthFailure(ipBucket, 'staff_pin');
     await logSecurityEvent({
       eventType: 'STAFF_SHIFT_PIN_FAILED',
       severity: 'MEDIUM',
@@ -359,12 +363,13 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
   // Create ephemeral staff UID and Auth session
   const workstationUid = `staff_${role}_${todayStr}_${hashedDeviceId}`;
 
-  // 1. Record active workstation session (TB-NEW-004 Remediation)
+  // 1. Record active workstation session (TB-NEW-004 Remediation & BUG-10)
   const sessionDocRef = db.collection('workstationSessions').doc(workstationUid);
   await sessionDocRef.set({
     sessionId: workstationUid,
     pinId: candidateDoc.id,
     role: finalRole!,
+    staffUid: request.auth?.uid || (candidateDoc.data()?.generatedBy || workstationUid),
     deviceId: cleanDeviceId,
     deviceHash: hashedDeviceId,
     shiftDate: todayStr,

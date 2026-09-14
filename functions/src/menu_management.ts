@@ -149,11 +149,15 @@ export const toggleMenuItemAvailability = onCall<ToggleMenuItemAvailabilityReque
     updatedBy: request.auth.uid,
   };
 
-  // Invariant: Sold-out items must have 0 quantity and 0 available stock
+  // Invariant: Availability toggle must NEVER destroy physical warehouse stockOnHand.
+  // When unavailable, availableStock is 0 for ordering, but physical inventory remains intact.
   if (!available) {
-    updateData.stockOnHand = 0;
-    updateData.stockCount = 0;
     updateData.availableStock = 0;
+  } else {
+    const itemData = snap.data() || {};
+    const stockOnHand = Number(itemData.stockOnHand || 0);
+    const reservedStock = Number(itemData.reservedStock || 0);
+    updateData.availableStock = Math.max(0, stockOnHand - reservedStock);
   }
 
   await itemRef.update(updateData);
@@ -411,7 +415,7 @@ export const upsertMenuItem = onCall<UpsertMenuItemRequest>(async (request) => {
     type,
     inventoryMode: itemData.inventoryMode || (type === 'cooked' ? 'MADE_TO_ORDER' : 'STOCK_TRACKED'),
     prepMinutes: Math.max(0, Math.min(180, Number(itemData.prepMinutes) || 0)),
-    stockCount: stockOnHand,
+    stockCount: Math.max(0, stockOnHand - reservedStock),
     stockOnHand,
     reservedStock,
     availableStock: Math.max(0, stockOnHand - reservedStock),

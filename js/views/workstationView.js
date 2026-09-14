@@ -48,7 +48,7 @@ export function renderWorkstationView(container) {
               Server-authoritative hardware enrollment for Kitchen KDS, Pickup Counter, and Cashier terminals.
             </p>
           </div>
-          <button id="refresh-ws-btn" style="background: var(--bg-surface); border: 1.5px solid var(--border-light); padding: 8px 16px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+          <button id="refresh-ws-btn" class="btn btn--secondary btn--sm">
             🔄 Refresh Devices
           </button>
         </div>
@@ -87,7 +87,7 @@ export function renderWorkstationView(container) {
               <input type="text" id="ws-name-input" placeholder="e.g. Kitchen Tablet Station 1" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.85rem; box-sizing: border-box;" />
             </div>
 
-            <button id="generate-ws-code-btn" style="background: var(--brand-red); color: #FFF; border: none; padding: 11px 20px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; cursor: pointer;">
+            <button id="generate-ws-code-btn" class="btn btn--primary btn--md">
               Generate 15-Min Code →
             </button>
           </div>
@@ -167,7 +167,7 @@ export function renderWorkstationView(container) {
                         </td>
                         <td style="padding: 12px 10px; text-align: right;">
                           ${!isRevoked ? `
-                            <button class="revoke-ws-btn" data-id="${ws.workstationId}" style="background: #FEE2E2; color: #DC2626; border: 1px solid #FCA5A5; padding: 4px 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+                            <button class="btn btn--outline-danger btn--sm revoke-ws-btn" data-id="${ws.workstationId}">
                               Revoke Access
                             </button>
                           ` : '<span style="color: #94A3B8;">Revoked</span>'}

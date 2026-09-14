@@ -80,8 +80,8 @@ export const getOwnerBusinessMetrics = onCall(async (request): Promise<OwnerBusi
   assertCapability(callerRole, 'view_business_analytics', 'Only managers or administrators can access owner analytics.');
 
   const todayStart = getTodayStartTimestamp();
-  const now = new Date();
-  const hoursElapsedToday = Math.max(0.5, (now.getHours() - 7) + (now.getMinutes() / 60)); // Operational day starts ~7 AM
+  const now = getMumbaiNow(); // TB-R4: Strictly evaluate in Asia/Kolkata timezone to avoid 5.5h UTC lag
+  const hoursElapsedToday = Math.max(0.5, (now.getHours() - 7) + (now.getMinutes() / 60)); // Operational day starts ~7 AM (IST)
 
   // 1. Fetch Today's Orders
   const ordersSnap = await db
@@ -352,10 +352,10 @@ export const getAdminOperationsDashboard = onCall<void, Promise<AdminOperationsD
     }
   });
 
-  // 3. Live Orders & Station Workload
+  // 3. Live Orders & Station Workload (Includes payment_pending for counter cash tracking)
   const activeOrdersSnap = await db
     .collection('orders')
-    .where('status', 'in', ['confirmed', 'preparing', 'ready'])
+    .where('status', 'in', ['payment_pending', 'placed', 'confirmed', 'preparing', 'ready'])
     .get();
 
   let activeOrdersTotal = 0;
@@ -364,8 +364,10 @@ export const getAdminOperationsDashboard = onCall<void, Promise<AdminOperationsD
   let pendingCashOrders = 0;
 
   activeOrdersSnap.forEach((doc) => {
-    activeOrdersTotal++;
     const data = doc.data();
+    if (data.status === 'confirmed' || data.status === 'preparing' || data.status === 'ready') {
+      activeOrdersTotal++;
+    }
     if (data.status === 'preparing') kitchenLoad++;
     if (data.status === 'ready') readyForPickup++;
     if (data.paymentMethod === 'counter_cash' && data.paymentStatus !== 'paid' && data.paymentStatus !== 'captured') {

@@ -38,14 +38,29 @@
     ⚡️ Reconnecting to canteen server... Showing cached queue.
   </div>
 
-  <!-- Main Split Display Grid -->
+  <!-- Main 3-Stage Pipeline Display Grid -->
   <main id="tv-main-content" class="tv-container">
     
-    <!-- LEFT: PREPARING IN KITCHEN -->
+    <!-- 1. ORDER CONFIRMED (QUEUED) -->
+    <section class="queue-section confirmed-section">
+      <div class="section-header confirmed-header">
+        <div class="section-title-wrap">
+          <span class="section-icon">🟡</span>
+          <h2 class="section-title">ORDER CONFIRMED</h2>
+        </div>
+        <span id="confirmed-count" class="count-badge confirmed-badge">0</span>
+      </div>
+
+      <div id="confirmed-grid" class="tokens-grid">
+        <!-- Confirmed tokens inserted dynamically -->
+      </div>
+    </section>
+
+    <!-- 2. NOW PREPARING IN KITCHEN -->
     <section class="queue-section preparing-section">
       <div class="section-header preparing-header">
         <div class="section-title-wrap">
-          <span class="section-icon">🔥</span>
+          <span class="section-icon">⏳</span>
           <h2 class="section-title">NOW PREPARING</h2>
         </div>
         <span id="preparing-count" class="count-badge preparing-badge">0</span>
@@ -56,7 +71,7 @@
       </div>
     </section>
 
-    <!-- RIGHT: READY FOR PICKUP -->
+    <!-- 3. READY FOR PICKUP -->
     <section class="queue-section ready-section">
       <div class="section-header ready-header">
         <div class="section-title-wrap">

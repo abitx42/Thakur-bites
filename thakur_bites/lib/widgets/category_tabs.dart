@@ -168,35 +168,40 @@ class _PrimaryPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        curve: Curves.easeOut,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isActive ? AppColors.red : AppColors.surface,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: isActive ? AppColors.red : AppColors.line,
-            width: 1.5,
+    return Semantics(
+      button: true,
+      selected: isActive,
+      label: '$label category filter',
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: isActive ? AppColors.red : AppColors.surface,
+            borderRadius: AppRadius.radiusPill,
+            border: Border.all(
+              color: isActive ? AppColors.red : AppColors.line,
+              width: 1.5,
+            ),
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                      color: AppColors.red.withAlpha(50),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
+                  ]
+                : null,
           ),
-          boxShadow: isActive
-              ? [
-                  BoxShadow(
-                    color: AppColors.red.withAlpha(50),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  ),
-                ]
-              : null,
-        ),
-        child: Text(
-          label,
-          style: AppFonts.body(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: isActive ? Colors.white : AppColors.ink,
+          child: Text(
+            label,
+            style: AppFonts.body(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: isActive ? Colors.white : AppColors.ink,
+            ),
           ),
         ),
       ),
@@ -217,27 +222,32 @@ class _SubCategoryChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        curve: Curves.easeOut,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        decoration: BoxDecoration(
-          color: isActive ? AppColors.ink : AppColors.surface,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isActive ? AppColors.ink : AppColors.line,
-            width: 1,
+    return Semantics(
+      button: true,
+      selected: isActive,
+      label: '$label subcategory filter',
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: isActive ? AppColors.ink : AppColors.surface,
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            border: Border.all(
+              color: isActive ? AppColors.ink : AppColors.line,
+              width: 1,
+            ),
           ),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: AppFonts.body(
-              fontSize: 11.5,
-              fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-              color: isActive ? Colors.white : AppColors.inkSoft,
+          child: Center(
+            child: Text(
+              label,
+              style: AppFonts.body(
+                fontSize: 11.5,
+                fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                color: isActive ? Colors.white : AppColors.inkSoft,
+              ),
             ),
           ),
         ),

@@ -12,7 +12,7 @@ class SecurityEnforcementScreen extends StatelessWidget {
     final isCritical = securityService.isCriticalTamperDetected;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FC),
+      backgroundColor: AppColors.bg,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -25,12 +25,12 @@ class SecurityEnforcementScreen extends StatelessWidget {
                   height: 96,
                   decoration: BoxDecoration(
                     color: isCritical
-                        ? const Color(0xFFFFEBEE)
-                        : const Color(0xFFFFF3E0),
+                        ? AppColors.dangerBg
+                        : AppColors.warningBg,
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: (isCritical ? Colors.red : Colors.orange).withOpacity(0.15),
+                        color: (isCritical ? AppColors.danger : AppColors.warning).withValues(alpha: 0.15),
                         blurRadius: 20,
                         offset: const Offset(0, 8),
                       ),
@@ -39,17 +39,16 @@ class SecurityEnforcementScreen extends StatelessWidget {
                   child: Icon(
                     isCritical ? Icons.gpp_bad_rounded : Icons.security_rounded,
                     size: 52,
-                    color: isCritical ? const Color(0xFFD32F2F) : const Color(0xFFE65100),
+                    color: isCritical ? AppColors.danger : AppColors.warning,
                   ),
                 ),
                 const SizedBox(height: 28),
                 Text(
                   isCritical ? 'Integrity Protection Alert' : 'Security Mode Required',
-                  style: const TextStyle(
+                  style: AppFonts.display(
                     fontSize: 24,
-                    fontWeight: FontWeight.w800,
                     letterSpacing: -0.5,
-                    color: Color(0xFF1E293B),
+                    color: AppColors.ink,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -58,10 +57,10 @@ class SecurityEnforcementScreen extends StatelessWidget {
                   isCritical
                       ? 'Unauthorized system modifications or tampered application environment detected. For the safety of campus financial transactions, ordering has been restricted on this device.'
                       : 'Developer Options or USB Debugging is currently active on your device. To ensure payment integrity and prevent memory tampering, please turn off Developer Options to continue.',
-                  style: const TextStyle(
+                  style: AppFonts.body(
                     fontSize: 15,
                     height: 1.5,
-                    color: Color(0xFF64748B),
+                    color: AppColors.inkSecondary,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -70,12 +69,12 @@ class SecurityEnforcementScreen extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                      color: AppColors.surface,
+                      borderRadius: AppRadius.radiusLg,
+                      border: Border.all(color: AppColors.line),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.03),
+                          color: AppColors.ink.withValues(alpha: 0.03),
                           blurRadius: 10,
                           offset: const Offset(0, 4),
                         ),
@@ -88,13 +87,13 @@ class SecurityEnforcementScreen extends StatelessWidget {
                           title: 'Open Settings',
                           subtitle: 'Tap the button below to jump straight to Developer Settings.',
                         ),
-                        const Divider(height: 24, color: Color(0xFFF1F5F9)),
+                        const Divider(height: 24, color: AppColors.line),
                         _buildStepItem(
                           stepNumber: '2',
                           title: 'Turn Off Developer Options',
                           subtitle: 'Toggle the switch at the top to Off.',
                         ),
-                        const Divider(height: 24, color: Color(0xFFF1F5F9)),
+                        const Divider(height: 24, color: AppColors.line),
                         _buildStepItem(
                           stepNumber: '3',
                           title: 'Return & Verify',
@@ -112,9 +111,9 @@ class SecurityEnforcementScreen extends StatelessWidget {
                         await securityService.openDeveloperSettings();
                       },
                       icon: const Icon(Icons.settings_outlined, color: Colors.white),
-                      label: const Text(
+                      label: Text(
                         'Open Device Settings',
-                        style: TextStyle(
+                        style: AppFonts.body(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
                           color: Colors.white,
@@ -123,7 +122,7 @@ class SecurityEnforcementScreen extends StatelessWidget {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.red,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: AppRadius.radiusMd,
                         ),
                         elevation: 0,
                       ),
@@ -145,19 +144,19 @@ class SecurityEnforcementScreen extends StatelessWidget {
                               height: 18,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Icon(Icons.refresh_rounded, color: Color(0xFF1E293B)),
+                          : const Icon(Icons.refresh_rounded, color: AppColors.ink),
                       label: Text(
                         securityService.isChecking ? 'Verifying...' : 'Re-check Security',
-                        style: const TextStyle(
+                        style: AppFonts.body(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF1E293B),
+                          color: AppColors.ink,
                         ),
                       ),
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFFCBD5E1), width: 1.5),
+                        side: const BorderSide(color: AppColors.mutedBorder, width: 1.5),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: AppRadius.radiusMd,
                         ),
                       ),
                     ),
@@ -166,21 +165,21 @@ class SecurityEnforcementScreen extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFEF2F2),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFFFECACA)),
+                      color: AppColors.dangerBg,
+                      borderRadius: AppRadius.radiusLg,
+                      border: Border.all(color: AppColors.redSoft),
                     ),
-                    child: const Row(
+                    child: Row(
                       children: [
-                        Icon(Icons.contact_support_outlined, color: Color(0xFFDC2626)),
-                        SizedBox(width: 14),
+                        const Icon(Icons.contact_support_outlined, color: AppColors.danger),
+                        const SizedBox(width: 14),
                         Expanded(
                           child: Text(
                             'If you believe this is in error, please visit the canteen management counter or contact support with your Device ID.',
-                            style: TextStyle(
+                            style: AppFonts.body(
                               fontSize: 14,
                               height: 1.4,
-                              color: Color(0xFF991B1B),
+                              color: AppColors.redDeep,
                             ),
                           ),
                         ),
@@ -208,13 +207,13 @@ class SecurityEnforcementScreen extends StatelessWidget {
           width: 28,
           height: 28,
           decoration: BoxDecoration(
-            color: AppColors.red.withOpacity(0.12),
+            color: AppColors.red.withValues(alpha: 0.12),
             shape: BoxShape.circle,
           ),
           child: Center(
             child: Text(
               stepNumber,
-              style: TextStyle(
+              style: AppFonts.body(
                 fontWeight: FontWeight.w800,
                 fontSize: 14,
                 color: AppColors.red,
@@ -229,18 +228,18 @@ class SecurityEnforcementScreen extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: AppFonts.body(
                   fontWeight: FontWeight.w700,
                   fontSize: 14,
-                  color: Color(0xFF1E293B),
+                  color: AppColors.ink,
                 ),
               ),
               const SizedBox(height: 2),
               Text(
                 subtitle,
-                style: const TextStyle(
+                style: AppFonts.body(
                   fontSize: 13,
-                  color: Color(0xFF64748B),
+                  color: AppColors.inkSecondary,
                 ),
               ),
             ],

@@ -84,6 +84,13 @@ export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStat
       );
     }
 
+    if (orderData.isCancellationPending === true) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Cannot transition order: Order cancellation is currently in progress.'
+      );
+    }
+
     const isPaid = orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured';
     if (!isPaid) {
       throw new HttpsError(
@@ -181,7 +188,7 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
   const orderRef = db.collection('orders').doc(orderId);
   const now = Timestamp.now();
 
-  // 1. Initial order validation & Gateway Refund Execution for Paid Online Orders
+  // 1. Transactionally lock order against concurrent operational transitions (TB-BUG-02)
   const initialSnap = await orderRef.get();
   if (!initialSnap.exists) {
     throw new HttpsError('not-found', `Order ${orderId} not found.`);
@@ -199,33 +206,68 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
     throw new HttpsError('failed-precondition', `Order is already in ${initialOrderData.status} state.`);
   }
 
-  if (initialOrderData.paymentStatus === 'paid' && (initialOrderData.status === 'preparing' || initialOrderData.status === 'ready') && !isStaff) {
+  if ((initialOrderData.status === 'preparing' || initialOrderData.status === 'ready') && !isStaff) {
     throw new HttpsError('failed-precondition', 'Order is already being prepared. Please contact counter staff for cancellation.');
   }
+
+  // Pre-lock order to prevent kitchen from claiming/preparing while refund executes
+  await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(orderRef);
+    if (!snap.exists) throw new HttpsError('not-found', `Order ${orderId} not found.`);
+    const currentData = snap.data()!;
+    if (currentData.status === 'collected' || currentData.status === 'cancelled') {
+      throw new HttpsError('failed-precondition', `Order is already in ${currentData.status} state.`);
+    }
+    if (!isStaff && (currentData.status === 'preparing' || currentData.status === 'ready')) {
+      throw new HttpsError('failed-precondition', 'Order is already being prepared. Please contact counter staff for cancellation.');
+    }
+    if (currentData.isCancellationPending === true) {
+      throw new HttpsError('failed-precondition', 'Order cancellation is already in progress.');
+    }
+    transaction.update(orderRef, {
+      isCancellationPending: true,
+      updatedAt: now,
+    });
+  });
 
   let gatewayRefundId: string | undefined;
   let refundReservationId: string | undefined;
   let refundDispatched = false;
   let amountToRefundPaise = 0;
 
-  if (initialOrderData.paymentStatus === 'paid') {
-    const amountPaidPaise = Number(initialOrderData.amountPaidPaise);
-    if (!Number.isSafeInteger(amountPaidPaise) || amountPaidPaise <= 0) {
-      throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Paid order ${orderId} has invalid or missing amountPaidPaise.`);
-    }
-    amountToRefundPaise = amountPaidPaise;
+  if (initialOrderData.paymentStatus === 'paid' || initialOrderData.paymentStatus === 'partially_refunded') {
+    const amountPaidPaise = Number(initialOrderData.amountPaidPaise || 0);
+    const amountRefundedPaise = Number(initialOrderData.amountRefundedPaise || 0);
+    const pendingRefundPaise = Number(initialOrderData.pendingRefundPaise || 0);
+    const refundablePaise = initialOrderData.amountRefundablePaise !== undefined
+      ? Number(initialOrderData.amountRefundablePaise)
+      : Math.max(0, amountPaidPaise - amountRefundedPaise - pendingRefundPaise);
 
-    const refund = await reserveAndExecuteRefund({
-      orderId,
-      reason: cleanReason,
-      amountPaise: amountPaidPaise,
-      actorId,
-      actorRole,
-      cancellation: true,
-    });
-    gatewayRefundId = refund.refundId;
-    refundReservationId = refund.reservationId;
-    refundDispatched = !refund.isCash;
+    if (refundablePaise > 0) {
+      if (!Number.isSafeInteger(refundablePaise)) {
+        await orderRef.update({ isCancellationPending: false }).catch(() => {});
+        throw new HttpsError('internal', `FINANCIAL_INTEGRITY_ERROR: Order ${orderId} has invalid or non-integer refundable balance.`);
+      }
+      amountToRefundPaise = refundablePaise;
+
+      try {
+        const refund = await reserveAndExecuteRefund({
+          orderId,
+          reason: cleanReason,
+          amountPaise: refundablePaise,
+          actorId,
+          actorRole,
+          cancellation: true,
+        });
+        gatewayRefundId = refund.refundId;
+        refundReservationId = refund.reservationId;
+        refundDispatched = !refund.isCash;
+      } catch (refundError) {
+        // Revert cancellation pending lock on refund failure
+        await orderRef.update({ isCancellationPending: false }).catch(() => {});
+        throw refundError;
+      }
+    }
   }
 
   const cancelResult = await db.runTransaction(async (transaction) => {
@@ -243,13 +285,12 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
       throw new HttpsError('failed-precondition', `Order is already in ${orderData.status} state.`);
     }
 
-    // Atomic race-condition defense: If kitchen starts preparing, student cancellation fails closed
-    if (!isStaff && (orderData.status === 'preparing' || orderData.status === 'ready')) {
-      throw new HttpsError('failed-precondition', 'Order is already being prepared. Please contact counter staff for cancellation.');
-    }
+    // 1. Authoritative Inventory Restoration via Reservation State (TB-BUG-01)
+    const resRef = db.collection('inventoryReservations').doc(orderId);
+    const resSnap = await transaction.get(resRef);
+    const resData = resSnap.exists ? resSnap.data() : null;
+    const isCommitted = resData?.status === 'COMMITTED';
 
-    // 1. Release or Restore Inventory (Fail-Closed Hardened)
-    const isCommitted = orderData.paymentStatus === 'paid' && orderData.status !== 'payment_pending';
     for (const item of (orderData.items || [])) {
       const itemRef = db.collection('menuItems').doc(item.itemId);
       const itemSnap = await transaction.get(itemRef);
@@ -274,49 +315,68 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
           const newAvailable = newStockOnHand - reservedStock;
           transaction.update(itemRef, {
             stockOnHand: newStockOnHand,
+            availableStock: newAvailable,
+            stockCount: newAvailable,
             available: newAvailable > 0,
             isOrderable: newAvailable > 0,
+            availabilityStatus: newAvailable > 0 ? 'AVAILABLE' : 'OUT_OF_STOCK',
             updatedAt: now,
+          });
+
+          const ledgerRef = db.collection('inventoryLedger').doc();
+          transaction.set(ledgerRef, {
+            itemId: item.itemId,
+            orderId,
+            changeType: 'STOCK_RESTORED_CANCELLATION',
+            deltaUnits: item.quantity,
+            previousAvailable: stockOnHand - reservedStock,
+            newAvailable,
+            stockOnHand: newStockOnHand,
+            reservedStock,
+            actorId,
+            reason: cleanReason,
+            timestamp: now,
           });
         } else {
           const newReserved = Math.max(0, reservedStock - item.quantity);
           const newAvailable = stockOnHand - newReserved;
           transaction.update(itemRef, {
             reservedStock: newReserved,
+            availableStock: newAvailable,
+            stockCount: newAvailable,
             available: newAvailable > 0,
             isOrderable: newAvailable > 0,
+            availabilityStatus: newAvailable > 0 ? 'AVAILABLE' : 'OUT_OF_STOCK',
             updatedAt: now,
+          });
+
+          const ledgerRef = db.collection('inventoryLedger').doc();
+          transaction.set(ledgerRef, {
+            itemId: item.itemId,
+            orderId,
+            changeType: 'STOCK_RELEASED_CANCELLATION',
+            deltaUnits: item.quantity,
+            previousAvailable: stockOnHand - reservedStock,
+            newAvailable,
+            stockOnHand,
+            reservedStock: newReserved,
+            actorId,
+            reason: cleanReason,
+            timestamp: now,
           });
         }
       }
     }
 
     // 2. Mark reservation status as RELEASED
-    const resRef = db.collection('inventoryReservations').doc(orderId);
     transaction.set(resRef, { status: 'RELEASED', releasedAt: now, releaseReason: cleanReason }, { merge: true });
 
-    // 3. If paid, post refund disbursement ledger entry
+    // 3. If paid, finalize order cancellation fields (financial transaction already posted by reserveAndExecuteRefund)
     if (gatewayRefundId) {
-      const isCash = orderData.paymentMethod === 'counter_cash';
-      const finTxRef = db.collection('financialTransactions').doc(`refund_fin_${gatewayRefundId}`);
-
-      transaction.set(finTxRef, {
-        transactionId: finTxRef.id,
-        orderId,
-        type: 'REFUND_DISBURSEMENT',
-        amount: amountToRefundPaise / 100,
-        amountPaise: amountToRefundPaise,
-        currency: 'INR',
-        postings: [
-          { account: 'SALES_REVENUE', debitPaise: amountToRefundPaise, creditPaise: 0 },
-          { account: isCash ? 'CASH_ON_HAND' : 'GATEWAY_RECEIVABLE', debitPaise: 0, creditPaise: amountToRefundPaise },
-        ],
-        gatewayTransactionId: gatewayRefundId,
-        gatewayOrderId: orderData.gatewayOrderId || 'direct',
-        actorId,
-        timestamp: now,
-        status: 'REFUNDED',
-      });
+      const priorRefundedPaise = Number(orderData.amountRefundedPaise || 0);
+      const totalRefundedCumulative = priorRefundedPaise >= amountToRefundPaise
+        ? priorRefundedPaise
+        : priorRefundedPaise + amountToRefundPaise;
 
       transaction.update(orderRef, {
         status: 'cancelled',
@@ -324,25 +384,23 @@ export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
         refundLifecycleStatus: 'GATEWAY_REFUNDED',
         refundId: gatewayRefundId,
         refundedAt: now,
-        amountRefundedPaise: amountToRefundPaise,
+        amountRefundedPaise: totalRefundedCumulative,
         amountRefundablePaise: 0,
         refundReason: cleanReason,
         cancelledAt: now,
         cancelledBy: actorId,
         cancellationReason: cleanReason,
+        isCancellationPending: false,
         updatedAt: now,
-      });
-      transaction.update(db.collection('refundReservations').doc(refundReservationId!), {
-        status: 'FINALIZED',
-        finalizedAt: now,
       });
     } else {
       transaction.update(orderRef, {
         status: 'cancelled',
-        paymentStatus: 'cancelled',
+        paymentStatus: (orderData.paymentStatus === 'partially_refunded' || orderData.paymentStatus === 'refunded') ? 'refunded' : 'cancelled',
         cancelledAt: now,
         cancelledBy: actorId,
         cancellationReason: cleanReason,
+        isCancellationPending: false,
         updatedAt: now,
       });
     }

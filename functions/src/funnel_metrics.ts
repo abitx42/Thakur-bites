@@ -39,7 +39,7 @@ export function calculateConversionFunnel(orders: Array<{
   paymentStatus?: string;
   items?: any[];
   createdAt?: any;
-}>): OrderFunnelResponse {
+}>, dateStr?: string): OrderFunnelResponse {
   let paymentStarted = 0;
   let paymentSuccessful = 0;
   let orderConfirmed = 0;
@@ -134,8 +134,15 @@ export function calculateConversionFunnel(orders: Array<{
     recommendation = 'Ensure cafeteria TV queue display is visible and chime volume is elevated.';
   }
 
+  const effectiveDateStr = dateStr || new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+
   return {
-    summaryDate: new Date().toISOString().split('T')[0],
+    summaryDate: effectiveDateStr,
     orderSuccessRatePercent,
     totalCheckoutsAttempted: checkoutStarted,
     totalOrdersCompleted: foodPickedUp,
@@ -147,6 +154,20 @@ export function calculateConversionFunnel(orders: Array<{
       actionableRecommendation: recommendation,
     },
   };
+}
+
+/**
+ * Computes midnight IST (Asia/Kolkata) as a Firestore Timestamp and returns date string
+ */
+function getTodayIstStart(): { timestamp: Timestamp; dateStr: string } {
+  const dateStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const istStart = new Date(`${dateStr}T00:00:00+05:30`);
+  return { timestamp: Timestamp.fromDate(istStart), dateStr };
 }
 
 /**
@@ -162,15 +183,14 @@ export const getOrderSuccessFunnel = onCall(async (request): Promise<OrderFunnel
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'view_business_analytics', 'Insufficient permissions to view conversion funnel.');
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const { timestamp: todayStart, dateStr } = getTodayIstStart();
 
   const ordersSnap = await db
     .collection('orders')
-    .where('createdAt', '>=', Timestamp.fromDate(todayStart))
+    .where('createdAt', '>=', todayStart)
     .get();
 
   const ordersToday = ordersSnap.docs.map((doc) => doc.data()) as any[];
 
-  return calculateConversionFunnel(ordersToday);
+  return calculateConversionFunnel(ordersToday, dateStr);
 });

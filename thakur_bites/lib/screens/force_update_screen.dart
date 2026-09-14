@@ -62,7 +62,7 @@ class ForceUpdateScreen extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: AppRadius.radiusMd,
                       border: Border.all(color: AppColors.line),
                     ),
                     child: Text(
@@ -96,7 +96,7 @@ class ForceUpdateScreen extends StatelessWidget {
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: AppRadius.radiusLg,
                       border: Border.all(color: AppColors.line),
                     ),
                     child: Column(
@@ -139,23 +139,27 @@ class ForceUpdateScreen extends StatelessWidget {
                 const Spacer(),
 
                 // Action Button
-                ElevatedButton(
-                  onPressed: onUpdate ?? () {},
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.red,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+                Semantics(
+                  button: true,
+                  label: 'Update Thakur Bites application',
+                  child: ElevatedButton(
+                    onPressed: onUpdate ?? () {},
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: AppRadius.radiusLg,
+                      ),
+                      elevation: 2,
                     ),
-                    elevation: 2,
-                  ),
-                  child: Text(
-                    'Update Thakur Bites',
-                    style: AppFonts.body(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                    child: Text(
+                      'Update Thakur Bites',
+                      style: AppFonts.body(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),

@@ -3,6 +3,8 @@ import * as admin from 'firebase-admin';
 import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
 import { logSecurityEvent } from './security_logger';
+import { assertOperationalMode } from './kill_switch';
+import { enforceAppVersionPolicy } from './version_policy';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -12,6 +14,7 @@ const db = admin.firestore();
 
 export interface ReorderRequest {
   orderId: string;
+  appVersion?: string;
 }
 
 export interface ReorderItemResult {
@@ -23,6 +26,7 @@ export interface ReorderItemResult {
   originalPricePaise: number;
   priceChanged: boolean;
   available: boolean;
+  customization?: string;
   reason?: string;
 }
 
@@ -46,6 +50,8 @@ export interface ReorderResponse {
  */
 export const reorderPreviousOrder = onCall<ReorderRequest>(async (request) => {
   enforceAppCheck(request);
+  await enforceAppVersionPolicy(request.data?.appVersion);
+  await assertOperationalMode('checkout');
 
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to reorder.');
@@ -59,6 +65,12 @@ export const reorderPreviousOrder = onCall<ReorderRequest>(async (request) => {
   }
 
   await enforceRateLimit(userId, 'checkout');
+
+  // Check user profile for accountDisabled
+  const userDoc = await db.collection('users').doc(userId).get();
+  if (userDoc.exists && userDoc.data()?.accountDisabled === true) {
+    throw new HttpsError('permission-denied', 'Your account has been deactivated.');
+  }
 
   // 1. Fetch historical order document
   const orderDoc = await db.collection('orders').doc(orderId).get();
@@ -123,6 +135,7 @@ export const reorderPreviousOrder = onCall<ReorderRequest>(async (request) => {
         originalPricePaise,
         priceChanged: false,
         available: false,
+        customization: histItem.customization,
         reason: 'Item no longer exists on today\'s menu.',
       });
       continue;
@@ -145,9 +158,34 @@ export const reorderPreviousOrder = onCall<ReorderRequest>(async (request) => {
         originalPricePaise,
         priceChanged: livePricePaise !== originalPricePaise,
         available: false,
+        customization: histItem.customization,
         reason: 'Item is currently marked out of stock or unpublished.',
       });
       continue;
+    }
+
+    // Day-specific Menu Item Invariant (BUG-05)
+    if (Array.isArray(liveData.availableDays) && liveData.availableDays.length > 0) {
+      const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const mumbaiDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const todayDay = daysOfWeek[mumbaiDate.getDay()];
+      const isAvailToday = liveData.availableDays.map((d: string) => String(d).toLowerCase()).includes(todayDay);
+      if (!isAvailToday) {
+        hasUnavailableItems = true;
+        resultItems.push({
+          itemId,
+          name: liveData.name || histItem.name,
+          quantity: requestedQty,
+          unitPrice: livePriceRupees,
+          unitPricePaise: livePricePaise,
+          originalPricePaise,
+          priceChanged: livePricePaise !== originalPricePaise,
+          available: false,
+          customization: histItem.customization,
+          reason: `${liveData.name || 'Item'} is not served on ${todayDay.toUpperCase()}. Available days: ${liveData.availableDays.join(', ')}.`,
+        });
+        continue;
+      }
     }
 
     // Check instant stock limits
@@ -170,6 +208,7 @@ export const reorderPreviousOrder = onCall<ReorderRequest>(async (request) => {
           originalPricePaise,
           priceChanged: livePricePaise !== originalPricePaise,
           available: false,
+          customization: histItem.customization,
           reason: 'Sold out — 0 units available in canteen stock.',
         });
         continue;
@@ -199,6 +238,7 @@ export const reorderPreviousOrder = onCall<ReorderRequest>(async (request) => {
       originalPricePaise,
       priceChanged: isPriceDiff,
       available: true,
+      customization: histItem.customization,
       reason: stockReason,
     });
   }

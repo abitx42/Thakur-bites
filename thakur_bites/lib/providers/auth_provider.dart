@@ -127,6 +127,7 @@ class AuthProvider extends ChangeNotifier {
     String? displayName,
     String? phone,
     String? department,
+    String? year,
     String? rollNo,
     String? photoURL,
   }) async {
@@ -140,6 +141,7 @@ class AuthProvider extends ChangeNotifier {
         displayName: displayName ?? _currentUserProfile!.displayName,
         phone: phone ?? _currentUserProfile!.phone,
         department: department ?? _currentUserProfile!.department,
+        year: year ?? _currentUserProfile!.year,
         rollNo: rollNo ?? _currentUserProfile!.rollNo,
         photoURL: photoURL ?? _currentUserProfile!.photoURL,
         lastLoginAt: DateTime.now(),

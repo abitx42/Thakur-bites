@@ -1,4 +1,4 @@
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
@@ -239,8 +239,13 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
           verificationStatus: newStatus,
           priorityLevel: newPriority,
           isVerified: true,
+          rollNo: appData.employeeId || (appData as any).rollNo || '',
           department: appData.department,
           designation: appData.designation,
+          claimedRollNo: FieldValue.delete(),
+          claimedDepartment: FieldValue.delete(),
+          claimedDesignation: FieldValue.delete(),
+          claimedOfficialEmail: FieldValue.delete(),
           updatedAt: now,
         });
       }
@@ -263,6 +268,10 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
       if (userSnap.exists) {
         transaction.update(userRef, {
           verificationStatus: 'REJECTED',
+          claimedRollNo: FieldValue.delete(),
+          claimedDepartment: FieldValue.delete(),
+          claimedDesignation: FieldValue.delete(),
+          claimedOfficialEmail: FieldValue.delete(),
           updatedAt: now,
         });
       }
