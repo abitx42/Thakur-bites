@@ -12,6 +12,7 @@ import {
 import { logSecurityEvent } from './security_logger';
 import { assertCapability } from './authorization_policy';
 import { verifyWorkstationCredentials } from './workstation_binding';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -74,6 +75,7 @@ export function getMumbaiDateStr(date = new Date()): string {
  * Returns the plaintext PIN once to the manager.
  */
 export const generateShiftPin = onCall<GenerateShiftPinRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'generateShiftPin');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
@@ -174,6 +176,7 @@ export const generateShiftPin = onCall<GenerateShiftPinRequest>(async (request) 
  * and returns uniform error payloads on failure.
  */
 export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'verifyShiftPin');
   enforceAppCheck(request);
 
   const { pin, role, deviceId, workstationToken } = request.data || {};
@@ -415,6 +418,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
  * Atomically revokes the shift PIN and immediately invalidates all active workstation sessions & tokens.
  */
 export const revokeShiftPin = onCall<RevokeShiftPinRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'revokeShiftPin');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {

@@ -5,9 +5,9 @@ import { renderCashierView, cleanupCashierView } from './views/cashierView.js?v=
 import { renderAdminView, cleanupAdminView } from './views/adminView.js?v=10';
 import { renderDailyBoardModal } from './views/dailyBoardModal.js?v=1';
 import { subscribeDailyBoard, saveDailyBoard } from './firebase.js?v=9';
-import { initSecuritySentinel } from './securitySentinel.js?v=1';
+import { initSecuritySentinel } from './securitySentinel.js?v=2';
 
-initSecuritySentinel({ blockShortcuts: true });
+initSecuritySentinel({ blockShortcuts: true, portalName: 'Staff Workstation' });
 
 let currentStaffWorkstationView = 'kitchen'; // 'kitchen' | 'pickup' | 'cashier' | 'menu'
 let currentDailyBoardState = null;

@@ -5,6 +5,7 @@ import { UserRole } from './types';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { assertCapability, hasCapability } from './authorization_policy';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -71,6 +72,7 @@ export async function assertOperationalMode(category: 'checkout' | 'payment' | '
  * - Security Admin & Admin: Full authority over all mode transitions and restorations.
  */
 export const setSystemOperationalMode = onCall<{ mode: SystemOperationalMode; reason?: string }>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'setSystemOperationalMode');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');

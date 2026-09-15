@@ -7,6 +7,7 @@ import { logSecurityEvent } from './security_logger';
 import { assertCapability, hasCapability, isOperationalStaffRole } from './authorization_policy';
 import { assertActiveWorkstationSession } from './shift_pins';
 import { UserRole, ParentCategory, DietaryType } from './types';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -106,6 +107,7 @@ export interface DeleteMenuItemRequest {
  * Accessible to managers, admins, and operational workstation staff.
  */
 export const toggleMenuItemAvailability = onCall<ToggleMenuItemAvailabilityRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'toggleMenuItemAvailability');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
@@ -176,6 +178,7 @@ export const toggleMenuItemAvailability = onCall<ToggleMenuItemAvailabilityReque
  * 2. Authoritative Menu Item Details Update
  */
 export const updateMenuItemDetails = onCall<UpdateMenuItemDetailsRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'updateMenuItemDetails');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
@@ -339,6 +342,7 @@ export const updateMenuItemDetails = onCall<UpdateMenuItemDetailsRequest>(async 
  * 3. Authoritative Upsert (Add / Overwrite) Menu Item
  */
 export const upsertMenuItem = onCall<UpsertMenuItemRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'upsertMenuItem');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {

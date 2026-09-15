@@ -114,4 +114,25 @@ class DeviceSecurityService extends ChangeNotifier {
       debugPrint('[SecuritySentinel] Violation reporting notice: $e');
     }
   }
+
+  /// Validates outgoing client payloads against fuzzed parameters or honeytokens
+  static bool isPayloadClean(Map<String, dynamic> payload) {
+    const prohibited = {
+      'debug',
+      'debugmode',
+      'bypassauth',
+      'bypasspayment',
+      'overrideprice',
+      'testmode',
+      'forcerole',
+      '__proto__',
+    };
+    for (final key in payload.keys) {
+      final normalized = key.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_]'), '');
+      if (prohibited.contains(normalized)) {
+        return false;
+      }
+    }
+    return true;
+  }
 }

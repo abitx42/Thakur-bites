@@ -15,6 +15,37 @@ const firebaseConfig = {
   appId: "1:391012293021:web:94d50c950a753ce38be819"
 };
 
+// ─── Kiosk Security Sentinel & Anti-Tamper Perimeter ─────────────────────────
+try {
+  if (window.top !== window.self) {
+    window.top.location = window.self.location;
+  }
+} catch (_) {}
+
+try {
+  console.log('%c[STOP] TV DISPLAY KIOSK PERIMETER', 'color: #DC2626; font-size: 24px; font-weight: 900;');
+  console.log('%cTV projection displays live token numbers with zero PII. Tampering is logged.', 'color: #1F2937; font-size: 13px;');
+} catch (_) {}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && ['I', 'J', 'C'].includes(e.key.toUpperCase())) || (e.ctrlKey && e.key.toUpperCase() === 'U')) {
+    e.preventDefault();
+    e.stopPropagation();
+    return false;
+  }
+}, true);
+
+// Canary traps
+['debugMode', 'bypassAuth', 'overridePrice', 'adminKey'].forEach((key) => {
+  try {
+    Object.defineProperty(window, key, {
+      configurable: true,
+      get: () => { console.warn(`[CANARY_TRAP] Probe on ${key}`); return undefined; },
+      set: (v) => { console.warn(`[CANARY_TRAP] Attack on ${key}:`, v); },
+    });
+  } catch (_) {}
+});
+
 const app = initializeApp(firebaseConfig, 'TB_TV_DISPLAY');
 const db = getFirestore(app);
 

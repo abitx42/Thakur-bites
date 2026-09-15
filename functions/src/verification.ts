@@ -9,6 +9,7 @@ import { syncUserCustomClaims } from './claims_manager';
 import { AccountType, VerificationStatus, PriorityLevel, VerificationApplication } from './types';
 import { assertCapability } from './authorization_policy';
 import { validateAndQuarantineFile } from './upload_validator';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -59,6 +60,7 @@ export interface ReviewVerificationRequest {
  * Updates user profile to UNDER_REVIEW and logs security telemetry.
  */
 export const submitVerificationApplication = onCall<SubmitVerificationRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'submitVerificationApplication');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
@@ -173,6 +175,7 @@ export const submitVerificationApplication = onCall<SubmitVerificationRequest>(a
  * Upgrades the user account in-place with zero data migration (preserves same UID and order history).
  */
 export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'reviewVerificationApplication');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {

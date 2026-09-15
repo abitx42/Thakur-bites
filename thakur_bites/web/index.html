@@ -52,13 +52,32 @@
       });
     }
 
+    // 1. Anti-Clickjacking Framebusting Guard (RFC 7034 / OWASP A05)
     try {
-      console.log('%cSTOP!', 'color: #DC2626; font-size: 32px; font-weight: 900;');
+      if (window.top !== window.self) {
+        window.top.location = window.self.location;
+      }
+    } catch (_) {}
+
+    // 2. High-Visibility Console Security Warning
+    try {
+      console.log('%c[STOP] THAKUR BITES STUDENT APP PERIMETER', 'color: #DC2626; font-size: 28px; font-weight: 900;');
       console.log(
         '%cThis browser console is intended for developers. Any attempt to tamper with prices, token states, or transaction data is recorded and reported under college disciplinary regulations.\nAll checkout pricing and order state transitions are strictly server-authoritative.',
         'color: #1F2937; font-size: 14px; font-weight: 600;'
       );
     } catch (_) {}
+
+    // 3. Client Canary Honeypot Traps
+    ['debugMode', 'bypassAuth', 'bypassPayment', 'overridePrice', 'forceRole', 'adminKey', '__DEBUG__'].forEach(function(key) {
+      try {
+        Object.defineProperty(window, key, {
+          configurable: true,
+          get: function() { console.warn('[CANARY_TRAP] Unauthorized property read probe on window.' + key); return undefined; },
+          set: function(val) { console.warn('[CANARY_TRAP] Unauthorized property write attack on window.' + key); }
+        });
+      } catch (_) {}
+    });
   </script>
 
   <!-- Razorpay Official Checkout SDK & Web Bridge -->

@@ -2,6 +2,9 @@
 import { staffAuth, renderPinPadModal, getPrivilegedSession, onStaffAuthStateChanged } from './auth.js?v=10';
 import { renderSecurityCenterView } from './views/securityCenterView.js?v=7';
 import { renderPrivilegedAuthModal } from './views/mfaModal.js?v=2';
+import { initSecuritySentinel } from './securitySentinel.js?v=2';
+
+initSecuritySentinel({ blockShortcuts: true, portalName: 'Developer Command Cockpit' });
 
 function initDeveloperCockpit() {
   const root = document.getElementById('app-root');

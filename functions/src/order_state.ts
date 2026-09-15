@@ -11,6 +11,8 @@ import { reserveAndExecuteRefund } from './refunds';
 import { hasCapability } from './authorization_policy';
 import { commitInventoryInTransaction } from './inventory_reservation';
 
+import { assertNoHoneytokens } from './honeypot_defense';
+
 const db = admin.firestore();
 
 /**
@@ -34,6 +36,7 @@ const ALLOWED_OPERATIONAL_TRANSITIONS: Record<OrderStatus, { next: OrderStatus[]
  * Validates and executes an authoritative kitchen operational order status transition.
  */
 export const updateOrderStatus = onCall<{ orderId: string; nextStatus: OrderStatus; appVersion?: string }>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'updateOrderStatus');
   enforceAppCheck(request);
   await enforceAppVersionPolicy(request.data?.appVersion);
   if (!request.auth || !request.auth.uid) {
@@ -164,6 +167,7 @@ export interface CancelOrderRequest {
  * Authoritative Domain Command: Cancel Order with Atomic Inventory Release/Restoration and Refund Workflow (TB-NEW-015 & TB-NEW-016).
  */
 export const cancelOrder = onCall<CancelOrderRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'cancelOrder');
   enforceAppCheck(request);
   await enforceAppVersionPolicy(request.data?.appVersion);
   if (!request.auth || !request.auth.uid) {

@@ -157,6 +157,27 @@ export async function handleHoneypotTripwire(
     `Request rejected by security policy. Reference: ${correlationId}`
   );
 }
+/**
+ * Asserts that the incoming request payload contains no honeypot parameters,
+ * prototype pollution, or adversarial injection strings.
+ * If detected, immediately trips the containment wire.
+ */
+export async function assertNoHoneytokens(
+  payload: any,
+  actorUid?: string,
+  endpoint = 'callable',
+  clientIp?: string
+): Promise<void> {
+  const check = inspectPayloadForHoneytokens(payload);
+  if (check.hasHoneytoken) {
+    await handleHoneypotTripwire(
+      actorUid || 'anonymous',
+      endpoint,
+      check.detectedTokens,
+      clientIp
+    );
+  }
+}
 
 /**
  * ═══════════════════════════════════════════════════════════════════

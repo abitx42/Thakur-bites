@@ -10,6 +10,7 @@ import { enforceAppCheck } from './app_check';
 import { updatePublicLiveQueueProjection } from './tv_projection';
 import { assertActiveWorkstationSession } from './shift_pins';
 import { enforceAppVersionPolicy } from './version_policy';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 const db = admin.firestore();
 
@@ -24,6 +25,7 @@ const db = admin.firestore();
  * 4. Multi-staff brute force lockout tracking.
  */
 export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?: string; appVersion?: string }>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'verifyPickup');
   enforceAppCheck(request);
   await enforceAppVersionPolicy(request.data?.appVersion);
   if (!request.auth || !request.auth.uid) {
@@ -301,6 +303,7 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
  * Manager/Admin Manual Physical Override for Locked Orders
  */
 export const unlockOrderPickupVerification = onCall<{ orderId: string; reason: string }>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'unlockOrderPickupVerification');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -372,6 +375,7 @@ export const unlockOrderPickupVerification = onCall<{ orderId: string; reason: s
  * decoupling QR validity from food preparation delays.
  */
 export const getStudentPickupQr = onCall<{ orderId: string; appVersion?: string }>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'getStudentPickupQr');
   enforceAppCheck(request);
   await enforceAppVersionPolicy(request.data?.appVersion);
   if (!request.auth || !request.auth.uid) {

@@ -13,6 +13,14 @@ void main() {
       expect(service.isCriticalTamperDetected, false);
     });
 
+    test('isPayloadClean correctly intercepts fuzzed debug parameters', () {
+      expect(DeviceSecurityService.isPayloadClean({'orderId': '123', 'debugMode': true}), false);
+      expect(DeviceSecurityService.isPayloadClean({'orderId': '123', 'bypassPayment': true}), false);
+      expect(DeviceSecurityService.isPayloadClean({'orderId': '123', 'overridePrice': 0}), false);
+      expect(DeviceSecurityService.isPayloadClean({'orderId': '123', '__proto__': {}}), false);
+      expect(DeviceSecurityService.isPayloadClean({'orderId': '123', 'quantity': 2, 'notes': 'Extra spicy'}), true);
+    });
+
     testWidgets('SecurityEnforcementScreen renders instructional steps and buttons', (tester) async {
       final service = DeviceSecurityService();
 

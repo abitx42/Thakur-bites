@@ -3,6 +3,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 const db = admin.firestore();
 
@@ -33,6 +34,7 @@ export interface MealRatingResponse {
  * 5. Public rating view is redacted (ratingsPublic does not expose studentId/orderId).
  */
 export const createMealRating = onCall<MealRatingRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'createMealRating');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Student must be authenticated to submit meal rating.');
