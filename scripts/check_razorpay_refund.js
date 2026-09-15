@@ -12,8 +12,8 @@
 
 const https = require('https');
 
-const KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_test_Tbboxi8EfG7NMJ';
-const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || process.env.PAYMENT_GATEWAY_SECRET || '';
+const KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_test_TcNKt0X7OsnsXu';
+const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || process.env.PAYMENT_GATEWAY_SECRET || 'F3ZjLHG2FEp4n3c6Fb5DoSBT';
 
 const args = process.argv.slice(2);
 const paymentId = args.find(a => a.startsWith('pay_'));

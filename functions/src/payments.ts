@@ -97,6 +97,53 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
     return false;
   }
 
+  async getPaymentDetails(gatewayPaymentId: string): Promise<any> {
+    const keyId = getRequiredSecret('PAYMENT_GATEWAY_KEY_ID');
+    const authHeader = `Basic ${Buffer.from(`${keyId}:${this.secret}`).toString('base64')}`;
+    const res = await fetch(`https://api.razorpay.com/v1/payments/${gatewayPaymentId}`, {
+      method: 'GET',
+      headers: { 'Authorization': authHeader },
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`GATEWAY_FETCH_PAYMENT_FAILED: HTTP ${res.status} - ${errBody}`);
+    }
+    return await res.json();
+  }
+
+  async capturePayment(gatewayPaymentId: string, amountPaise: number, currency: string = 'INR'): Promise<any> {
+    const keyId = getRequiredSecret('PAYMENT_GATEWAY_KEY_ID');
+    const authHeader = `Basic ${Buffer.from(`${keyId}:${this.secret}`).toString('base64')}`;
+    const res = await fetch(`https://api.razorpay.com/v1/payments/${gatewayPaymentId}/capture`, {
+      method: 'POST',
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        amount: amountPaise,
+        currency,
+      }),
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`GATEWAY_CAPTURE_FAILED: HTTP ${res.status} - ${errBody}`);
+    }
+    return await res.json();
+  }
+
+  async ensurePaymentCaptured(gatewayPaymentId: string, amountPaise: number, currency: string = 'INR'): Promise<void> {
+    if (!this.isProduction()) return;
+    try {
+      const details = await this.getPaymentDetails(gatewayPaymentId);
+      if (details && details.status === 'authorized') {
+        await this.capturePayment(gatewayPaymentId, amountPaise, currency);
+      }
+    } catch (e) {
+      console.warn(`[RazorpayPaymentAdapter] ensurePaymentCaptured non-fatal notice: ${e}`);
+    }
+  }
+
   async createRefund(
     gatewayPaymentId: string,
     amountPaise: number,
@@ -106,6 +153,17 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
     if (this.isProduction()) {
       const keyId = getRequiredSecret('PAYMENT_GATEWAY_KEY_ID');
       const authHeader = `Basic ${Buffer.from(`${keyId}:${this.secret}`).toString('base64')}`;
+
+      // Auto-remedy: If payment is in 'authorized' status, auto-capture it first
+      // In Razorpay, only 'captured' payments can be refunded via API.
+      try {
+        const details = await this.getPaymentDetails(gatewayPaymentId);
+        if (details && details.status === 'authorized') {
+          await this.capturePayment(gatewayPaymentId, amountPaise, details.currency || 'INR');
+        }
+      } catch (capErr) {
+        console.warn(`[RazorpayPaymentAdapter] Pre-refund auto-capture attempt notice: ${capErr}`);
+      }
 
       const res = await fetch(`https://api.razorpay.com/v1/payments/${gatewayPaymentId}/refund`, {
         method: 'POST',
@@ -233,7 +291,43 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
   if (!razorpayKeyId && isProduction) {
     throw new Error('FATAL: RAZORPAY_KEY_ID is missing in production environment.');
   }
-  razorpayKeyId = razorpayKeyId || 'rzp_test_Tbboxi8EfG7NMJ';
+  razorpayKeyId = razorpayKeyId || 'rzp_test_TcNKt0X7OsnsXu';
+
+  // Authoritative Razorpay Order Creation with Auto-Capture enabled
+  const gatewaySecret = process.env.PAYMENT_GATEWAY_SECRET || process.env.RAZORPAY_KEY_SECRET;
+  if (razorpayKeyId && gatewaySecret && gatewayOrderId.startsWith('order_') && gatewayOrderId.length === 22) {
+    try {
+      const authHeader = `Basic ${Buffer.from(`${razorpayKeyId}:${gatewaySecret}`).toString('base64')}`;
+      const orderReq = await fetch('https://api.razorpay.com/v1/orders', {
+        method: 'POST',
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: totalPaise,
+          currency: currency || 'INR',
+          receipt: orderId.slice(0, 40),
+          payment_capture: 1,
+          notes: {
+            orderId,
+            studentId,
+            tokenNumber,
+          },
+        }),
+      });
+
+      if (orderReq.ok) {
+        const orderRes = await orderReq.json() as any;
+        if (orderRes && orderRes.id) {
+          gatewayOrderId = orderRes.id;
+          await orderRef.update({ gatewayOrderId });
+        }
+      }
+    } catch (e) {
+      console.warn('[createPaymentSession] Razorpay Orders API fallback notice:', e);
+    }
+  }
 
   const response: PaymentSessionResponse = {
     orderId,
@@ -302,6 +396,9 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
   }
   const orderData = orderDoc.data()!;
   const amountPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
+
+  // Ensure payment is captured on Razorpay gateway (if currently in authorized state)
+  await adapter.ensurePaymentCaptured(gatewayPaymentId, amountPaise, orderData.currency || 'INR');
 
   // Single authoritative payment finalization (Phase 1 Hardened)
   try {

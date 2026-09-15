@@ -185,7 +185,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
               signedQrPayload: replayedQrPayload,
               gatewayOrderId: existingData.gatewayOrderId || null,
               amountPaise: existingAmountPaise,
-              keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_Tbboxi8EfG7NMJ',
+              keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_TcNKt0X7OsnsXu',
               isReplay: true,
             };
           }
@@ -513,7 +513,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         signedQrPayload,
         gatewayOrderId,
         amountPaise: calculatedTotalPaise,
-        keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_Tbboxi8EfG7NMJ',
+        keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_TcNKt0X7OsnsXu',
       };
     });
 
