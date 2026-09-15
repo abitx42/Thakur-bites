@@ -214,71 +214,286 @@ class _TicketScreenState extends State<TicketScreen> {
     );
   }
 
-  /// Lightweight chef cooking GIF banner — circular-clipped GIF with warm text.
+  /// Upgraded Masterchef Kitchen Porthole Experience:
+  /// - ShaderMask radial vignette removes the harsh solid yellow background
+  /// - ColorFiltered warm-shifts tones to match the Thakur Bites chai/cream palette
+  /// - Kitchen porthole window with double-ring brass/sandstone trim and stove glow
+  /// - Energetic "LIVE 🔴" status pill badge
+  /// - Rubber kitchen stamp styled text box with subtle rotation
+  /// - Decorative kitchen dividers with fork-knife glyphs
   Widget _buildChefGifBanner() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFFDF8),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: const Color(0xFFEADBCE),
-          width: 1.2,
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Circular-clipped chef GIF with warm border ring
-          Container(
-            width: 88,
-            height: 88,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: const Color(0xFFD4B896),
-                width: 2.5,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Top kitchen divider
+        _buildKitchenDivider(),
+        const SizedBox(height: 12),
+
+        // Main warm ivory card
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFFDF8),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: const Color(0xFFEADBCE),
+              width: 1.2,
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x103B281C),
+                blurRadius: 16,
+                offset: Offset(0, 6),
               ),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x18000000),
-                  blurRadius: 12,
-                  offset: Offset(0, 4),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Kitchen Porthole Window with Stove Heat Aura and LIVE Badge
+              SizedBox(
+                width: 110,
+                height: 110,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Ambient stove warmth backlight glow
+                    Container(
+                      width: 96,
+                      height: 96,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Color(0x40D97706),
+                            blurRadius: 22,
+                            spreadRadius: 4,
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Double-ring Porthole Frame
+                    Container(
+                      width: 104,
+                      height: 104,
+                      padding: const EdgeInsets.all(3.5),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Color(0xFFEADBCE),
+                            Color(0xFFD4B896),
+                            Color(0xFFB8966E),
+                          ],
+                        ),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x22000000),
+                            blurRadius: 10,
+                            offset: Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xFFFAF6ED),
+                          border: Border.all(
+                            color: const Color(0xFF78350F).withAlpha(40),
+                            width: 1,
+                          ),
+                        ),
+                        child: ClipOval(
+                          // ShaderMask radial gradient: dissolves the solid yellow background into transparency
+                          child: ShaderMask(
+                            shaderCallback: (Rect bounds) {
+                              return const RadialGradient(
+                                center: Alignment(0.0, -0.05),
+                                radius: 0.52,
+                                colors: [
+                                  Colors.white,
+                                  Colors.white,
+                                  Color(0xCCFFFFFF),
+                                  Color(0x44FFFFFF),
+                                  Colors.transparent,
+                                ],
+                                stops: [0.0, 0.40, 0.65, 0.88, 1.0],
+                              ).createShader(bounds);
+                            },
+                            blendMode: BlendMode.dstIn,
+                            // ColorFiltered: warm-shifts palette toward chai/sandstone tones
+                            child: ColorFiltered(
+                              colorFilter: ColorFilter.mode(
+                                const Color(0xFFFAF6ED).withAlpha(40),
+                                BlendMode.softLight,
+                              ),
+                              child: Transform.scale(
+                                scale: 1.15,
+                                child: Image.asset(
+                                  'assets/animations/chef_cooking.gif',
+                                  width: 96,
+                                  height: 96,
+                                  fit: BoxFit.cover,
+                                  alignment: const Alignment(0.05, 0.0),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // "LIVE 🔴" Pill Badge anchored at top-right of the porthole
+                    Positioned(
+                      top: 2,
+                      right: 2,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E293B),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: Colors.white.withAlpha(80),
+                            width: 1,
+                          ),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x35000000),
+                              blurRadius: 5,
+                              offset: Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 5,
+                              height: 5,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Color(0xFFEF4444),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Color(0xAAEF4444),
+                                    blurRadius: 4,
+                                    spreadRadius: 1,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'LIVE',
+                              style: AppFonts.mono(
+                                fontSize: 8,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                                letterSpacing: 0.6,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            child: ClipOval(
-              child: Image.asset(
-                'assets/animations/chef_cooking.gif',
-                width: 88,
-                height: 88,
-                fit: BoxFit.cover,
+              ),
+
+              const SizedBox(height: 16),
+
+              // Rubber Kitchen Stamp Styled Announcement Box (subtly angled)
+              Transform.rotate(
+                angle: -0.026, // ~-1.5 degrees rubber stamp tilt
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFBF6EE),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppColors.chai.withAlpha(90),
+                      width: 1.2,
+                    ),
+                  ),
+                  child: Text(
+                    'YOUR ORDER IS BEING COOKED\nBY OUR MASTERCHEFS! 👨‍🍳',
+                    textAlign: TextAlign.center,
+                    style: AppFonts.display(
+                      fontSize: 14.5,
+                      color: AppColors.chai,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 8),
+
+              // Sub-text with emoji separator
+              Text(
+                'Freshly prepared • Made with love 🍛',
+                style: AppFonts.body(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.inkSoft,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 12),
+        // Bottom kitchen divider
+        _buildKitchenDivider(),
+      ],
+    );
+  }
+
+  /// Decorative kitchen divider with centered fork & knife glyph
+  Widget _buildKitchenDivider() {
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            height: 1,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.transparent,
+                  AppColors.line.withAlpha(180),
+                ],
               ),
             ),
           ),
-          const SizedBox(height: 14),
-          // Warm descriptive text
-          Text(
-            'Your order is being cooked\nby our masterchefs! 👨‍🍳',
-            textAlign: TextAlign.center,
-            style: AppFonts.body(
-              fontSize: 13.5,
-              fontWeight: FontWeight.w600,
-              color: AppColors.chai,
-              height: 1.45,
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Text(
+            '🍴',
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.inkSoft.withAlpha(150),
             ),
           ),
-          const SizedBox(height: 6),
-          Text(
-            'Freshly prepared with love',
-            style: AppFonts.body(
-              fontSize: 11.5,
-              color: AppColors.inkSoft,
+        ),
+        Expanded(
+          child: Container(
+            height: 1,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.line.withAlpha(180),
+                  Colors.transparent,
+                ],
+              ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
