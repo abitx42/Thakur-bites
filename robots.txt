@@ -1,0 +1,32 @@
+# Thakur Bites Platform — Anti-Reconnaissance & Crawler Policy
+User-agent: *
+Disallow: /admin
+Disallow: /developer
+Disallow: /staff
+Disallow: /api/
+Disallow: /tv
+Disallow: /data/
+Disallow: /*.json$
+Disallow: /*.log$
+
+# AI Scraper and Automated LLM Crawler Exclusions
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ChatGPT-User
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+# Security Policy Reference
+# See /.well-known/security.txt

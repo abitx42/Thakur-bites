@@ -11,6 +11,7 @@ import { enforceAppCheck } from './app_check';
 import { updatePublicLiveQueueProjection } from './tv_projection';
 import { enforceAppVersionPolicy } from './version_policy';
 import { getMumbaiDateStr } from './shift_pins';
+import { inspectPayloadForHoneytokens, handleHoneypotTripwire } from './honeypot_defense';
 
 const db = admin.firestore();
 
@@ -28,6 +29,15 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   }
 
   const studentId = request.auth.uid;
+
+  // Active Deception / Honeypot Defense: Detect adversarial AI probes, fuzzing & backdoor attempts
+  const honeypotCheck = inspectPayloadForHoneytokens(request.data);
+  if (honeypotCheck.hasHoneytoken) {
+    const forwardedFor = request.rawRequest.headers['x-forwarded-for'];
+    const clientIp = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor)?.split(',')[0].trim() || request.rawRequest.ip;
+    await handleHoneypotTripwire(studentId, 'createCheckout', honeypotCheck.detectedTokens, clientIp);
+  }
+
   const tokenEmail = (request.auth.token.email as string | undefined)?.trim().toLowerCase();
   
   if (!tokenEmail || typeof tokenEmail !== 'string') {

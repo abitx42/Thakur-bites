@@ -23,6 +23,7 @@ import { enforceAppVersionPolicy } from './version_policy';
 import { assertCapability } from './authorization_policy';
 import { isProduction, isSimulationAllowed } from './env_config';
 import { createSanitizedHttpsError } from './security_responses';
+import { inspectPayloadForHoneytokens, handleHoneypotTripwire } from './honeypot_defense';
 
 const db = admin.firestore();
 
@@ -226,6 +227,15 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
   }
 
   const studentId = request.auth.uid;
+
+  // Active Deception / Honeypot Defense: Detect adversarial AI probes & tampering
+  const honeypotCheck = inspectPayloadForHoneytokens(request.data);
+  if (honeypotCheck.hasHoneytoken) {
+    const forwardedFor = request.rawRequest.headers['x-forwarded-for'];
+    const clientIp = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor)?.split(',')[0].trim() || request.rawRequest.ip;
+    await handleHoneypotTripwire(studentId, 'createPaymentSession', honeypotCheck.detectedTokens, clientIp);
+  }
+
   if (request.auth.token.email_verified !== true) {
     throw new HttpsError('permission-denied', 'Institutional email must be verified before making payment.');
   }
@@ -362,6 +372,14 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
   const userDoc = await db.collection('users').doc(request.auth.uid).get();
   if (userDoc.exists && userDoc.data()?.accountDisabled === true) {
     throw new HttpsError('permission-denied', 'Account has been deactivated.');
+  }
+
+  // Active Deception / Honeypot Defense: Detect adversarial AI probes & tampering
+  const honeypotCheck = inspectPayloadForHoneytokens(request.data);
+  if (honeypotCheck.hasHoneytoken) {
+    const forwardedFor = request.rawRequest.headers['x-forwarded-for'];
+    const clientIp = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor)?.split(',')[0].trim() || request.rawRequest.ip;
+    await handleHoneypotTripwire(request.auth.uid, 'verifyPayment', honeypotCheck.detectedTokens, clientIp);
   }
 
   const rawData = (request.data || {}) as any;

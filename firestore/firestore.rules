@@ -479,6 +479,19 @@ service cloud.firestore {
       allow read, write: if false; // Cloud Functions only
     }
 
+    // ─── Decoy Honeypot Collections (Adversarial AI & Attacker Traps) ────
+    match /adminDebugOverrides/{docId} {
+      allow read, write: if false; // Honeypot trap: Any client access strictly denied
+    }
+
+    match /canteenDevBackdoor/{docId} {
+      allow read, write: if false; // Honeypot trap: Any client access strictly denied
+    }
+
+    match /honeyTokens/{tokenId} {
+      allow read, write: if false; // Honeypot trap: Any client access strictly denied
+    }
+
     // ─── Default Deny ────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

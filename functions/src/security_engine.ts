@@ -9,7 +9,8 @@ export type ThreatSignalType =
   | 'STATE_TAMPERING'
   | 'FINANCIAL_TAMPERING'
   | 'REPLAY_ATTACK'
-  | 'DEVICE_MISMATCH';
+  | 'DEVICE_MISMATCH'
+  | 'HONEYPOT_TRIGGERED';
 
 export interface ThreatSignal {
   type: ThreatSignalType;
@@ -46,6 +47,7 @@ const SIGNAL_WEIGHTS: Record<ThreatSignalType, number> = {
   FINANCIAL_TAMPERING: 40,
   REPLAY_ATTACK: 30,
   DEVICE_MISMATCH: 25,
+  HONEYPOT_TRIGGERED: 100,
 };
 
 /**
