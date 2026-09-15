@@ -77,6 +77,7 @@ class _ReceiptPrintRevealState extends State<ReceiptPrintReveal>
   late final AnimationController _controller;
 
   bool _hasFiredBladeHaptic = false;
+  bool _hasFiredCutCompleteHaptic = false;
 
   @override
   void initState() {
@@ -99,9 +100,14 @@ class _ReceiptPrintRevealState extends State<ReceiptPrintReveal>
   }
 
   void _handleAnimationTick() {
-    // Fire blade cut haptic exactly at 4250ms (~0.817 of 5200ms)
+    // Fire blade cut haptic when guillotine engages (~0.817 of timeline)
     if (_controller.value >= 0.817 && !_hasFiredBladeHaptic) {
       _hasFiredBladeHaptic = true;
+      _safeHeavyImpact();
+    }
+    // Fire paper detachment haptic when blade completes cut (~0.875)
+    if (_controller.value >= 0.875 && !_hasFiredCutCompleteHaptic) {
+      _hasFiredCutCompleteHaptic = true;
       _safeMediumImpact();
     }
   }
@@ -111,6 +117,12 @@ class _ReceiptPrintRevealState extends State<ReceiptPrintReveal>
       _safeLightImpact();
       widget.onCompleted?.call();
     }
+  }
+
+  void _safeHeavyImpact() {
+    try {
+      HapticFeedback.heavyImpact();
+    } catch (_) {}
   }
 
   void _safeMediumImpact() {
@@ -203,7 +215,7 @@ class _ReceiptPrintRevealState extends State<ReceiptPrintReveal>
   /// Derives current hardware state label for the printer bar LED
   String _derivePrinterState(double t) {
     if (t <= 0.0) return 'STANDBY';
-    if (t >= 0.86) return 'READY';
+    if (t >= 0.875) return 'READY';
     if (t >= 0.817) return 'CUTTING';
     if (t < 0.08) return 'FEEDING';
     if (t < 0.14) return 'HEATING';
@@ -222,33 +234,33 @@ class _ReceiptPrintRevealState extends State<ReceiptPrintReveal>
         final double t = _controller.value;
         final double revealFraction = evaluateReceiptFeed(t);
 
-        // Blade cut progress: 0..1 during 0.817 -> 0.865
-        final double bladeProgress = ((t - 0.817) / (0.865 - 0.817)).clamp(0.0, 1.0);
+        // Blade cut progress: 0..1 during 0.817 -> 0.875 (~300ms window)
+        final double bladeProgress = ((t - 0.817) / (0.875 - 0.817)).clamp(0.0, 1.0);
 
-        // Scrap fall progress: 0..1 during 0.825 -> 0.925
-        final double scrapProgress = ((t - 0.825) / (0.925 - 0.825)).clamp(0.0, 1.0);
+        // Scrap fall progress: 0..1 during 0.875 -> 0.950 (triggers after cut completes)
+        final double scrapProgress = ((t - 0.875) / (0.950 - 0.875)).clamp(0.0, 1.0);
         final bool showScrap = widget.playIntro && scrapProgress > 0.0 && scrapProgress < 1.0;
         final double scrapDy = Curves.easeInQuad.transform(scrapProgress) * 48.0;
         final double scrapDx = math.sin(scrapProgress * math.pi) * 14.0;
         final double scrapRot = (scrapProgress * 0.16) - 0.04;
         final double scrapOpacity = (1.0 - scrapProgress).clamp(0.0, 1.0);
 
-        // Receipt settle offset: drops 10px with elastic bounce during 0.86 -> 0.94
-        final double settleProgress = ((t - 0.86) / (0.94 - 0.86)).clamp(0.0, 1.0);
-        final double settleY = Curves.easeOutBack.transform(settleProgress) * 10.0;
+        // Receipt settle offset: drops 8px with elastic bounce upon cut completion 0.875 -> 0.940
+        final double settleProgress = ((t - 0.875) / (0.940 - 0.875)).clamp(0.0, 1.0);
+        final double settleY = Curves.easeOutBack.transform(settleProgress) * 8.0;
 
-        // Actions & Cooking Card entrance: 0..1 during 0.92 -> 1.00
+        // Actions & GIF Banner entrance: 0..1 during 0.92 -> 1.00
         final double actionsProgress = ((t - 0.92) / (1.0 - 0.92)).clamp(0.0, 1.0);
         final double actionsEase = Curves.easeOutCubic.transform(actionsProgress);
 
         final bool isPrinting = t > 0.0 && t < 0.817;
-        final bool isCutComplete = t >= 0.86;
+        final bool isCutComplete = t >= 0.875;
         final String stateLabel = _derivePrinterState(t);
 
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 1. Retro Thermal Printer Head Unit with Status LED & Blade Slot
+            // 1. Thermal Printer Head Unit with Status LED & Blade Slot
             _PrinterBar(
               isPrinting: isPrinting,
               bladeCutProgress: bladeProgress,
@@ -256,11 +268,11 @@ class _ReceiptPrintRevealState extends State<ReceiptPrintReveal>
               stateLabel: stateLabel,
             ),
 
-            // 2. Relative viewport for paper emergence and fluttering scrap
+            // 2. Paper emergence zone — receipt feeds downward from behind the printer slot
             Stack(
               clipBehavior: Clip.none,
               children: [
-                // The Printed Receipt with burst-and-pause feed, clipper, and drop bounce
+                // The Printed Receipt with physical paper feed and settle bounce
                 Transform.translate(
                   offset: Offset(0, settleY),
                   child: ClipPath(
@@ -298,7 +310,38 @@ class _ReceiptPrintRevealState extends State<ReceiptPrintReveal>
                   ),
                 ),
 
-                // 3. Falling detached paper scrap strip
+                // 3. Printer throat overhang drop shadow — paper visibly emerges from under casing
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 8,
+                  child: IgnorePointer(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withAlpha(140),
+                            Colors.black.withAlpha(40),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // 4. Prominent Guillotine Cutter Blade visibly slicing horizontally across the throat
+                Positioned(
+                  top: -6,
+                  left: 0,
+                  right: 0,
+                  child: _GuillotineBladeCutter(progress: bladeProgress),
+                ),
+
+                // 5. Falling detached paper scrap strip
                 if (showScrap)
                   Positioned(
                     top: 0,
@@ -322,7 +365,7 @@ class _ReceiptPrintRevealState extends State<ReceiptPrintReveal>
 
             const SizedBox(height: 18),
 
-            // 4. Staggered Entrance for Cooking Card & Action Buttons
+            // 6. Staggered Entrance for GIF Banner & Action Buttons
             Opacity(
               opacity: actionsEase,
               child: Transform.translate(
@@ -360,10 +403,12 @@ class _PrinterBar extends StatelessWidget {
         : (isStandby ? Colors.white.withAlpha(100) : AppColors.mustard);
 
     return Container(
-      height: 38,
-      margin: const EdgeInsets.symmetric(horizontal: 16),
+      height: 42,
       decoration: BoxDecoration(
-        borderRadius: AppRadius.radiusPill,
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(12),
+          topRight: Radius.circular(12),
+        ),
         border: Border.all(
           color: AppColors.chai.withAlpha(60),
           width: 1,
@@ -446,23 +491,23 @@ class _PrinterBar extends StatelessWidget {
             ),
           ),
 
-          // Center-Bottom: Paper Aperture Slot with Guillotine Blade Shear Flash
+          // Bottom: Paper Aperture Slot (wider for visible blade cut)
           Positioned(
-            bottom: 3,
-            left: 28,
-            right: 28,
+            bottom: 0,
+            left: 12,
+            right: 12,
             child: Container(
-              height: 3.5,
+              height: 6,
               decoration: BoxDecoration(
                 color: Colors.black.withAlpha(220),
-                borderRadius: BorderRadius.circular(2),
+                borderRadius: BorderRadius.circular(1.5),
                 border: Border.all(
                   color: const Color(0xFF4A3B32),
                   width: 0.5,
                 ),
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(2),
+                borderRadius: BorderRadius.circular(1.5),
                 child: bladeCutProgress > 0.0 && bladeCutProgress < 1.0
                     ? LayoutBuilder(
                         builder: (context, constraints) {
@@ -500,6 +545,133 @@ class _PrinterBar extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Animated mechanical guillotine cutter that visibly shears horizontally across the paper throat.
+class _GuillotineBladeCutter extends StatelessWidget {
+  final double progress; // 0.0 -> 1.0
+
+  const _GuillotineBladeCutter({required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    if (progress <= 0.0 || progress >= 1.0) {
+      return const SizedBox.shrink();
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double width = constraints.maxWidth;
+        // Blade shears across from left (-30px) to right (width + 30px)
+        final double cutX = (progress * (width + 60)) - 30;
+
+        return SizedBox(
+          width: width,
+          height: 18,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // 1. Severed cut score line trailing behind the blade
+              Positioned(
+                left: 0,
+                width: cutX.clamp(0.0, width),
+                top: 8,
+                height: 2,
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.transparent,
+                        const Color(0xFF4A3B32).withAlpha(180),
+                        Colors.black.withAlpha(220),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+              // 2. The Steel Guillotine Blade Head
+              Positioned(
+                left: cutX - 28,
+                top: 2,
+                child: Container(
+                  width: 36,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(2),
+                      bottomRight: Radius.circular(8),
+                    ),
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFFFFFFFF), // Chrome gleam
+                        Color(0xFFE2E8F0), // Polished steel
+                        Color(0xFF94A3B8), // Brushed metal
+                        Color(0xFF475569), // Beveled edge shadow
+                      ],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withAlpha(140),
+                        blurRadius: 4,
+                        offset: const Offset(1, 2),
+                      ),
+                      BoxShadow(
+                        color: Colors.white.withAlpha(200),
+                        blurRadius: 2,
+                        offset: const Offset(-1, -1),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      // Razor cutting tip
+                      Container(
+                        width: 2.5,
+                        height: 14,
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.only(
+                            topRight: Radius.circular(1),
+                            bottomRight: Radius.circular(4),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // 3. Cutting Spark & Flare at the blade tip
+              Positioned(
+                left: cutX - 16,
+                top: -3,
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        Colors.white,
+                        const Color(0xFFFDE68A).withAlpha(220), // Amber spark
+                        AppColors.mustard.withAlpha(90),
+                        Colors.transparent,
+                      ],
+                      stops: const [0.0, 0.3, 0.6, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

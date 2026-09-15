@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../models/user_preferences.dart';
@@ -16,18 +17,35 @@ class PreferencesService extends ChangeNotifier {
 
   Set<String> _cachedFavourites = {};
   Set<String> get cachedFavourites => _cachedFavourites;
+  StreamSubscription<Set<String>>? _favSub;
 
   /// Stream user favourites from `userFavourites/{uid}`
   Stream<Set<String>> favouritesStream(String uid) {
     return _db.collection('userFavourites').doc(uid).snapshots().map((snap) {
       if (!snap.exists || snap.data() == null) {
         _cachedFavourites = {};
-        return {};
+        notifyListeners();
+        return <String>{};
       }
-      final items = (snap.data()?['items'] as List<dynamic>?)?.map((e) => e.toString()).toSet() ?? {};
+      final items = (snap.data()?['items'] as List<dynamic>?)?.map((e) => e.toString()).toSet() ?? <String>{};
       _cachedFavourites = items;
+      notifyListeners();
       return items;
     });
+  }
+
+  /// Pre-warm the favourites cache on login by subscribing to the stream.
+  void initFavourites(String uid) {
+    _favSub?.cancel();
+    _favSub = favouritesStream(uid).listen((_) {});
+  }
+
+  /// Clear cached favourites on logout.
+  void clearCache() {
+    _favSub?.cancel();
+    _favSub = null;
+    _cachedFavourites = {};
+    notifyListeners();
   }
 
   /// Check if an item is favorited

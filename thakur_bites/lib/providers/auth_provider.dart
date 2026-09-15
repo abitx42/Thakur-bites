@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart' show User;
 import 'package:flutter/foundation.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
+import '../services/preferences_service.dart';
 
 /// Reactive authentication & identity provider using ChangeNotifier.
 /// Backed by Platform 2.0 Universal Identity Model.
@@ -60,6 +61,9 @@ class AuthProvider extends ChangeNotifier {
       debugPrint('[AuthProvider] Error initializing auth state: $e');
     } finally {
       _isLoading = false;
+      if (_currentUserProfile != null && !_isGuestBrowsing) {
+        PreferencesService().initFavourites(_currentUserProfile!.uid);
+      }
       notifyListeners();
     }
 
@@ -87,6 +91,9 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       _currentUserProfile = await _authService.signInWithGoogle();
+      if (_currentUserProfile != null) {
+        PreferencesService().initFavourites(_currentUserProfile!.uid);
+      }
     } catch (e) {
       _errorMessage = e.toString().replaceAll('Exception:', '').trim();
       rethrow;
@@ -178,6 +185,7 @@ class AuthProvider extends ChangeNotifier {
       _currentUserProfile = null;
       _isGuestBrowsing = false;
       _errorMessage = null;
+      PreferencesService().clearCache();
     } finally {
       _isLoading = false;
       notifyListeners();

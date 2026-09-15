@@ -295,11 +295,10 @@ class MenuItemCard extends StatelessWidget {
           Positioned(
             top: 8,
             right: 8,
-            child: Consumer<AuthProvider>(
-              builder: (context, auth, _) {
+            child: Consumer2<AuthProvider, PreferencesService>(
+              builder: (context, auth, prefs, _) {
                 final user = auth.currentProfile;
-                final prefsService = PreferencesService();
-                final isFav = prefsService.isItemFavourited(item.id);
+                final isFav = prefs.isItemFavourited(item.id);
 
                 return Semantics(
                   button: true,
@@ -311,7 +310,7 @@ class MenuItemCard extends StatelessWidget {
                         return;
                       }
                       HapticFeedback.selectionClick();
-                      await prefsService.toggleFavourite(user.uid, item.id);
+                      await prefs.toggleFavourite(user.uid, item.id);
                     },
                     child: Container(
                       width: 26,

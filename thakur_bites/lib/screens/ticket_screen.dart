@@ -6,7 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/order.dart' as app;
 import '../theme/app_theme.dart';
 import '../widgets/receipt_print_reveal.dart';
-import '../widgets/chef_cooking_card.dart';
 import 'order_status_screen.dart';
 
 /// Phase 4 — Perforated ticket confirmation screen with live Firestore status sync.
@@ -148,8 +147,8 @@ class _TicketScreenState extends State<TicketScreen> {
   Widget _buildActionButtons(app.Order currentOrder) {
     return Column(
       children: [
-        // Masterchef Live Cooking Animation Card
-        ChefCookingCard(order: currentOrder),
+        // Lightweight chef cooking GIF banner
+        _buildChefGifBanner(),
         const SizedBox(height: 16),
 
         // View Status button
@@ -212,6 +211,74 @@ class _TicketScreenState extends State<TicketScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Lightweight chef cooking GIF banner — circular-clipped GIF with warm text.
+  Widget _buildChefGifBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFDF8),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFFEADBCE),
+          width: 1.2,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Circular-clipped chef GIF with warm border ring
+          Container(
+            width: 88,
+            height: 88,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: const Color(0xFFD4B896),
+                width: 2.5,
+              ),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x18000000),
+                  blurRadius: 12,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: ClipOval(
+              child: Image.asset(
+                'assets/animations/chef_cooking.gif',
+                width: 88,
+                height: 88,
+                fit: BoxFit.cover,
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          // Warm descriptive text
+          Text(
+            'Your order is being cooked\nby our masterchefs! 👨‍🍳',
+            textAlign: TextAlign.center,
+            style: AppFonts.body(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: AppColors.chai,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Freshly prepared with love',
+            style: AppFonts.body(
+              fontSize: 11.5,
+              color: AppColors.inkSoft,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

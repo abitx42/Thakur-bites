@@ -14,6 +14,7 @@ import 'screens/menu_screen.dart';
 import 'screens/force_update_screen.dart';
 import 'widgets/update_dialog.dart';
 import 'services/device_security_service.dart';
+import 'services/preferences_service.dart';
 import 'widgets/device_security_wrapper.dart';
 
 void main() async {
@@ -109,6 +110,7 @@ class ThakurBitesApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => UpdateService()),
         ChangeNotifierProvider(create: (_) => DeviceSecurityService()),
+        ChangeNotifierProvider<PreferencesService>.value(value: PreferencesService()),
       ],
       child: MaterialApp(
         title: 'Thakur Bites',
