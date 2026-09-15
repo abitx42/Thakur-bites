@@ -70,6 +70,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   String? _previousKnownStatus;
   bool _copiedPin = false;
   bool _copiedToken = false;
+  final Set<String> _autoCancelledOrderIds = {};
 
   @override
   void initState() {
@@ -700,6 +701,74 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     );
   }
 
+  /// Automatic cancellation and inventory stock release when reservation window expires.
+  void _checkAutoCancelExpiredReservation(app.Order order, bool isExpired) {
+    if (!isExpired) return;
+    if (order.isCancelled || order.status == 'cancelled') return;
+    if (order.paymentStatus == 'paid' || order.status == 'confirmed') return;
+    if (_autoCancelledOrderIds.contains(order.id)) return;
+
+    _autoCancelledOrderIds.add(order.id);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await _functions.cancelOrder(
+          orderId: order.id,
+          reason: 'RESERVATION_EXPIRED',
+        );
+      } catch (e) {
+        debugPrint('[OrderStatusScreen] Error auto-cancelling expired reservation via functions: $e');
+        try {
+          await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
+            'status': 'cancelled',
+            'paymentStatus': 'cancelled',
+            'cancellationReason': 'RESERVATION_EXPIRED',
+            'cancelledAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } catch (fsErr) {
+          debugPrint('[OrderStatusScreen] Error auto-cancelling expired order in Firestore: $fsErr');
+        }
+      }
+    });
+  }
+
+  /// Re-adds expired order items back into the user's Cart and navigates to CartScreen.
+  Future<void> _handleReorderFromCart(app.Order order) async {
+    final cart = context.read<CartProvider>();
+    int addedCount = 0;
+
+    for (final oi in order.items) {
+      final menuItem = MenuItem(
+        id: oi.menuItemId,
+        name: oi.name,
+        price: oi.price,
+        type: oi.type ?? 'instant',
+        category: 'general',
+        parentCategory: 'Food',
+        available: true,
+        prepMinutes: 0,
+        stockCount: 50,
+      );
+      for (int i = 0; i < oi.quantity; i++) {
+        cart.addItem(menuItem, customization: oi.customization);
+      }
+      addedCount += oi.quantity;
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('🛒 Restored $addedCount item(s) to your cart.'),
+          backgroundColor: AppColors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const CartScreen()),
+      );
+    }
+  }
+
   /// Reservation Countdown & Reconcile Card
   Widget _buildReservationCard(app.Order order) {
     return ValueListenableBuilder<DateTime>(
@@ -712,12 +781,18 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
         final mins = (totalSeconds ~/ 60).toString().padLeft(2, '0');
         final secs = (totalSeconds % 60).toString().padLeft(2, '0');
 
+        // Trigger stock release and cancellation if expired
+        _checkAutoCancelExpiredReservation(order, isExpired);
+
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: AppColors.warningBg,
+            color: isExpired ? AppColors.dangerBg : AppColors.warningBg,
             borderRadius: AppRadius.radiusLg,
-            border: Border.all(color: AppColors.warning.withAlpha(100), width: 1.5),
+            border: Border.all(
+              color: isExpired ? AppColors.danger.withAlpha(120) : AppColors.warning.withAlpha(100),
+              width: 1.5,
+            ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -727,11 +802,18 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.timer_outlined, color: AppColors.warning, size: 20),
+                      Icon(
+                        isExpired ? Icons.error_outline_rounded : Icons.timer_outlined,
+                        color: isExpired ? AppColors.danger : AppColors.warning,
+                        size: 20,
+                      ),
                       const SizedBox(width: 8),
                       Text(
                         isExpired ? 'Reservation Expired' : 'Holding Items for Payment',
-                        style: AppFonts.display(fontSize: 15, color: AppColors.mustardInk),
+                        style: AppFonts.display(
+                          fontSize: 15,
+                          color: isExpired ? AppColors.danger : AppColors.mustardInk,
+                        ),
                       ),
                     ],
                   ),
@@ -758,27 +840,21 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               const SizedBox(height: 8),
               Text(
                 isExpired
-                    ? 'Your inventory reservation window has expired. If you were charged, verify below.'
+                    ? 'Your 15-minute inventory reservation has expired and reserved items have been released. Please reorder from your cart.'
                     : 'Stock is reserved for you. Complete payment before the timer expires to confirm your order.',
                 style: AppFonts.body(fontSize: 12, color: AppColors.ink),
               ),
               const SizedBox(height: 14),
 
-              // Action Buttons: Pay Now (for online orders) + Reconcile + Cancel
-              if (order.isOnlinePayment && !isExpired) ...[
+              // When expired, stock is NOT held — provide 1-tap reorder from cart
+              if (isExpired) ...[
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: _isPaying ? null : () => _handlePayNow(order),
-                    icon: _isPaying
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
-                        : const Icon(Icons.payment_rounded, size: 18),
+                    onPressed: () => _handleReorderFromCart(order),
+                    icon: const Icon(Icons.shopping_cart_checkout_rounded, size: 18),
                     label: Text(
-                      _isPaying ? 'Processing Payment...' : 'Pay Now · ₹${order.totalAmount.toInt()}',
+                      'Reorder from Cart · ₹${order.totalAmount.toInt()}',
                       style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w700),
                     ),
                     style: ElevatedButton.styleFrom(
@@ -790,55 +866,105 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-              ],
-
-              Row(
-                children: [
-                  Expanded(
-                    flex: 3,
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _isReconciling ? null : () => _handleReconcilePayment(order),
+                    icon: _isReconciling
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.inkSoft),
+                          )
+                        : const Icon(Icons.sync_rounded, size: 16),
+                    label: Text(
+                      _isReconciling ? 'Verifying Gateway...' : 'I Was Charged (Verify Payment)',
+                      style: AppFonts.body(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.ink),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.line, width: 1.2),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusSm),
+                    ),
+                  ),
+                ),
+              ] else ...[
+                // When NOT expired: Pay Now + Check Payment Status + Cancel
+                if (order.isOnlinePayment) ...[
+                  SizedBox(
+                    width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: _isReconciling ? null : () => _handleReconcilePayment(order),
-                      icon: _isReconciling
+                      onPressed: _isPaying ? null : () => _handlePayNow(order),
+                      icon: _isPaying
                           ? const SizedBox(
-                              width: 14,
-                              height: 14,
+                              width: 16,
+                              height: 16,
                               child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                             )
-                          : const Icon(Icons.sync_rounded, size: 16),
+                          : const Icon(Icons.payment_rounded, size: 18),
                       label: Text(
-                        _isReconciling ? 'Checking...' : 'Check Payment Status',
-                        style: AppFonts.body(fontSize: 12.5, fontWeight: FontWeight.w700),
+                        _isPaying ? 'Processing Payment...' : 'Pay Now · ₹${order.totalAmount.toInt()}',
+                        style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w700),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.warning,
+                        backgroundColor: AppColors.red,
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusSm),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusMd),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    flex: 2,
-                    child: OutlinedButton(
-                      onPressed: _isCancelling ? null : () => _showCancelDialog(order),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: AppColors.danger),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusSm),
-                      ),
-                      child: Text(
-                        'Cancel',
-                        style: AppFonts.body(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.danger,
+                  const SizedBox(height: 8),
+                ],
+
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: ElevatedButton.icon(
+                        onPressed: _isReconciling ? null : () => _handleReconcilePayment(order),
+                        icon: _isReconciling
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.sync_rounded, size: 16),
+                        label: Text(
+                          _isReconciling ? 'Checking...' : 'Check Payment Status',
+                          style: AppFonts.body(fontSize: 12.5, fontWeight: FontWeight.w700),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.warning,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusSm),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: OutlinedButton(
+                        onPressed: _isCancelling ? null : () => _showCancelDialog(order),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: AppColors.danger),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusSm),
+                        ),
+                        child: Text(
+                          'Cancel',
+                          style: AppFonts.body(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.danger,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         );
@@ -1545,9 +1671,10 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
         final isReconciled = res['isReconciled'] == true || res['reconciled'] == true;
         final paymentStatus = res['paymentStatus'] as String? ?? res['orderStatus'] as String? ?? res['status'] as String? ?? 'pending';
         final message = res['message'] as String? ?? 'Payment status checked.';
+        final isExpired = res['isExpired'] == true;
 
         if (mounted) {
-          if (isReconciled) {
+          if (isReconciled && !isExpired) {
             setState(() {});
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -1555,10 +1682,18 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                 backgroundColor: AppColors.green,
               ),
             );
+          } else if (isExpired) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('⏰ Stock reservation has expired and items were released. If your bank debited money, it will be refunded within 24–48 hours.'),
+                backgroundColor: AppColors.warning,
+                duration: Duration(seconds: 5),
+              ),
+            );
           } else {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Status: $paymentStatus. If you completed payment, it will reconcile automatically.'),
+                content: Text('Status: $paymentStatus. If you completed payment, gateway will reconcile automatically.'),
                 backgroundColor: AppColors.warning,
               ),
             );
@@ -1584,60 +1719,12 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               return;
             }
 
-            // If still pending, offer direct payment confirmation
-            final confirmed = await showDialog<bool>(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: const Text('Confirm Completed Payment'),
-                content: Text('Did you already complete the payment of ₹${order.totalAmount.toInt()}?'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(false),
-                    child: const Text('Not Yet'),
-                  ),
-                  ElevatedButton(
-                    onPressed: () => Navigator.of(ctx).pop(true),
-                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.green, foregroundColor: Colors.white),
-                    child: const Text('Yes, I Paid'),
-                  ),
-                ],
-              ),
-            );
-
-            if (confirmed == true) {
-              if (!mounted) return;
-              try {
-                await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
-                  'status': 'confirmed',
-                  'paymentStatus': 'paid',
-                  'paidAt': FieldValue.serverTimestamp(),
-                  'updatedAt': FieldValue.serverTimestamp(),
-                });
-                if (!mounted) return;
-                setState(() {});
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('✅ Payment confirmed! Order is queued in kitchen.'),
-                    backgroundColor: AppColors.green,
-                  ),
-                );
-              } catch (fsErr) {
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Failed to confirm payment: $fsErr'),
-                    backgroundColor: AppColors.danger,
-                  ),
-                );
-              }
-              return;
-            }
-
-            if (!mounted) return;
+            // Strictly inform user without allowing unverified manual self-confirmation
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Payment is pending. Tap "Pay Now" to complete payment.'),
+                content: Text('No verified payment detected from payment gateway. If money was debited, your bank will refund within 24–48 hours.'),
                 backgroundColor: AppColors.warning,
+                duration: Duration(seconds: 5),
               ),
             );
           }
@@ -1649,8 +1736,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Status check: ${e.toString().replaceAll('Exception:', '').trim()}'),
-            backgroundColor: AppColors.danger,
+            content: Text('Verification notice: ${e.toString().replaceAll('Exception:', '').trim()}'),
+            backgroundColor: AppColors.warning,
           ),
         );
       }
