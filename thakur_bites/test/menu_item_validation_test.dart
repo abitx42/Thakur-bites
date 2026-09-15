@@ -1,5 +1,8 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:thakur_bites/models/menu_item.dart';
+import 'package:thakur_bites/models/order.dart';
+import 'package:thakur_bites/screens/menu_screen.dart';
 
 void main() {
   group('MenuItem Defensive Validation & Ghost Item Invariants', () {
@@ -114,6 +117,33 @@ void main() {
       final cleanItems = items.where((i) => i.isValid).toList();
       expect(cleanItems.length, 2);
       expect(cleanItems.map((e) => e.name), ['Valid Samosa', 'Valid Chai']);
+    });
+
+    test('MenuSortOption.recommended uses standard sort icon (Icons.sort_rounded)', () {
+      expect(MenuSortOption.recommended.icon, equals(Icons.sort_rounded));
+      expect(MenuSortOption.popular.icon, equals(Icons.local_fire_department_rounded));
+    });
+
+    test('Order.fromFirestore safely handles dynamic Map and num types in items list', () {
+      final rawData = <String, dynamic>{
+        'tokenNumber': 'TB-888',
+        'status': 'confirmed',
+        'paymentStatus': 'paid',
+        'items': [
+          <dynamic, dynamic>{
+            'menuItemId': 'dosa_1',
+            'name': 'Special Dosa',
+            'quantity': 2.0, // double quantity from web
+            'price': 60, // integer price
+          },
+        ],
+      };
+
+      final order = Order.fromFirestore('test_ord_1', rawData);
+      expect(order.items.length, 1);
+      expect(order.items.first.name, 'Special Dosa');
+      expect(order.items.first.quantity, 2);
+      expect(order.items.first.price, 60.0);
     });
   });
 }

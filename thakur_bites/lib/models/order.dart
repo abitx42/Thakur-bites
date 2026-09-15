@@ -141,7 +141,8 @@ class Order {
 
   factory Order.fromFirestore(String docId, Map<String, dynamic> data) {
     final parsedItems = (data['items'] as List<dynamic>?)
-            ?.map((item) => OrderItem.fromMap(item as Map<String, dynamic>))
+            ?.map((item) => OrderItem.fromMap(
+                item is Map ? Map<String, dynamic>.from(item) : const <String, dynamic>{}))
             .toList() ??
         [];
     final onlyReadyMade = data['isOnlyReadyMade'] == true ||
@@ -297,10 +298,10 @@ class OrderItem {
 
   factory OrderItem.fromMap(Map<String, dynamic> map) {
     return OrderItem(
-      menuItemId: map['menuItemId'] ?? map['itemId'] ?? '',
-      name: map['name'] ?? '',
-      quantity: map['quantity'] ?? 1,
-      price: (map['price'] ?? map['unitPrice'] ?? 0).toDouble(),
+      menuItemId: (map['menuItemId'] ?? map['itemId'] ?? '').toString(),
+      name: (map['name'] ?? '').toString(),
+      quantity: (map['quantity'] as num?)?.toInt() ?? 1,
+      price: (map['price'] as num?)?.toDouble() ?? (map['unitPrice'] as num?)?.toDouble() ?? 0.0,
       type: map['type'] as String?,
       customization: map['customization'] as String?,
     );

@@ -104,90 +104,99 @@ class MenuItemCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Badges row: Availability + Popular tag
+                // Badges row: Availability + Popular tag with guaranteed clearance for favourite button
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Semantics(
-                      label: !inStock
-                          ? 'Status: Out of Stock'
-                          : (level == AvailabilityLevel.limited
-                              ? 'Status: Limited availability, ${item.badgeText}'
-                              : 'Status: In Stock, ${item.badgeText}'),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: badgeBg,
-                          borderRadius: AppRadius.radiusPill,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // Availability dot
-                            if (!isCooked || !inStock) ...[
-                              Container(
-                                width: 6,
-                                height: 6,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: !inStock
-                                      ? AppColors.danger
-                                      : level == AvailabilityLevel.limited
-                                      ? AppColors.warning
-                                      : AppColors.success,
-                                ),
+                    Expanded(
+                      child: Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: [
+                          Semantics(
+                            label: !inStock
+                                ? 'Status: Out of Stock'
+                                : (level == AvailabilityLevel.limited
+                                    ? 'Status: Limited availability, ${item.badgeText}'
+                                    : 'Status: In Stock, ${item.badgeText}'),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
                               ),
-                              const SizedBox(width: 4),
-                            ],
-                            Text(
-                              item.badgeText,
-                              style: AppFonts.mono(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w600,
-                                color: badgeTextColor,
+                              decoration: BoxDecoration(
+                                color: badgeBg,
+                                borderRadius: AppRadius.radiusPill,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  // Availability dot
+                                  if (!isCooked || !inStock) ...[
+                                    Container(
+                                      width: 6,
+                                      height: 6,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: !inStock
+                                            ? AppColors.danger
+                                            : level == AvailabilityLevel.limited
+                                            ? AppColors.warning
+                                            : AppColors.success,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                  ],
+                                  Text(
+                                    item.badgeText,
+                                    style: AppFonts.mono(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: badgeTextColor,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                          if (item.todaySpecialBadge != null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.dangerBg,
+                                borderRadius: AppRadius.radiusSm,
+                                border: Border.all(color: AppColors.danger, width: 0.8),
+                              ),
+                              child: Text(
+                                item.todaySpecialBadge!,
+                                style: const TextStyle(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.danger,
+                                ),
+                              ),
+                            )
+                          else if (item.isPopular)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.warningBg,
+                                borderRadius: AppRadius.radiusSm,
+                                border: Border.all(color: AppColors.warning, width: 0.8),
+                              ),
+                              child: const Text(
+                                '🔥 Popular',
+                                style: TextStyle(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.mustardInk,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                    if (item.todaySpecialBadge != null)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppColors.dangerBg,
-                          borderRadius: AppRadius.radiusSm,
-                          border: Border.all(color: AppColors.danger, width: 0.8),
-                        ),
-                        child: Text(
-                          item.todaySpecialBadge!,
-                          style: const TextStyle(
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.danger,
-                          ),
-                        ),
-                      )
-                    else if (item.isPopular)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppColors.warningBg,
-                          borderRadius: AppRadius.radiusSm,
-                          border: Border.all(color: AppColors.warning, width: 0.8),
-                        ),
-                        child: const Text(
-                          '🔥 Popular',
-                          style: TextStyle(
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.mustardInk,
-                          ),
-                        ),
-                      ),
+                    const SizedBox(width: 30), // Clearance for Positioned favourite button
                   ],
                 ),
                 const SizedBox(height: 8),

@@ -51,7 +51,7 @@ extension MenuSortOptionExtension on MenuSortOption {
   IconData get icon {
     switch (this) {
       case MenuSortOption.recommended:
-        return Icons.auto_awesome_rounded;
+        return Icons.sort_rounded;
       case MenuSortOption.popular:
         return Icons.local_fire_department_rounded;
       case MenuSortOption.priceLowToHigh:
