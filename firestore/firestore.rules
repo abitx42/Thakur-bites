@@ -260,8 +260,7 @@ service cloud.firestore {
     }
 
     match /mfaEnrollments/{userId} {
-      allow read: if isOwner(userId) || isDeveloper();
-      allow write: if false; // Cloud Functions only
+      allow read, write: if false; // Cloud Functions only (TB-VULN-07)
     }
 
     // ─── Registered Workstations & Hardware Binding ─────────────
@@ -278,13 +277,13 @@ service cloud.firestore {
     // Private System Configuration (Preserves internal staff UID and private incident reasons)
     match /systemConfig/{configId} {
       allow read: if isManagerOrAdmin();
-      allow write: if isManagerOrAdmin();
+      allow write: if false; // Server Cloud Functions only (TB-VULN-08)
     }
 
     // Public Sanitized Operational Status (Zero PII or internal note leakage)
     match /publicSystemStatus/{statusId} {
       allow read: if true;
-      allow write: if isManagerOrAdmin();
+      allow write: if false; // Server Cloud Functions only (TB-VULN-08)
     }
 
     // Public Application Version & Update Policy (Read-only to clients)

@@ -97,9 +97,10 @@ export const submitPilotStudentFeedback = onCall<PilotStudentFeedbackRequest>(as
       throw new HttpsError('failed-precondition', 'Pilot feedback can only be submitted once the order has been collected.');
     }
 
-    const cleanComment = comment.trim().slice(0, 280);
-    const validTags = tags.filter((t) =>
-      ['payment_seamless', 'payment_problem', 'app_confusing', 'order_delayed', 'food_not_found', 'great_experience'].includes(t)
+    const cleanComment = typeof comment === 'string' ? comment.trim().slice(0, 280) : '';
+    const safeTags = Array.isArray(tags) ? tags : [];
+    const validTags = safeTags.filter((t) =>
+      typeof t === 'string' && ['payment_seamless', 'payment_problem', 'app_confusing', 'order_delayed', 'food_not_found', 'great_experience'].includes(t)
     );
 
     transaction.set(feedbackRef, {
@@ -154,7 +155,7 @@ export const submitPilotStaffFeedback = onCall<PilotStaffFeedbackRequest>(async 
     station,
     screenClarity,
     queueManageability,
-    notes: notes.trim().slice(0, 500),
+    notes: typeof notes === 'string' ? notes.trim().slice(0, 500) : '',
     submittedAt: now,
   });
 

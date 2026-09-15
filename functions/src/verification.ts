@@ -218,6 +218,17 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
       throw new HttpsError('failed-precondition', `Application has already been resolved as ${appData.status}.`);
     }
 
+    // Separation of Duties / Four-Eyes Principle: Reviewer cannot approve their own application
+    if (appData.userId === reviewerUid) {
+      await logSecurityEvent({
+        eventType: 'SELF_APPROVAL_ATTEMPT_BLOCKED',
+        severity: 'HIGH',
+        actorUid: reviewerUid,
+        details: { applicationId, applicationType: appData.applicationType },
+      });
+      throw new HttpsError('permission-denied', 'Self-approval is strictly forbidden. Another administrator must review your verification application.');
+    }
+
     const userRef = db.collection('users').doc(appData.userId);
     const userSnap = await transaction.get(userRef);
 

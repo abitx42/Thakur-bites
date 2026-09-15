@@ -112,7 +112,7 @@ export const createMealRating = onCall<MealRatingRequest>(async (request) => {
       });
     }
 
-    const trimmedComment = comment.trim().slice(0, 500);
+    const trimmedComment = typeof comment === 'string' ? comment.trim().slice(0, 500) : '';
 
     // 4a. Save private audit rating record (contains student & order binding)
     transaction.set(privateRatingRef, {
