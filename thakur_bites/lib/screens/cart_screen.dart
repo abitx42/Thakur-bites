@@ -886,18 +886,8 @@ class _CartSummaryState extends State<_CartSummary> {
             studentName: student?.displayName ?? order.studentName ?? 'Student',
             studentEmail: student?.email ?? 'student@tcetmumbai.in',
           );
-          // Directly confirm order in Firestore so Kitchen KDS immediately receives it
-          try {
-            await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
-              'status': 'confirmed',
-              'paymentStatus': 'paid',
-              'paidAt': FieldValue.serverTimestamp(),
-              'updatedAt': FieldValue.serverTimestamp(),
-              if (payRes.paymentId != null) 'gatewayPaymentId': payRes.paymentId,
-            });
-          } catch (updateErr) {
-            debugPrint('[CartScreen] Direct Firestore order confirmation notice: $updateErr');
-          }
+          // Payment finalized authoritatively via Cloud Function verifyPayment
+          debugPrint('[CartScreen] Online payment verified successfully: ${payRes.paymentId}');
         } on PaymentException catch (pe) {
           // Payment dismissed, declined, or timed out.
           // DO NOT wipe the cart! Keep items so student can retry.

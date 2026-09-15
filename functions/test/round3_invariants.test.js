@@ -165,9 +165,9 @@ describe('Round 3: Security & Architectural Invariants Test Suite', () => {
   it('7. Invariant: Firestore Security Rules strictly lockdown TV projection and canteen singletons', () => {
     const rulesContent = fs.readFileSync(path.join(__dirname, '../../firestore/firestore.rules'), 'utf8');
 
-    // 1. /publicLiveQueue/current writes permitted to authenticated clients for dual-mode sync
-    assert.ok(rulesContent.includes('match /publicLiveQueue/current {\n      allow read: if true;\n      allow write: if isAuthenticated();'),
-      '/publicLiveQueue/current must enforce authenticated writes');
+    // 1. /publicLiveQueue/current writes permitted to operational staff only (VULN-03 hardened)
+    assert.ok(rulesContent.includes('match /publicLiveQueue/current {\n      allow read: if true;\n      allow write: if isOperationalStaff();'),
+      '/publicLiveQueue/current must enforce operational staff writes');
 
     // 2. /canteenConfig/{configId} forbids deletion
     assert.ok(rulesContent.includes('match /canteenConfig/{configId} {\n      allow read: if true;\n      allow create, update: if isOperationalStaff();\n      allow delete: if false;'),

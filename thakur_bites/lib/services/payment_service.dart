@@ -126,21 +126,8 @@ class PaymentService {
       debugPrint('[PaymentService] Payment verification check notice: $e');
     }
 
-    // Step 4: Resilient Dual-Mode Update: Ensure order in Firestore is confirmed and marked paid
-    try {
-      await FirebaseFirestore.instance.collection('orders').doc(orderId).update({
-        'status': 'confirmed',
-        'paymentStatus': 'paid',
-        'paidAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        'gatewayPaymentId': paymentId,
-        if (confirmedOrderId.isNotEmpty) 'gatewayOrderId': confirmedOrderId,
-        if (signature.isNotEmpty) 'gatewaySignature': signature,
-      });
-      debugPrint('[PaymentService] Direct Firestore order confirmation updated for $orderId.');
-    } catch (fsErr) {
-      debugPrint('[PaymentService] Direct Firestore payment update notice: $fsErr');
-    }
+    // Step 4: Verification completed. Payment state, inventory commitment, and double-entry
+    // ledger are authoritatively managed by backend verifyPayment / finalizeSuccessfulPayment.
 
     return PaymentResult(
       isSuccess: true,
