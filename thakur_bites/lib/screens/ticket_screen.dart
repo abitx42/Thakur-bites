@@ -267,12 +267,32 @@ class _TicketScreenState extends State<TicketScreen> {
             ),
           ),
 
+          // Tractor-feed pinhole margins (continuous authentic sprocket punch holes)
+          const Positioned(
+            left: 0,
+            top: 8,
+            bottom: 16,
+            width: 18,
+            child: CustomPaint(
+              painter: TractorFeedPinholesPainter(isLeft: true),
+            ),
+          ),
+          const Positioned(
+            right: 0,
+            top: 8,
+            bottom: 16,
+            width: 18,
+            child: CustomPaint(
+              painter: TractorFeedPinholesPainter(isLeft: false),
+            ),
+          ),
+
           Column(
             children: [
               Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-            child: Column(
-              children: [
+                padding: const EdgeInsets.fromLTRB(26, 18, 26, 20),
+                child: Column(
+                  children: [
                 // Header
                 Text(
                   'Thakur Bites · Canteen Token',

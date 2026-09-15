@@ -645,3 +645,57 @@ class ThermalPaperScanlinesPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant ThermalPaperScanlinesPainter oldDelegate) => false;
 }
+
+/// Custom painter rendering authentic continuous tractor-feed sprocket punch holes
+/// along the margin of the thermal ticket, with subtle punch depth and vertical perforation slits.
+class TractorFeedPinholesPainter extends CustomPainter {
+  final bool isLeft;
+
+  const TractorFeedPinholesPainter({this.isLeft = true});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const holeRadius = 2.2;
+    const holeSpacing = 15.0;
+    final holeX = isLeft ? 7.0 : size.width - 7.0;
+    final perforationX = isLeft ? size.width - 1.0 : 1.0;
+
+    // Perforation dotted line
+    final perfPaint = Paint()
+      ..color = const Color(0x3078350F)
+      ..strokeWidth = 0.8
+      ..style = PaintingStyle.stroke;
+
+    double y = 4.0;
+    while (y < size.height - 4) {
+      canvas.drawLine(
+        Offset(perforationX, y),
+        Offset(perforationX, y + 2.5),
+        perfPaint,
+      );
+      y += 5.0;
+    }
+
+    // Outer hole shadow (embossed punch-hole depth)
+    final shadowPaint = Paint()
+      ..color = const Color(0x353B281C)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.8;
+
+    // Inner hole cutout
+    final holePaint = Paint()
+      ..color = const Color(0xFFF1EAE0)
+      ..style = PaintingStyle.fill;
+
+    double holeY = 10.0;
+    while (holeY < size.height - 6) {
+      canvas.drawCircle(Offset(holeX, holeY), holeRadius, holePaint);
+      canvas.drawCircle(Offset(holeX, holeY), holeRadius, shadowPaint);
+      holeY += holeSpacing;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant TractorFeedPinholesPainter oldDelegate) =>
+      oldDelegate.isLeft != isLeft;
+}
