@@ -149,7 +149,7 @@ class _TicketScreenState extends State<TicketScreen> {
     return Column(
       children: [
         // Masterchef Live Cooking Animation Card
-        const ChefCookingCard(),
+        ChefCookingCard(order: currentOrder),
         const SizedBox(height: 16),
 
         // View Status button
