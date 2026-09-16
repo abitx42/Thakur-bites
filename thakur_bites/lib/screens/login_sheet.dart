@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/bouncy_tap.dart';
 
 /// Platform 2.0 — Google-Only Universal Login Sheet
 /// Streamlined: Instant Google Sign-In + Automatic Backend Role Classification
@@ -154,39 +155,54 @@ class _LoginSheetState extends State<LoginSheet> {
           Semantics(
             button: true,
             label: 'Continue with Google sign-in',
-            child: ElevatedButton(
-              onPressed: _isSubmitting ? null : _handleGoogleSignIn,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: AppColors.ink,
-                elevation: 1.5,
-                side: const BorderSide(color: AppColors.line, width: 1.5),
+            child: BouncyTap(
+              scaleFactor: 0.98,
+              onTap: _isSubmitting ? null : _handleGoogleSignIn,
+              child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 15),
-                shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusLg),
-              ),
-              child: _isSubmitting
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2.5, color: AppColors.red),
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Image.network(
-                          'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
-                          width: 22,
-                          height: 22,
-                          errorBuilder: (context, error, stackTrace) =>
-                              const Icon(Icons.account_circle, color: Colors.blue, size: 22),
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          'Continue with Google',
-                          style: AppFonts.body(fontSize: 15.5, fontWeight: FontWeight.w700, color: AppColors.ink),
-                        ),
-                      ],
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: AppRadius.radiusLg,
+                  border: Border.all(color: AppColors.line, width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withAlpha(10),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
                     ),
+                  ],
+                ),
+                child: Center(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: _isSubmitting
+                        ? const SizedBox(
+                            key: ValueKey('google_signing_in'),
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2.5, color: AppColors.red),
+                          )
+                        : Row(
+                            key: const ValueKey('google_idle'),
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Image.network(
+                                'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
+                                width: 22,
+                                height: 22,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    const Icon(Icons.account_circle, color: Colors.blue, size: 22),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                'Continue with Google',
+                                style: AppFonts.body(fontSize: 15.5, fontWeight: FontWeight.w700, color: AppColors.ink),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -234,17 +250,27 @@ class _LoginSheetState extends State<LoginSheet> {
           Semantics(
             button: true,
             label: 'Browse canteen menu as guest without signing in',
-            child: OutlinedButton.icon(
-              onPressed: _handleGuestBrowse,
-              icon: const Icon(Icons.remove_red_eye_outlined, size: 18, color: AppColors.ink),
-              label: Text(
-                'Browse Menu as Guest',
-                style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.ink),
-              ),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppColors.line, width: 1.5),
+            child: BouncyTap(
+              scaleFactor: 0.98,
+              onTap: _handleGuestBrowse,
+              child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 13),
-                shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusLg),
+                decoration: BoxDecoration(
+                  color: Colors.transparent,
+                  borderRadius: AppRadius.radiusLg,
+                  border: Border.all(color: AppColors.line, width: 1.5),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.remove_red_eye_outlined, size: 18, color: AppColors.ink),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Browse Menu as Guest',
+                      style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.ink),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

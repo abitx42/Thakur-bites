@@ -7,6 +7,7 @@ import '../models/menu_item.dart';
 import '../providers/cart_provider.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
+import 'bouncy_tap.dart';
 
 /// Modal bottom sheet allowing students to customize their daily meal
 /// (e.g. 4 Tawa Rotis vs 4 Fresh Puris, choice of daily gravies).
@@ -489,8 +490,9 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
           // Bottom Action Button
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-            child: ElevatedButton(
-              onPressed: !isBreadSelectionValid
+            child: BouncyTap(
+              scaleFactor: 0.98,
+              onTap: !isBreadSelectionValid
                   ? null
                   : () {
                       final customization = _buildCustomizationSummary();
@@ -513,27 +515,25 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                         ),
                       );
                     },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.ink,
-                foregroundColor: Colors.white,
-                disabledBackgroundColor: AppColors.line,
-                disabledForegroundColor: AppColors.inkSoft,
+              child: Container(
+                width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
+                decoration: BoxDecoration(
+                  color: !isBreadSelectionValid ? AppColors.line : AppColors.ink,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                elevation: 0,
-              ),
-              child: Text(
-                !board.hasAnyBread
-                    ? 'All Breads Sold Out for Today'
-                    : (!isBreadSelectionValid
-                        ? 'Selected Bread Unavailable'
-                        : 'Add to Cart • ₹${widget.item.price.toInt()}'),
-                style: AppFonts.body(
-                  fontSize: 14.5,
-                  fontWeight: FontWeight.w700,
-                  color: !isBreadSelectionValid ? AppColors.inkSoft : Colors.white,
+                alignment: Alignment.center,
+                child: Text(
+                  !board.hasAnyBread
+                      ? 'All Breads Sold Out for Today'
+                      : (!isBreadSelectionValid
+                          ? 'Selected Bread Unavailable'
+                          : 'Add to Cart • ₹${widget.item.price.toInt()}'),
+                  style: AppFonts.body(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w700,
+                    color: !isBreadSelectionValid ? AppColors.inkSoft : Colors.white,
+                  ),
                 ),
               ),
             ),
@@ -556,11 +556,9 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
   }) {
     final effectiveSelected = isEnabled && isSelected;
 
-    return GestureDetector(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        onTap();
-      },
+    return BouncyTap(
+      scaleFactor: 0.98,
+      onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
@@ -632,7 +630,8 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                 ],
               ),
             ),
-            Container(
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
               width: 20,
               height: 20,
               decoration: BoxDecoration(
@@ -647,11 +646,18 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                     ? AppColors.mutedBg
                     : (effectiveSelected ? AppColors.ink : Colors.transparent),
               ),
-              child: !isEnabled
-                  ? const Center(child: Icon(Icons.block, size: 11, color: AppColors.muted))
-                  : (effectiveSelected
-                      ? const Icon(Icons.check, size: 13, color: Colors.white)
-                      : null),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 160),
+                transitionBuilder: (child, anim) => ScaleTransition(
+                  scale: CurvedAnimation(parent: anim, curve: Curves.easeOutBack),
+                  child: child,
+                ),
+                child: !isEnabled
+                    ? const Center(key: ValueKey('tile_disabled'), child: Icon(Icons.block, size: 11, color: AppColors.muted))
+                    : (effectiveSelected
+                        ? const Center(key: ValueKey('tile_selected'), child: Icon(Icons.check, size: 13, color: Colors.white))
+                        : const SizedBox.shrink(key: ValueKey('tile_unselected'))),
+              ),
             ),
           ],
         ),

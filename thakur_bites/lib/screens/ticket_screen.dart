@@ -6,6 +6,7 @@ import '../models/order.dart' as app;
 import '../theme/app_theme.dart';
 import '../widgets/receipt_print_reveal.dart';
 import '../widgets/live_security_qr_badge.dart';
+import '../widgets/bouncy_tap.dart';
 import '../services/clipboard_security_service.dart';
 import 'order_status_screen.dart';
 
@@ -96,7 +97,8 @@ class _TicketScreenState extends State<TicketScreen> {
                   ),
                   child: Row(
                     children: [
-                      GestureDetector(
+                      BouncyTap(
+                        scaleFactor: 0.92,
                         onTap: () => Navigator.of(context)
                             .popUntil((route) => route.isFirst),
                         child: Container(
@@ -155,7 +157,8 @@ class _TicketScreenState extends State<TicketScreen> {
         // View Status button
         SizedBox(
           width: double.infinity,
-          child: GestureDetector(
+          child: BouncyTap(
+            scaleFactor: 0.98,
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
@@ -187,7 +190,8 @@ class _TicketScreenState extends State<TicketScreen> {
         // Back to menu button
         SizedBox(
           width: double.infinity,
-          child: GestureDetector(
+          child: BouncyTap(
+            scaleFactor: 0.98,
             onTap: () {
               Navigator.of(context)
                   .popUntil((route) => route.isFirst);

@@ -595,8 +595,9 @@ class _MenuScreenState extends State<MenuScreen> {
         const SizedBox(width: 6),
 
         // Canteen Menu Board Reference Modal Trigger
-        GestureDetector(
+        BouncyTap(
           onTap: _showOriginalMenuDialog,
+          scaleFactor: 0.94,
           child: Container(
             height: 40,
             width: 40,
@@ -615,11 +616,17 @@ class _MenuScreenState extends State<MenuScreen> {
   }
 
   Widget _buildSearchBar() {
-    return Container(
+    final isFocused = _searchQuery.isNotEmpty;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
       height: 40,
       decoration: BoxDecoration(
         color: AppColors.surface2,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isFocused ? AppColors.red.withAlpha(90) : Colors.transparent,
+          width: 1.2,
+        ),
       ),
       child: TextField(
         controller: _searchController,
@@ -630,16 +637,33 @@ class _MenuScreenState extends State<MenuScreen> {
           hintStyle: AppFonts.body(fontSize: 13.5, color: AppColors.inkSoft),
           prefixIcon:
               const Icon(Icons.search_rounded, size: 20, color: AppColors.inkSoft),
-          suffixIcon: _searchQuery.isNotEmpty
-              ? GestureDetector(
-                  onTap: () {
-                    _searchController.clear();
-                    setState(() => _searchQuery = '');
-                  },
-                  child: const Icon(Icons.close_rounded,
-                      size: 18, color: AppColors.inkSoft),
-                )
-              : null,
+          suffixIcon: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            transitionBuilder: (child, animation) {
+              return ScaleTransition(
+                scale: CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeOutBack,
+                ),
+                child: FadeTransition(opacity: animation, child: child),
+              );
+            },
+            child: _searchQuery.isNotEmpty
+                ? BouncyTap(
+                    key: const ValueKey('search_clear_btn'),
+                    scaleFactor: 0.88,
+                    onTap: () {
+                      _searchController.clear();
+                      setState(() => _searchQuery = '');
+                    },
+                    child: const Icon(
+                      Icons.close_rounded,
+                      size: 18,
+                      color: AppColors.inkSoft,
+                    ),
+                  )
+                : const SizedBox.shrink(key: ValueKey('search_clear_empty')),
+          ),
           border: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(vertical: 10),
         ),
@@ -2143,24 +2167,32 @@ class _NavItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = isActive ? AppColors.red : AppColors.inkSoft;
     return Expanded(
-      child: GestureDetector(
+      child: BouncyTap(
         onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: SizedBox(
+        scaleFactor: 0.94,
+        child: Container(
           height: 44,
+          color: Colors.transparent,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 20, color: color),
+              AnimatedScale(
+                scale: isActive ? 1.14 : 1.0,
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutBack,
+                child: Icon(icon, size: 20, color: color),
+              ),
               const SizedBox(height: 3),
-              Text(
-                label,
+              AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
                 style: AppFonts.body(
                   fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: isActive ? FontWeight.w700 : FontWeight.w600,
                   color: color,
                 ),
+                child: Text(label),
               ),
             ],
           ),
@@ -2321,8 +2353,9 @@ class _OrderCard extends StatelessWidget {
               Row(
                 children: [
                   // Quick Reorder button
-                  GestureDetector(
+                  BouncyTap(
                     onTap: () => _handleReorder(context),
+                    scaleFactor: 0.94,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                       decoration: BoxDecoration(
@@ -2349,7 +2382,7 @@ class _OrderCard extends StatelessWidget {
                   const SizedBox(width: 8),
 
                   // Track live button
-                  GestureDetector(
+                  BouncyTap(
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
@@ -2357,6 +2390,7 @@ class _OrderCard extends StatelessWidget {
                         ),
                       );
                     },
+                    scaleFactor: 0.94,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                       decoration: BoxDecoration(
@@ -2529,15 +2563,15 @@ class _ActiveOrderBanner extends StatelessWidget {
             ? 'Tap to complete payment before timer expires'
             : 'Estimated: ~${order.estimatedMinutes} mins · Tap to track';
 
-    return GestureDetector(
+    return BouncyTap(
       onTap: () {
-        HapticFeedback.lightImpact();
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => OrderStatusScreen(orderId: order.id, order: order),
           ),
         );
       },
+      scaleFactor: 0.98,
       child: Container(
         margin: const EdgeInsets.fromLTRB(18, 4, 18, 8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
