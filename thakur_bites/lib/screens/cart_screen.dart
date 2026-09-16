@@ -13,6 +13,7 @@ import '../services/checkout_service.dart';
 import '../services/payment_service.dart';
 import '../services/functions_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/bouncy_tap.dart';
 import '../widgets/canteen_status_banner.dart';
 import 'login_sheet.dart';
 import 'order_status_screen.dart';
@@ -192,7 +193,61 @@ class _CartScreenState extends State<CartScreen> {
                         itemBuilder: (context, index) {
                           if (index < cart.entries.length) {
                             final entry = cart.entries[index];
-                            return _CartItemRow(entry: entry, dailyBoard: dailyBoard);
+                            final entryKey = CartProvider.entryKey(entry.item.id, entry.customization);
+                            return Dismissible(
+                              key: ValueKey('cart_dismiss_${entryKey}_$index'),
+                              direction: DismissDirection.endToStart,
+                              background: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.only(right: 20),
+                                margin: const EdgeInsets.symmetric(vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: AppColors.dangerBg,
+                                  borderRadius: AppRadius.radiusMd,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      'Remove',
+                                      style: AppFonts.body(
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.danger,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    const Icon(Icons.delete_outline_rounded,
+                                        color: AppColors.danger, size: 20),
+                                  ],
+                                ),
+                              ),
+                              onDismissed: (_) {
+                                HapticFeedback.mediumImpact();
+                                final removedItem = entry.item;
+                                final removedCustomization = entry.customization;
+                                cart.deleteItem(entryKey);
+                                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Removed ${removedItem.name} from tray'),
+                                    duration: const Duration(seconds: 4),
+                                    action: SnackBarAction(
+                                      label: 'UNDO',
+                                      textColor: AppColors.mustard,
+                                      onPressed: () {
+                                        HapticFeedback.selectionClick();
+                                        cart.addItem(
+                                          removedItem,
+                                          customization: removedCustomization,
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: _CartItemRow(entry: entry, dailyBoard: dailyBoard),
+                            );
                           }
                           return ReadyMadePreferenceCard(cart: cart);
                         },
@@ -418,9 +473,9 @@ class _CartItemRow extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  GestureDetector(
+                  BouncyTap(
+                    scaleFactor: 0.84,
                     onTap: () {
-                      HapticFeedback.selectionClick();
                       final entryKey = CartProvider.entryKey(item.id, entry.customization);
                       final removedItem = entry.item;
                       final removedCustomization = entry.customization;
@@ -467,16 +522,27 @@ class _CartItemRow extends StatelessWidget {
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Text(
-                      '${entry.qty}',
-                      style: AppFonts.mono(fontSize: 12.5, color: AppColors.ink),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 160),
+                      transitionBuilder: (child, animation) {
+                        return ScaleTransition(
+                          scale: animation,
+                          child: FadeTransition(opacity: animation, child: child),
+                        );
+                      },
+                      child: Text(
+                        '${entry.qty}',
+                        key: ValueKey<int>(entry.qty),
+                        style: AppFonts.mono(fontSize: 12.5, color: AppColors.ink),
+                      ),
                     ),
                   ),
                   // Plus — guarded by live available stock
                   Builder(
                     builder: (btnContext) {
                       final isMaxStock = entry.qty >= item.availableStock;
-                      return GestureDetector(
+                      return BouncyTap(
+                        scaleFactor: 0.84,
                         onTap: () {
                           if (isMaxStock) {
                             HapticFeedback.lightImpact();
@@ -488,7 +554,6 @@ class _CartItemRow extends StatelessWidget {
                               ),
                             );
                           } else {
-                            HapticFeedback.selectionClick();
                             context.read<CartProvider>().addItem(item, customization: entry.customization);
                           }
                         },
@@ -1306,9 +1371,27 @@ class _CartSummaryState extends State<_CartSummary> {
                     Text('Total',
                         style: AppFonts.mono(
                             fontSize: 15, fontWeight: FontWeight.w600)),
-                    Text('₹${cart.totalPrice.toInt()}',
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      transitionBuilder: (child, animation) {
+                        return FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(
+                            position: Tween<Offset>(
+                              begin: const Offset(0, 0.25),
+                              end: Offset.zero,
+                            ).animate(animation),
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: Text(
+                        '₹${cart.totalPrice.toInt()}',
+                        key: ValueKey<int>(cart.totalPrice.toInt()),
                         style: AppFonts.mono(
-                            fontSize: 15, fontWeight: FontWeight.w600)),
+                            fontSize: 15, fontWeight: FontWeight.w600),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -1317,7 +1400,8 @@ class _CartSummaryState extends State<_CartSummary> {
               // CTA button
               SizedBox(
                 width: double.infinity,
-                child: GestureDetector(
+                child: BouncyTap(
+                  scaleFactor: 0.98,
                   onTap: cart.isEmpty || _isProcessing
                       ? null
                       : isCanteenPaused

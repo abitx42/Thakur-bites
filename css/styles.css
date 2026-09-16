@@ -125,7 +125,8 @@ body {
 }
 
 .btn:active:not(:disabled) {
-  transform: translateY(0);
+  transform: scale(0.975);
+  transition: transform 0.08s var(--ease-standard);
 }
 
 .btn:focus-visible {
@@ -885,11 +886,39 @@ body {
   padding: 1rem;
   margin-bottom: 1rem;
   box-shadow: 4px 4px 0 var(--ink-primary);
+  animation: cardSlideIn 0.22s var(--ease-standard);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kds-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 4px 6px 0 var(--ink-primary);
 }
 
 .kds-card.urgent {
   border-color: var(--chili-red);
   background: #FFF1F2;
+  animation: urgentPulse 2s infinite ease-in-out;
+}
+
+@keyframes cardSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes urgentPulse {
+  0%, 100% {
+    box-shadow: 4px 4px 0 var(--ink-primary);
+  }
+  50% {
+    box-shadow: 4px 4px 14px rgba(220, 38, 38, 0.45);
+  }
 }
 
 /* Big Screen TV Display Board */

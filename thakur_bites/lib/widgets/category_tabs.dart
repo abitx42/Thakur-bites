@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'bouncy_tap.dart';
 
 /// Primary Category definition
 class PrimaryCategory {
@@ -172,7 +173,8 @@ class _PrimaryPill extends StatelessWidget {
       button: true,
       selected: isActive,
       label: '$label category filter',
-      child: GestureDetector(
+      child: BouncyTap(
+        scaleFactor: 0.94,
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
@@ -226,7 +228,8 @@ class _SubCategoryChip extends StatelessWidget {
       button: true,
       selected: isActive,
       label: '$label subcategory filter',
-      child: GestureDetector(
+      child: BouncyTap(
+        scaleFactor: 0.94,
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),

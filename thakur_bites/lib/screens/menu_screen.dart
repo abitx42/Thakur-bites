@@ -17,6 +17,7 @@ import '../screens/preferences_screen.dart';
 import '../screens/verification_screen.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/bouncy_tap.dart';
 import '../widgets/canteen_status_banner.dart';
 import '../widgets/category_tabs.dart';
 import '../widgets/daily_board_banner.dart';
@@ -351,7 +352,18 @@ class _MenuScreenState extends State<MenuScreen> {
                             return _buildEmptyCategoryState();
                           }
 
-                          return _buildGrid(filtered, dailyBoard);
+                          return AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 200),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            transitionBuilder: (child, animation) {
+                              return FadeTransition(opacity: animation, child: child);
+                            },
+                            child: KeyedSubtree(
+                              key: ValueKey('$_activeParentCategory-$_activeSubCategory-${filtered.length}'),
+                              child: _buildGrid(filtered, dailyBoard),
+                            ),
+                          );
                         },
                       ),
                     ),
@@ -468,7 +480,8 @@ class _MenuScreenState extends State<MenuScreen> {
                   // Cart button — live badge from CartProvider
                   Consumer<CartProvider>(
                     builder: (context, cart, _) {
-                      return GestureDetector(
+                      return BouncyTap(
+                        scaleFactor: 0.90,
                         onTap: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(builder: (_) => const CartScreen()),
@@ -2081,20 +2094,34 @@ class _CartBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (count <= 0) return const SizedBox.shrink();
-    return Container(
-      width: 17,
-      height: 17,
-      decoration: const BoxDecoration(
-        color: AppColors.red,
-        shape: BoxShape.circle,
-      ),
-      child: Center(
-        child: Text(
-          '$count',
-          style: AppFonts.mono(fontSize: 10, color: Colors.white),
-        ),
-      ),
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      transitionBuilder: (child, animation) {
+        return ScaleTransition(
+          scale: CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutBack,
+          ),
+          child: child,
+        );
+      },
+      child: count <= 0
+          ? const SizedBox.shrink()
+          : Container(
+              key: ValueKey<int>(count),
+              width: 17,
+              height: 17,
+              decoration: const BoxDecoration(
+                color: AppColors.red,
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: Text(
+                  '$count',
+                  style: AppFonts.mono(fontSize: 10, color: Colors.white),
+                ),
+              ),
+            ),
     );
   }
 }

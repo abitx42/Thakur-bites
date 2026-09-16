@@ -10,6 +10,7 @@ import '../screens/login_sheet.dart';
 import '../services/preferences_service.dart';
 import '../services/menu_visual_resolver.dart';
 import '../theme/app_theme.dart';
+import 'bouncy_tap.dart';
 import 'meal_customizer_sheet.dart';
 
 /// Menu item card with availability indicators (🟢/🟡/🔴) instead of exact stock numbers.
@@ -300,34 +301,17 @@ class MenuItemCard extends StatelessWidget {
                 final user = auth.currentProfile;
                 final isFav = prefs.isItemFavourited(item.id);
 
-                return Semantics(
-                  button: true,
-                  label: isFav ? 'Remove ${item.name} from favourites' : 'Add ${item.name} to favourites',
-                  child: GestureDetector(
-                    onTap: () async {
-                      if (user == null) {
-                        LoginSheet.show(context);
-                        return;
-                      }
-                      HapticFeedback.selectionClick();
-                      await prefs.toggleFavourite(user.uid, item.id);
-                    },
-                    child: Container(
-                      width: 26,
-                      height: 26,
-                      decoration: BoxDecoration(
-                        color: isFav ? AppColors.red.withAlpha(25) : Colors.black.withAlpha(12),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Center(
-                        child: Icon(
-                          isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                          size: 15,
-                          color: isFav ? AppColors.red : accentInk.withAlpha(150),
-                        ),
-                      ),
-                    ),
-                  ),
+                return _HeartButton(
+                  isFav: isFav,
+                  accentInk: accentInk,
+                  itemName: item.name,
+                  onTap: () async {
+                    if (user == null) {
+                      LoginSheet.show(context);
+                      return;
+                    }
+                    await prefs.toggleFavourite(user.uid, item.id);
+                  },
                 );
               },
             ),
@@ -349,7 +333,7 @@ class MenuItemCard extends StatelessWidget {
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.85, end: 1.0),
       duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
+      curve: Curves.easeOutBack,
       builder: (context, scale, child) =>
           Transform.scale(scale: scale, child: child),
       child: Container(
@@ -365,9 +349,9 @@ class MenuItemCard extends StatelessWidget {
             Semantics(
               button: true,
               label: 'Decrease quantity of ${item.name}',
-              child: GestureDetector(
+              child: BouncyTap(
+                scaleFactor: 0.84,
                 onTap: () {
-                  HapticFeedback.selectionClick();
                   final cart = context.read<CartProvider>();
                   final matchingEntries = cart.entries.where((e) => e.item.id == item.id).toList();
                   if (matchingEntries.length > 1) {
@@ -395,18 +379,28 @@ class MenuItemCard extends StatelessWidget {
             // Qty
             Semantics(
               label: '$qty of ${item.name} in cart',
-              child: Text(
-                '$qty',
-                style: AppFonts.mono(fontSize: 12.5, color: Colors.white),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 160),
+                transitionBuilder: (child, animation) {
+                  return ScaleTransition(
+                    scale: animation,
+                    child: FadeTransition(opacity: animation, child: child),
+                  );
+                },
+                child: Text(
+                  '$qty',
+                  key: ValueKey<int>(qty),
+                  style: AppFonts.mono(fontSize: 12.5, color: Colors.white),
+                ),
               ),
             ),
             // Plus — opens customizer for meal or adds standard item
             Semantics(
               button: true,
               label: 'Increase quantity of ${item.name}',
-              child: GestureDetector(
+              child: BouncyTap(
+                scaleFactor: 0.84,
                 onTap: () {
-                  HapticFeedback.selectionClick();
                   if (_isCustomizableMeal) {
                     MealCustomizerSheet.show(
                       context,
@@ -639,4 +633,102 @@ class _AddButtonWithBounceState extends State<_AddButtonWithBounce> {
     );
   }
 }
+
+/// Tactile heart button with spring-scale pop micro-interaction
+class _HeartButton extends StatefulWidget {
+  final bool isFav;
+  final Color accentInk;
+  final VoidCallback onTap;
+  final String itemName;
+
+  const _HeartButton({
+    required this.isFav,
+    required this.accentInk,
+    required this.onTap,
+    required this.itemName,
+  });
+
+  @override
+  State<_HeartButton> createState() => _HeartButtonState();
+}
+
+class _HeartButtonState extends State<_HeartButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _animController;
+  late final Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    );
+    _scaleAnimation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.0, end: 1.35)
+            .chain(CurveTween(curve: Curves.easeOutBack)),
+        weight: 50,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.35, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeInCubic)),
+        weight: 50,
+      ),
+    ]).animate(_animController);
+  }
+
+  @override
+  void didUpdateWidget(covariant _HeartButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isFav != oldWidget.isFav && widget.isFav) {
+      _animController.forward(from: 0.0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: widget.isFav
+          ? 'Remove ${widget.itemName} from favourites'
+          : 'Add ${widget.itemName} to favourites',
+      child: BouncyTap(
+        scaleFactor: 0.88,
+        onTap: widget.onTap,
+        child: Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: widget.isFav
+                ? AppColors.red.withAlpha(25)
+                : Colors.black.withAlpha(12),
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: ScaleTransition(
+              scale: _scaleAnimation,
+              child: Icon(
+                widget.isFav
+                    ? Icons.favorite_rounded
+                    : Icons.favorite_border_rounded,
+                size: 15,
+                color: widget.isFav
+                    ? AppColors.red
+                    : widget.accentInk.withAlpha(150),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 

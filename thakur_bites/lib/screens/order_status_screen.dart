@@ -243,7 +243,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                             ),
                             child: Row(
                               children: [
-                                const Text('🍳', style: TextStyle(fontSize: 18)),
+                                const _BobbingCookingIcon(),
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: Column(
@@ -981,162 +981,175 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
       SharedPreferences.getInstance().then((p) => p.setString('order_pin_${order.id}', order.pinCode)).catchError((_) => false);
     }
 
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.successBg,
-        borderRadius: AppRadius.radiusLg,
-        border: Border.all(color: AppColors.green, width: 2),
-      ),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.check_circle_rounded, color: AppColors.green, size: 20),
-              const SizedBox(width: 8),
-              Text(
-                'Ready for Pickup!',
-                style: AppFonts.display(fontSize: 17, color: AppColors.greenInk),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            order.isOnlyReadyMade
-                ? 'Directly head to counter to collect your ready-made items'
-                : 'Collect at Main Canteen Counter',
-            style: AppFonts.body(fontSize: 12.5, color: AppColors.greenInk),
-          ),
-          const SizedBox(height: 14),
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0.95, end: 1.0),
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutBack,
+      builder: (context, scale, child) => Transform.scale(scale: scale, child: child),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: AppColors.successBg,
+          borderRadius: AppRadius.radiusLg,
+          border: Border.all(color: AppColors.green, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.green.withAlpha(35),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.check_circle_rounded, color: AppColors.green, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Ready for Pickup!',
+                  style: AppFonts.display(fontSize: 17, color: AppColors.greenInk),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              order.isOnlyReadyMade
+                  ? 'Directly head to counter to collect your ready-made items'
+                  : 'Collect at Main Canteen Counter',
+              style: AppFonts.body(fontSize: 12.5, color: AppColors.greenInk),
+            ),
+            const SizedBox(height: 14),
 
-          // Dynamic Hardware Scannable QR Code with Live Pulsing Security Watermark
-          LiveSecurityQrBadge(
-            qrData: 'TB:${order.id}:${order.tokenNumber}:$effectivePin',
-            isReady: true,
-            size: 130,
-            tokenNumber: order.tokenNumber,
-          ),
-          const SizedBox(height: 12),
+            // Dynamic Hardware Scannable QR Code with Live Pulsing Security Watermark
+            LiveSecurityQrBadge(
+              qrData: 'TB:${order.id}:${order.tokenNumber}:$effectivePin',
+              isReady: true,
+              size: 130,
+              tokenNumber: order.tokenNumber,
+            ),
+            const SizedBox(height: 12),
 
-          // PIN Container with copy micro-interaction
-          GestureDetector(
-            onTap: () {
-              if (effectivePin.isNotEmpty) {
-                HapticFeedback.lightImpact();
-                ClipboardSecurityService.copySensitiveText(effectivePin);
-                setState(() => _copiedPin = true);
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Row(
+            // PIN Container with copy micro-interaction
+            GestureDetector(
+              onTap: () {
+                if (effectivePin.isNotEmpty) {
+                  HapticFeedback.lightImpact();
+                  ClipboardSecurityService.copySensitiveText(effectivePin);
+                  setState(() => _copiedPin = true);
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Row(
+                        children: [
+                          const Icon(Icons.shield_rounded, color: AppColors.green, size: 18),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Pickup PIN copied • Auto-clearing in 30s',
+                            style: AppFonts.body(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                      duration: const Duration(seconds: 2),
+                      backgroundColor: AppColors.ink,
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  );
+                  Future.delayed(const Duration(milliseconds: 1500), () {
+                    if (mounted) setState(() => _copiedPin = false);
+                  });
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: AppRadius.radiusMd,
+                  border: Border.all(color: AppColors.green.withAlpha(100), width: 1.5),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.shield_rounded, color: AppColors.green, size: 18),
-                        const SizedBox(width: 8),
                         Text(
-                          'Pickup PIN copied • Auto-clearing in 30s',
-                          style: AppFonts.body(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600),
+                          'PICKUP PIN',
+                          style: AppFonts.mono(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.greenInk,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          child: _copiedPin
+                              ? const Icon(Icons.check_circle_rounded,
+                                  key: ValueKey('pin_copied_status'),
+                                  size: 14,
+                                  color: AppColors.green)
+                              : Icon(Icons.copy_rounded,
+                                  key: const ValueKey('pin_copy_status'),
+                                  size: 12,
+                                  color: AppColors.greenInk.withAlpha(140)),
                         ),
                       ],
                     ),
-                    duration: const Duration(seconds: 2),
-                    backgroundColor: AppColors.ink,
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                );
-                Future.delayed(const Duration(milliseconds: 1500), () {
-                  if (mounted) setState(() => _copiedPin = false);
-                });
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: AppRadius.radiusMd,
-                border: Border.all(color: AppColors.green.withAlpha(100), width: 1.5),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'PICKUP PIN',
-                        style: AppFonts.mono(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.greenInk,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 200),
-                        child: _copiedPin
-                            ? const Icon(Icons.check_circle_rounded,
-                                key: ValueKey('pin_copied_status'),
-                                size: 14,
-                                color: AppColors.green)
-                            : Icon(Icons.copy_rounded,
-                                key: const ValueKey('pin_copy_status'),
-                                size: 12,
-                                color: AppColors.greenInk.withAlpha(140)),
-                      ),
-                    ],
-                  ),
-                  Semantics(
-                    obscured: true,
-                    label: 'Campus Pickup PIN',
-                    child: ExcludeSemantics(
-                      child: Text(
-                        effectivePin.isEmpty ? '••••' : effectivePin,
-                        style: AppFonts.mono(
-                          fontSize: 34,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 8,
-                          color: AppColors.greenInk,
+                    Semantics(
+                      obscured: true,
+                      label: 'Campus Pickup PIN',
+                      child: ExcludeSemantics(
+                        child: Text(
+                          effectivePin.isEmpty ? '••••' : effectivePin,
+                          style: AppFonts.mono(
+                            fontSize: 34,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 8,
+                            color: AppColors.greenInk,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Show this 4-digit PIN to the canteen staff at handover',
-            style: AppFonts.body(fontSize: 11, color: AppColors.greenInk),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => TicketScreen(order: order),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.receipt_long_rounded, size: 16, color: AppColors.greenInk),
-              label: Text(
-                'View Full Digital Ticket',
-                style: AppFonts.body(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.greenInk,
+                  ],
                 ),
               ),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppColors.green),
-                shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusMd),
-                padding: const EdgeInsets.symmetric(vertical: 10),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Show this 4-digit PIN to the canteen staff at handover',
+              style: AppFonts.body(fontSize: 11, color: AppColors.greenInk),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => TicketScreen(order: order),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.receipt_long_rounded, size: 16, color: AppColors.greenInk),
+                label: Text(
+                  'View Full Digital Ticket',
+                  style: AppFonts.body(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.greenInk,
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: AppColors.green),
+                  shape: RoundedRectangleBorder(borderRadius: AppRadius.radiusMd),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1253,46 +1266,16 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
             width: 26,
             child: Column(
               children: [
-                // Dot
-                Container(
-                  width: 26,
-                  height: 26,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isDone
-                        ? AppColors.green
-                        : isCurrent
-                            ? AppColors.red
-                            : AppColors.surface,
-                    border: Border.all(
-                      color: isDone
-                          ? AppColors.green
-                          : isCurrent
-                              ? AppColors.red
-                              : AppColors.line,
-                      width: 2,
-                    ),
-                  ),
-                  child: isDone
-                      ? const Center(
-                          child: Icon(Icons.check_rounded, size: 14, color: Colors.white),
-                        )
-                      : isCurrent
-                          ? Center(
-                              child: Container(
-                                width: 8,
-                                height: 8,
-                                decoration: const BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                            )
-                          : null,
+                // Dot with breathing halo when current
+                _LiveActiveStepDot(
+                  isDone: isDone,
+                  isCurrent: isCurrent,
                 ),
-                // Line (unless last)
+                // Animated Line (unless last)
                 if (!isLast)
-                  Container(
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 380),
+                    curve: Curves.easeOutCubic,
                     width: 2,
                     height: 44,
                     color: isDone ? AppColors.green : AppColors.line,
@@ -2029,4 +2012,150 @@ class _StepData {
   final String subtitle;
 
   _StepData({required this.title, required this.subtitle});
+}
+
+/// Animated step indicator dot with breathing glow halo when in progress
+class _LiveActiveStepDot extends StatefulWidget {
+  final bool isDone;
+  final bool isCurrent;
+
+  const _LiveActiveStepDot({
+    required this.isDone,
+    required this.isCurrent,
+  });
+
+  @override
+  State<_LiveActiveStepDot> createState() => _LiveActiveStepDotState();
+}
+
+class _LiveActiveStepDotState extends State<_LiveActiveStepDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _breatheController;
+  late final Animation<double> _breatheAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _breatheController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+
+    _breatheAnim = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _breatheController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _breatheController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.isDone) {
+      return Container(
+        width: 26,
+        height: 26,
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppColors.green,
+        ),
+        child: const Center(
+          child: Icon(Icons.check_rounded, size: 14, color: Colors.white),
+        ),
+      );
+    }
+
+    if (widget.isCurrent) {
+      return AnimatedBuilder(
+        animation: _breatheAnim,
+        builder: (context, child) {
+          final auraSpread = _breatheAnim.value * 3.5;
+          final auraAlpha = (65 * (1.0 - _breatheAnim.value * 0.35)).round();
+          return Container(
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.red,
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.red.withAlpha(auraAlpha),
+                  blurRadius: 6.0 + auraSpread,
+                  spreadRadius: 1.0 + auraSpread * 0.5,
+                ),
+              ],
+            ),
+            child: Center(
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    return Container(
+      width: 26,
+      height: 26,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: AppColors.surface,
+        border: Border.all(color: AppColors.line, width: 2),
+      ),
+    );
+  }
+}
+
+/// Subtle micro-bobbing cooking pan icon for active kitchen preparation
+class _BobbingCookingIcon extends StatefulWidget {
+  const _BobbingCookingIcon();
+
+  @override
+  State<_BobbingCookingIcon> createState() => _BobbingCookingIconState();
+}
+
+class _BobbingCookingIconState extends State<_BobbingCookingIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _anim = Tween<double>(begin: -0.07, end: 0.07).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOutSine),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (context, child) {
+        return Transform.rotate(
+          angle: _anim.value,
+          child: const Text('🍳', style: TextStyle(fontSize: 20)),
+        );
+      },
+    );
+  }
 }
