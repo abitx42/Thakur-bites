@@ -18,20 +18,29 @@ class _DeviceSecurityWrapperState extends State<DeviceSecurityWrapper> with Widg
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<DeviceSecurityService>(context, listen: false).checkSecurityPosture();
+      final sec = Provider.of<DeviceSecurityService>(context, listen: false);
+      sec.checkSecurityPosture();
+      sec.startContinuousMonitoring();
     });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    try {
+      Provider.of<DeviceSecurityService>(context, listen: false).stopContinuousMonitoring();
+    } catch (_) {}
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final sec = Provider.of<DeviceSecurityService>(context, listen: false);
     if (state == AppLifecycleState.resumed) {
-      Provider.of<DeviceSecurityService>(context, listen: false).checkSecurityPosture();
+      sec.checkSecurityPosture();
+      sec.startContinuousMonitoring();
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      sec.stopContinuousMonitoring();
     }
   }
 

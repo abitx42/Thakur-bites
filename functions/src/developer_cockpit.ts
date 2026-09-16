@@ -7,6 +7,7 @@ import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
 import { assertCapability, hasCapability, ROLE_CAPABILITY_MATRIX, SystemCapability } from './authorization_policy';
 import { assertPrivilegedSession } from './privileged_guard';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -103,6 +104,7 @@ export function evaluateRBACPermission(role: string, operation: OperationType): 
  * Restricted to developer, security_admin or admin.
  */
 export const getDeveloperTelemetry = onCall(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'getDeveloperTelemetry');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
@@ -143,8 +145,8 @@ export const getDeveloperTelemetry = onCall(async (request) => {
     memoryUsageMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
     uptimeSeconds: Math.round(process.uptime()),
     activeSecurityIncidents: incidents.length,
-    operationalMode: systemStatus.mode || 'NORMAL',
     incidents,
+    systemStatus,
   };
 
   return {
@@ -157,6 +159,7 @@ export const getDeveloperTelemetry = onCall(async (request) => {
  * Platform 2.0 — Interactive RBAC Permission Simulator
  */
 export const simulatePermissionCheck = onCall<SimulatePermissionRequest>(async (request): Promise<SimulatePermissionResponse> => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'simulatePermissionCheck');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
@@ -236,11 +239,14 @@ export function verifyChallengeNonceConstantTime(incomingNonce: string, storedHa
  * Issues a 60-second, single-use 32-byte cryptographic nonce for Security Admins.
  */
 export const requestEmergencyStepUpChallenge = onCall<RequestStepUpChallengeData>(async (request): Promise<RequestStepUpChallengeResponse> => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'requestEmergencyStepUpChallenge');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Security Admin authentication required.');
   }
+
+  await enforceRateLimit(request.auth.uid, 'step_up_challenge');
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'emergency_freeze', 'Separation of Duties: Step-up challenges restricted strictly to authorized engineering administrators (developer / security_admin).');
@@ -296,11 +302,14 @@ export const requestEmergencyStepUpChallenge = onCall<RequestStepUpChallengeData
  * Atomically consumes the single-use challenge and transactionally modifies system operational state.
  */
 export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'executeEmergencyOperationalAction');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Security Admin authentication required.');
   }
+
+  await enforceRateLimit(request.auth.uid, 'emergency_action');
 
   const authUid = request.auth.uid;
   const callerRole = (request.auth.token.role as string | undefined) || '';

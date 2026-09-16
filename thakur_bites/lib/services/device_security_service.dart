@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -17,6 +18,7 @@ class DeviceSecurityService extends ChangeNotifier {
   factory DeviceSecurityService() => _instance;
   DeviceSecurityService._internal();
 
+  Timer? _heartbeatTimer;
   bool _isChecking = false;
   bool _isDevOptionsEnabled = false;
   bool _isAdbEnabled = false;
@@ -57,15 +59,41 @@ class DeviceSecurityService extends ChangeNotifier {
     return _isRooted || _isHooked || _isDebuggerAttached || isTamperedSignature;
   }
 
+  /// Starts periodic background heartbeat monitoring (every 5 seconds) to catch runtime Frida injection or debugger attachments
+  void startContinuousMonitoring({Duration interval = const Duration(seconds: 5)}) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(interval, (_) {
+      checkSecurityPosture(silent: true);
+    });
+  }
+
+  /// Stops periodic background heartbeat monitoring
+  void stopContinuousMonitoring() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
+  @override
+  void dispose() {
+    stopContinuousMonitoring();
+    super.dispose();
+  }
+
   /// Evaluates device security posture against native sentinel
-  Future<void> checkSecurityPosture() async {
+  Future<void> checkSecurityPosture({bool silent = false}) async {
     if (kIsWeb) return;
     if (defaultTargetPlatform != TargetPlatform.android) return;
 
-    _isChecking = true;
-    notifyListeners();
+    if (!silent) {
+      _isChecking = true;
+      notifyListeners();
+    }
 
     try {
+      final prevCritical = isCriticalTamperDetected;
+      final prevBlocked = isDeveloperModeBlocked;
+
       final result = await _channel.invokeMapMethod<String, dynamic>('getDeviceSecurityPosture');
       if (result != null) {
         _isDevOptionsEnabled = result['isDevOptionsEnabled'] == true;
@@ -77,7 +105,10 @@ class DeviceSecurityService extends ChangeNotifier {
         _signatureHash = result['signatureHash']?.toString() ?? '';
         _deviceId = result['deviceId']?.toString() ?? '';
 
-        debugPrint('[SecuritySentinel] Posture evaluated: devOptions=$_isDevOptionsEnabled, adb=$_isAdbEnabled, root=$_isRooted, hooked=$_isHooked, debugger=$_isDebuggerAttached, emulator=$_isEmulator, deviceId=$_deviceId');
+        // If posture changed during heartbeat check, notify listeners to immediately display lockdown
+        if (silent && (prevCritical != isCriticalTamperDetected || prevBlocked != isDeveloperModeBlocked)) {
+          notifyListeners();
+        }
 
         // Automatically report critical tampering once per session
         if (!_hasReportedViolation && isCriticalTamperDetected) {
@@ -104,8 +135,10 @@ class DeviceSecurityService extends ChangeNotifier {
     } catch (e) {
       debugPrint('[SecuritySentinel] Failed to query device posture: $e');
     } finally {
-      _isChecking = false;
-      notifyListeners();
+      if (!silent) {
+        _isChecking = false;
+        notifyListeners();
+      }
     }
   }
 

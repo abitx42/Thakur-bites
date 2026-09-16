@@ -4,6 +4,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { assertCapability, hasCapability } from './authorization_policy';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 function getDb(): admin.firestore.Firestore {
   if (!admin.apps.length) {
@@ -320,6 +321,7 @@ export async function recordAuthSuccess(
  * Restricted to users with view_telemetry or manage_platform_flags capabilities (admin / developer).
  */
 export const getSecurityRateLimits = onCall(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'getSecurityRateLimits');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
@@ -350,6 +352,7 @@ export const getSecurityRateLimits = onCall(async (request) => {
  * Restricted strictly to users with manage_platform_flags capability (admin / manager / developer).
  */
 export const updateSecurityRateLimits = onCall(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'updateSecurityRateLimits');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');

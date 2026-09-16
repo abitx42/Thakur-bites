@@ -7,6 +7,8 @@ import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import android.view.WindowManager
+import android.view.View
 import java.io.File
 import java.security.MessageDigest
 
@@ -15,6 +17,17 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // Screen capture defense & recents snapshot protection
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
+
+        // Tapjacking & Obscuring Floating Window (Cloak & Dagger) Defense
+        try {
+            window.decorView.filterTouchesWhenObscured = true
+        } catch (_: Exception) {}
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {

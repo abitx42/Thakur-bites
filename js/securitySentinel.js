@@ -271,6 +271,19 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
     }, 4000);
   } catch (_) {}
 
+  // Dynamic Debugger Execution Timing Trap (bypasses console mocking/silencing)
+  try {
+    const debugDetector = () => {
+      const start = performance.now();
+      (function () {}.constructor('debugger')());
+      const elapsed = performance.now() - start;
+      if (elapsed > 100) {
+        onDevToolsDetected();
+      }
+    };
+    setInterval(debugDetector, 5000);
+  } catch (_) {}
+
   // 6. Native Function Hook Detection
   function checkNativeIntegrity() {
     try {
@@ -369,6 +382,24 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
       }
     });
   } catch (_) {}
+
+  // 9. Rogue ServiceWorker Interception Auditor
+  if ('serviceWorker' in navigator && !options.allowServiceWorker) {
+    try {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        if (registrations && registrations.length > 0) {
+          console.warn('[SECURITY] Unauthorized ServiceWorker detected in operational portal. Unregistering...');
+          for (const reg of registrations) {
+            reg.unregister();
+          }
+          triggerTamperLockdown('UNAUTHORIZED_SERVICE_WORKER_DETECTED', {
+            violationType: 'CLIENT_DOM_TAMPERING',
+            count: registrations.length,
+          });
+        }
+      }).catch(() => {});
+    } catch (_) {}
+  }
 }
 
 // 9. Sealed Immutable Sentinel Namespace

@@ -11,6 +11,7 @@ import { RazorpayPaymentAdapter } from './payments';
 import { enforceAppVersionPolicy } from './version_policy';
 import { assertCapability } from './authorization_policy';
 import { createSanitizedHttpsError } from './security_responses';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 const db = admin.firestore();
 
@@ -429,6 +430,7 @@ export async function reserveAndExecuteRefund(params: ExecuteRefundParams): Prom
  * Formal, Audited Cumulative Refund Engine — Race-Condition-Safe & Idempotency-Hardened.
  */
 export const processOrderRefund = onCall<RefundRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'processOrderRefund');
   enforceAppCheck(request);
   await enforceAppVersionPolicy(request.data?.appVersion);
   await assertOperationalMode('refund');

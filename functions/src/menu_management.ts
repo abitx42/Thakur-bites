@@ -455,6 +455,7 @@ export const upsertMenuItem = onCall<UpsertMenuItemRequest>(async (request) => {
  * 4. Authoritative Menu Item Soft Archival (Safe Alternative to Hard Delete)
  */
 export const archiveMenuItem = onCall<ArchiveMenuItemRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'archiveMenuItem');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
@@ -514,6 +515,7 @@ export const archiveMenuItem = onCall<ArchiveMenuItemRequest>(async (request) =>
  * 5. Authoritative Bulk Import of Menu Catalog
  */
 export const bulkImportMenuItems = onCall<BulkImportMenuItemsRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'bulkImportMenuItems');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
@@ -634,6 +636,7 @@ export const bulkImportMenuItems = onCall<BulkImportMenuItemsRequest>(async (req
  * 6. Authoritative Menu Item Deletion (Retained with deprecation warning)
  */
 export const deleteMenuItemAdmin = onCall<DeleteMenuItemRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'deleteMenuItemAdmin');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {

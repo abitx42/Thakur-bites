@@ -4,6 +4,8 @@ import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { enforceAppCheck } from './app_check';
 import { assertCapability } from './authorization_policy';
+import { enforceRateLimit } from './rate_limiter';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -107,11 +109,14 @@ export async function recordOrderLifecycleTrace(params: {
  * Can be queried by orderId, gatewayPaymentId, or gatewayOrderId.
  */
 export const getOrderLifecycleTrace = onCall<{ identifier: string }>(async (request): Promise<OrderForensicReport> => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'getOrderLifecycleTrace');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Staff authentication required for forensic trace lookup.');
   }
+
+  await enforceRateLimit(request.auth.uid, 'developer_telemetry');
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'view_business_analytics', 'Insufficient permissions to inspect forensic order traces.');

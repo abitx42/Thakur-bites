@@ -6,6 +6,7 @@ import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
 import { isAdministrativeRole, isDeveloperRole } from './authorization_policy';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -127,6 +128,7 @@ export const PRIVILEGED_SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;  // 30 Minutes
  * Generates a fresh Base32 secret, otpauth:// URL, and 8 backup recovery codes.
  */
 export const enrollMfaTotp = onCall(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'enrollMfaTotp');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Authentication required for MFA enrollment.');
@@ -178,6 +180,7 @@ export const enrollMfaTotp = onCall(async (request) => {
  * Requires caller to provide the 6-digit code currently shown on their Authenticator App.
  */
 export const verifyAndEnableMfaTotp = onCall(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'verifyAndEnableMfaTotp');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
@@ -229,6 +232,7 @@ export const verifyAndEnableMfaTotp = onCall(async (request) => {
  * issuing a time-bounded privileged session for Admin or Developer tasks.
  */
 export const createPrivilegedSession = onCall(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'createPrivilegedSession');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Staff authentication required.');

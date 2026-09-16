@@ -5,6 +5,8 @@ import { enforceAppCheck } from './app_check';
 import { logSecurityEvent } from './security_logger';
 import { assertCapability } from './authorization_policy';
 import { AdminOperationsDashboardResponse } from './types';
+import { assertNoHoneytokens } from './honeypot_defense';
+import { enforceRateLimit } from './rate_limiter';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -222,11 +224,14 @@ export const getOwnerBusinessMetrics = onCall(async (request): Promise<OwnerBusi
  * Platform 2.0 — Update Owner Feature Flags & Campus Controls
  */
 export const updateOwnerFeatureFlags = onCall<Partial<OwnerFeatureFlags>>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'updateOwnerFeatureFlags');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
+
+  await enforceRateLimit(request.auth.uid, 'menu_management');
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'manage_platform_flags', 'Only managers or administrators can modify campus feature flags.');

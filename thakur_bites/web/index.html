@@ -209,7 +209,7 @@
       });
     } catch (_) {}
 
-    // 8. Undocked DevTools Console Probe
+    // 8. Undocked DevTools Console Probe & Timing Trap
     try {
       var devToolsProbe = /./;
       devToolsProbe.toString = function() {
@@ -219,6 +219,15 @@
       setInterval(function() {
         if (console.debug) console.debug(devToolsProbe);
       }, 4000);
+
+      setInterval(function() {
+        var start = performance.now();
+        (function() {}.constructor('debugger')());
+        var elapsed = performance.now() - start;
+        if (elapsed > 100) {
+          console.warn('[SECURITY] Interactive debugger breakpoint latency detected.');
+        }
+      }, 5000);
     } catch (_) {}
   </script>
 

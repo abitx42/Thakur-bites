@@ -6,6 +6,7 @@ import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { assertCapability } from './authorization_policy';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -151,6 +152,7 @@ export async function enforceAppVersionPolicy(
  * Developer / Admin Authoritative Endpoint to configure App Version Policy in real time.
  */
 export const updateAppVersionPolicy = onCall<UpdateVersionPolicyRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'updateAppVersionPolicy');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');

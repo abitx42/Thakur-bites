@@ -23,7 +23,7 @@ import { enforceAppVersionPolicy } from './version_policy';
 import { assertCapability } from './authorization_policy';
 import { isProduction, isSimulationAllowed } from './env_config';
 import { createSanitizedHttpsError } from './security_responses';
-import { inspectPayloadForHoneytokens, handleHoneypotTripwire } from './honeypot_defense';
+import { inspectPayloadForHoneytokens, handleHoneypotTripwire, assertNoHoneytokens } from './honeypot_defense';
 
 const db = admin.firestore();
 
@@ -636,6 +636,7 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
  * Restricted strictly to Cashier, Manager, and Admin roles.
  */
 export const recordCashPayment = onCall<{ orderId: string; idempotencyKey?: string }>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'recordCashPayment');
   enforceAppCheck(request);
   await enforceAppVersionPolicy((request.data as any)?.appVersion);
   await assertOperationalMode('payment');
@@ -880,10 +881,13 @@ export async function reconcileDailyLedger(dateStr: string): Promise<DailyReconc
  * 6. Cancel or Expire Payment Session & Automatically Release Inventory Reservation (Phase 2 Hardened)
  */
 export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: string }>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'cancelOrExpirePaymentSession');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
+
+  await enforceRateLimit(request.auth.uid, 'payment_session');
 
   const { orderId, reason = 'PAYMENT_SESSION_CANCELLED' } = request.data;
   if (!orderId) {
@@ -962,6 +966,7 @@ export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: s
  * or where network dropped before client verification callback.
  */
 export const reconcileOrderPayment = onCall<ReconcilePaymentRequest>(async (request): Promise<ReconcilePaymentResponse> => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'reconcileOrderPayment');
   enforceAppCheck(request);
   await enforceAppVersionPolicy((request.data as any)?.appVersion);
   if (!request.auth || !request.auth.uid) {
@@ -969,6 +974,7 @@ export const reconcileOrderPayment = onCall<ReconcilePaymentRequest>(async (requ
   }
 
   const actorUid = request.auth.uid;
+  await enforceRateLimit(actorUid, 'payment_session');
   const { orderId } = request.data || {};
   if (!orderId || typeof orderId !== 'string') {
     throw new HttpsError('invalid-argument', 'Valid orderId is required.');

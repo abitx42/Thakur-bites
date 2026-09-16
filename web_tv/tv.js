@@ -46,6 +46,27 @@ window.addEventListener('keydown', (e) => {
   } catch (_) {}
 });
 
+// Undocked DevTools Probe & Debugger Timing Trap
+try {
+  const probe = /./;
+  probe.toString = function () {
+    console.warn('[SECURITY] TV Display Kiosk DevTools activity detected.');
+    return ' ';
+  };
+  setInterval(() => {
+    console.debug?.(probe);
+  }, 4000);
+
+  setInterval(() => {
+    const start = performance.now();
+    (function () {}.constructor('debugger')());
+    const elapsed = performance.now() - start;
+    if (elapsed > 100) {
+      console.warn('[SECURITY] TV Display interactive debugger detected.');
+    }
+  }, 5000);
+} catch (_) {}
+
 const app = initializeApp(firebaseConfig, 'TB_TV_DISPLAY');
 const db = getFirestore(app);
 

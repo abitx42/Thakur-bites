@@ -20,6 +20,7 @@ import { enforceAppCheck } from './app_check';
 import { assertCapability } from './authorization_policy';
 import { executeIntegrityScan } from './integrity_monitor';
 import { SystemOperationalMode } from './kill_switch';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -55,6 +56,7 @@ export const getIntegrityAnomalies = onCall<{
   categoryFilter?: 'FINANCIAL' | 'INVENTORY' | 'ORDER_LIFECYCLE' | 'RATE_LIMIT' | 'ALL';
   limit?: number;
 }>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'getIntegrityAnomalies');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -99,6 +101,7 @@ export const getIntegrityAnomalies = onCall<{
  */
 export const executeIntegrityRepair = onCall<IntegrityRepairRequest, Promise<IntegrityRepairResponse>>(
   async (request) => {
+    await assertNoHoneytokens(request.data, request.auth?.uid, 'executeIntegrityRepair');
     enforceAppCheck(request);
     if (!request.auth || !request.auth.uid) {
       throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -285,6 +288,7 @@ export const requestRecoveryApproval = onCall<{
   targetMode: SystemOperationalMode;
   justification: string;
 }>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'requestRecoveryApproval');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -361,6 +365,7 @@ export const requestRecoveryApproval = onCall<{
 export const generateBreakGlassToken = onCall<{
   expiryHours?: number;
 }>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'generateBreakGlassToken');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -440,6 +445,7 @@ export const adminRestoreOperationalMode = onCall<{
   recoveryRequestId?: string;
   breakGlassToken?: string;
 }>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'adminRestoreOperationalMode');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -747,6 +753,7 @@ export const adminRestoreOperationalMode = onCall<{
  */
 export const recordCompensatingFinancialEntry = onCall<CompensatingEntryRequest, Promise<CompensatingEntryResponse>>(
   async (request) => {
+    await assertNoHoneytokens(request.data, request.auth?.uid, 'recordCompensatingFinancialEntry');
     enforceAppCheck(request);
     if (!request.auth || !request.auth.uid) {
       throw new HttpsError('unauthenticated', 'User must be authenticated.');

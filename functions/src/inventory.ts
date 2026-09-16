@@ -7,6 +7,7 @@ import { enforceRateLimit } from './rate_limiter';
 import { enforceAppCheck } from './app_check';
 import { assertActiveWorkstationSession } from './shift_pins';
 import { hasCapability, isOperationalStaffRole } from './authorization_policy';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 const db = admin.firestore();
 
@@ -39,6 +40,7 @@ export interface InventoryAdjustmentResponse {
  * Operates purely on stockOnHand and strictly maintains availableStock = stockOnHand - reservedStock.
  */
 export const adjustInventoryStock = onCall<InventoryAdjustmentRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'adjustInventoryStock');
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');

@@ -4,6 +4,7 @@ import * as admin from 'firebase-admin';
 import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { assertCapability } from './authorization_policy';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -53,6 +54,7 @@ export interface PilotFeedbackSummaryResponse {
  * 1. Submit Student Pilot Feedback (Post-Meal Experience)
  */
 export const submitPilotStudentFeedback = onCall<PilotStudentFeedbackRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'submitPilotStudentFeedback');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
@@ -122,6 +124,7 @@ export const submitPilotStudentFeedback = onCall<PilotStudentFeedbackRequest>(as
  * 2. Submit Canteen Staff Pilot Feedback (Kitchen, Cashier, Manager)
  */
 export const submitPilotStaffFeedback = onCall<PilotStaffFeedbackRequest>(async (request) => {
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'submitPilotStaffFeedback');
   enforceAppCheck(request);
 
   if (!request.auth || !request.auth.uid) {
