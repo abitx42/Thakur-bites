@@ -25,6 +25,7 @@ class DeviceSecurityService extends ChangeNotifier {
   bool _isRooted = false;
   bool _isHooked = false;
   bool _isDebuggerAttached = false;
+  bool _isClonedOrSandboxed = false;
   bool _isEmulator = false;
   String _signatureHash = '';
   String _deviceId = '';
@@ -36,6 +37,7 @@ class DeviceSecurityService extends ChangeNotifier {
   bool get isRooted => _isRooted;
   bool get isHooked => _isHooked;
   bool get isDebuggerAttached => _isDebuggerAttached;
+  bool get isClonedOrSandboxed => _isClonedOrSandboxed;
   bool get isEmulator => _isEmulator;
   String get signatureHash => _signatureHash;
   String get deviceId => _deviceId;
@@ -53,10 +55,10 @@ class DeviceSecurityService extends ChangeNotifier {
     return _signatureHash.isEmpty || _signatureHash == 'UNSIGNED' || _signatureHash.startsWith('ERROR_');
   }
 
-  /// Critical tampering (root exploit detected, Frida dynamic hooking, debugger attachment, or APK modding)
+  /// Critical tampering (root exploit detected, Frida dynamic hooking, debugger attachment, sandboxed clone, or APK modding)
   bool get isCriticalTamperDetected {
     if (kDebugMode || kIsWeb) return false;
-    return _isRooted || _isHooked || _isDebuggerAttached || isTamperedSignature;
+    return _isRooted || _isHooked || _isDebuggerAttached || _isClonedOrSandboxed || isTamperedSignature;
   }
 
   /// Starts periodic background heartbeat monitoring (every 5 seconds) to catch runtime Frida injection or debugger attachments
@@ -101,6 +103,7 @@ class DeviceSecurityService extends ChangeNotifier {
         _isRooted = result['isRooted'] == true;
         _isHooked = result['isHooked'] == true;
         _isDebuggerAttached = result['isDebuggerAttached'] == true;
+        _isClonedOrSandboxed = result['isClonedOrSandboxed'] == true;
         _isEmulator = result['isEmulator'] == true;
         _signatureHash = result['signatureHash']?.toString() ?? '';
         _deviceId = result['deviceId']?.toString() ?? '';
@@ -117,13 +120,16 @@ class DeviceSecurityService extends ChangeNotifier {
               ? 'FRIDA_HOOK_DETECTED'
               : (_isDebuggerAttached
                   ? 'DEBUGGER_ATTACHED'
-                  : (isTamperedSignature ? 'TAMPERED_APK_SIGNATURE' : 'ROOT_DETECTED'));
+                  : (_isClonedOrSandboxed
+                      ? 'CLONED_APP_DETECTED'
+                      : (isTamperedSignature ? 'TAMPERED_APK_SIGNATURE' : 'ROOT_DETECTED')));
           await reportSecurityViolation(
             violationType: violationType,
             details: {
               'isRooted': _isRooted,
               'isHooked': _isHooked,
               'isDebuggerAttached': _isDebuggerAttached,
+              'isClonedOrSandboxed': _isClonedOrSandboxed,
               'isEmulator': _isEmulator,
               'isTamperedSignature': isTamperedSignature,
               'signatureHash': _signatureHash,

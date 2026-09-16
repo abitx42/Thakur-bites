@@ -6,6 +6,7 @@ import '../models/order.dart' as app;
 import '../theme/app_theme.dart';
 import '../widgets/receipt_print_reveal.dart';
 import '../widgets/live_security_qr_badge.dart';
+import '../services/clipboard_security_service.dart';
 import 'order_status_screen.dart';
 
 /// Phase 4 — Perforated ticket confirmation screen with live Firestore status sync.
@@ -676,8 +677,27 @@ class _TicketScreenState extends State<TicketScreen> {
                     onTap: () {
                       if (resolvedPin.isNotEmpty) {
                         HapticFeedback.lightImpact();
-                        Clipboard.setData(ClipboardData(text: resolvedPin));
+                        ClipboardSecurityService.copySensitiveText(resolvedPin);
                         setState(() => _copiedPin = true);
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Row(
+                              children: [
+                                const Icon(Icons.shield_rounded, color: AppColors.green, size: 18),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Pickup PIN copied • Auto-clearing in 30s',
+                                  style: AppFonts.body(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600),
+                                ),
+                              ],
+                            ),
+                            duration: const Duration(seconds: 2),
+                            backgroundColor: AppColors.ink,
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        );
                         Future.delayed(const Duration(milliseconds: 1500), () {
                           if (mounted) setState(() => _copiedPin = false);
                         });

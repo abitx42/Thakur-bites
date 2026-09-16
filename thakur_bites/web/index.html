@@ -153,23 +153,29 @@
       } catch (_) {}
     });
 
-    // 5. Native Function Hook Detection
+    // 5. Native Function Hook Detection & Prototype Cloaking Defense
     setInterval(function() {
       try {
         var toStr = Function.prototype.toString;
+        if (!toStr.call(toStr).includes('[native code]')) {
+          triggerWebTamperLockdown('CLIENT_CODE_TAMPERED', { target: 'Function.prototype.toString' });
+          return;
+        }
         if (window.fetch && !toStr.call(window.fetch).includes('[native code]')) {
           triggerWebTamperLockdown('CLIENT_CODE_TAMPERED', { target: 'fetch' });
+          return;
         }
         if (window.XMLHttpRequest && !toStr.call(XMLHttpRequest.prototype.open).includes('[native code]')) {
           triggerWebTamperLockdown('CLIENT_CODE_TAMPERED', { target: 'XMLHttpRequest.open' });
+          return;
         }
       } catch (_) {}
     }, 2500);
 
-    // 6. DOM Mutation Observer for Untrusted Script/Iframe Injection
+    // 6. DOM Mutation Observer for Untrusted Script/Iframe/Base Injection
     try {
       var isTrusted = function(src) {
-        if (!src) return true;
+        if (!src) return false;
         try {
           var u = new URL(src, window.location.href);
           if (u.origin === window.location.origin) return true;
@@ -186,10 +192,32 @@
             var n = added[j];
             if (n.nodeType !== 1) continue;
             var t = (n.tagName || '').toUpperCase();
-            if (t === 'SCRIPT' || t === 'IFRAME') {
+
+            // Forbidden high-risk element types (Base tag injection, plugins)
+            if (t === 'BASE' || t === 'OBJECT' || t === 'EMBED' || t === 'APPLET') {
+              triggerWebTamperLockdown('UNAUTHORIZED_DOM_ELEMENT_INJECTION', { tag: t });
+              return;
+            }
+
+            if (t === 'SCRIPT') {
               var s = n.src || '';
-              if (s && !isTrusted(s)) {
-                triggerWebTamperLockdown('CLIENT_DOM_TAMPERING', { tag: t, src: s.slice(0, 100) });
+              if (s) {
+                if (!isTrusted(s)) {
+                  triggerWebTamperLockdown('CLIENT_DOM_TAMPERING', { tag: t, src: s.slice(0, 100) });
+                  return;
+                }
+              } else if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                if (!n.hasAttribute('data-tb-verified')) {
+                  triggerWebTamperLockdown('DYNAMIC_INLINE_SCRIPT_INJECTION', { tag: t });
+                  return;
+                }
+              }
+            }
+
+            if (t === 'IFRAME') {
+              var iframeSrc = n.src || '';
+              if (iframeSrc && !isTrusted(iframeSrc)) {
+                triggerWebTamperLockdown('UNAUTHORIZED_IFRAME_INJECTION', { tag: t, src: iframeSrc.slice(0, 100) });
                 return;
               }
             }

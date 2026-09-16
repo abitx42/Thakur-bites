@@ -218,6 +218,17 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+/**
+ * Validates and sanitizes queue token strings to guarantee strict compliance
+ * with campus token format (TB-XXX or 2-12 alphanumeric characters).
+ * Defends against unexpected control characters or DOM layout distortion attacks.
+ */
+function sanitizeToken(token) {
+  if (!token || typeof token !== 'string') return 'TB-???';
+  const clean = token.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 12);
+  return clean.length >= 2 ? clean : 'TB-???';
+}
+
 const MAX_PER_SECTION = 8;
 
 /**
@@ -279,7 +290,7 @@ function renderQueueData(data) {
     } else {
       let html = visibleConfirmed.map((item, idx) => `
         <div class="token-card confirmed">
-          <div class="token-number">${escapeHtml(item.token || 'TB-???')}</div>
+          <div class="token-number">${escapeHtml(sanitizeToken(item.token))}</div>
           <div class="token-status">IN QUEUE &middot; #${idx + 1}</div>
         </div>
       `).join('');
@@ -311,7 +322,7 @@ function renderQueueData(data) {
 
         return `
           <div class="token-card preparing">
-            <div class="token-number">${escapeHtml(item.token || 'TB-???')}</div>
+            <div class="token-number">${escapeHtml(sanitizeToken(item.token))}</div>
             <div class="token-eta">${etaLabel}</div>
           </div>
         `;
@@ -339,7 +350,7 @@ function renderQueueData(data) {
     } else {
       let html = visibleReady.map(item => `
         <div class="token-card ready">
-          <div class="token-number">${escapeHtml(item.token || 'TB-???')}</div>
+          <div class="token-number">${escapeHtml(sanitizeToken(item.token))}</div>
           <div class="token-ready-label">COLLECT AT COUNTER 🟢</div>
         </div>
       `).join('');

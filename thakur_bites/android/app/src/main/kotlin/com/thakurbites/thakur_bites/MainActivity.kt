@@ -79,6 +79,7 @@ class MainActivity : FlutterActivity() {
         val isRooted = checkRoot()
         val isHooked = checkFridaAndHooking()
         val isDebuggerAttached = checkDebugger()
+        val isClonedOrSandboxed = checkClonedOrSandboxed()
         val isEmulator = checkEmulator()
         val signatureHash = getApkSignatureHash()
         val deviceId = getAnonymousDeviceId()
@@ -89,6 +90,7 @@ class MainActivity : FlutterActivity() {
             "isRooted" to isRooted,
             "isHooked" to isHooked,
             "isDebuggerAttached" to isDebuggerAttached,
+            "isClonedOrSandboxed" to isClonedOrSandboxed,
             "isEmulator" to isEmulator,
             "signatureHash" to signatureHash,
             "deviceId" to deviceId,
@@ -229,11 +231,94 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun checkDebugger(): Boolean {
-        return try {
-            android.os.Debug.isDebuggerConnected() || android.os.Debug.waitingForDebugger()
-        } catch (_: Exception) {
-            false
-        }
+        try {
+            // 1. Android JDWP Debugger Check
+            if (android.os.Debug.isDebuggerConnected() || android.os.Debug.waitingForDebugger()) {
+                return true
+            }
+
+            // 2. Linux Kernel Native TracerPid Inspection (/proc/self/status)
+            // When native debuggers (gdb, lldb, IDA Pro) or Frida native ptrace engine attach, TracerPid is non-zero
+            val statusFile = File("/proc/self/status")
+            if (statusFile.exists()) {
+                statusFile.bufferedReader().useLines { lines ->
+                    for (line in lines) {
+                        if (line.startsWith("TracerPid:")) {
+                            val parts = line.split(":")
+                            if (parts.size >= 2) {
+                                val tracerPid = parts[1].trim().toIntOrNull() ?: 0
+                                if (tracerPid != 0) {
+                                    return true
+                                }
+                            }
+                            break
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        return false
+    }
+
+    private fun checkClonedOrSandboxed(): Boolean {
+        try {
+            // 1. Filesystem Directory Namespace Integrity
+            // Genuine paths: /data/user/0/com.thakurbites.thakur_bites/files or /data/data/com.thakurbites.thakur_bites/files
+            val filesPath = applicationContext.filesDir.absolutePath
+            val lowerPath = filesPath.lowercase()
+            val clonerMarkers = arrayOf(
+                "com.lbe.parallel", "parallel", "dualspace", "virtualapp", "cloneapp",
+                "multiapp", "dualsplit", "multiaccount", "vapp", "sandbox"
+            )
+            for (marker in clonerMarkers) {
+                if (lowerPath.contains(marker) && !lowerPath.contains("com.thakurbites.thakur_bites")) {
+                    return true
+                }
+            }
+            if (!filesPath.contains(packageName)) {
+                return true
+            }
+
+            // 2. Package Manager Audit for Known Cheat Tools & Cloner Engines
+            val pm = packageManager
+            val suspectPackages = arrayOf(
+                "com.chelpus.lackypatch",
+                "com.dimonvideo.luckypatcher",
+                "com.android.vending.billing.InAppBillingService.LUCK",
+                "catch_.me_.if_.you_.can_",
+                "com.lbe.parallel.intl",
+                "com.lbe.parallel",
+                "com.excelliance.dualsplit",
+                "com.polestar.super.clone",
+                "com.dualspace.multispace.android",
+                "com.applisto.appcloner"
+            )
+            for (pkg in suspectPackages) {
+                try {
+                    pm.getPackageInfo(pkg, 0)
+                    return true
+                } catch (_: PackageManager.NameNotFoundException) {}
+            }
+
+            // 3. Xposed / LSPosed / Substrate Dynamic Classloader Inspection
+            try {
+                ClassLoader.getSystemClassLoader().loadClass("de.robv.android.xposed.XposedBridge")
+                return true
+            } catch (_: Throwable) {}
+
+            try {
+                ClassLoader.getSystemClassLoader().loadClass("io.github.lsposed.lspd.core.Startup")
+                return true
+            } catch (_: Throwable) {}
+
+            try {
+                val vxp = System.getProperty("vxp")
+                if (vxp != null && vxp.isNotEmpty()) return true
+            } catch (_: Throwable) {}
+        } catch (_: Exception) {}
+
+        return false
     }
 
     private fun checkEmulator(): Boolean {

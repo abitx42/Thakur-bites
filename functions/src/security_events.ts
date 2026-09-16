@@ -15,7 +15,9 @@ export type SecurityViolationType =
   | 'FRIDA_HOOK_DETECTED'
   | 'DEBUGGER_ATTACHED'
   | 'CANARY_TRIPWIRE_TRIGGERED'
-  | 'CLIENT_CODE_TAMPERED';
+  | 'CLIENT_CODE_TAMPERED'
+  | 'CLONED_APP_DETECTED'
+  | 'PROTOTYPE_POLLUTION_ATTACK';
 
 const CRITICAL_VIOLATIONS: Set<SecurityViolationType> = new Set([
   'ROOT_DETECTED',
@@ -25,6 +27,8 @@ const CRITICAL_VIOLATIONS: Set<SecurityViolationType> = new Set([
   'DEBUGGER_ATTACHED',
   'CANARY_TRIPWIRE_TRIGGERED',
   'CLIENT_CODE_TAMPERED',
+  'CLONED_APP_DETECTED',
+  'PROTOTYPE_POLLUTION_ATTACK',
 ]);
 
 export const reportSecurityViolation = onCall(
@@ -58,6 +62,8 @@ export const reportSecurityViolation = onCall(
       'DEBUGGER_ATTACHED',
       'CANARY_TRIPWIRE_TRIGGERED',
       'CLIENT_CODE_TAMPERED',
+      'CLONED_APP_DETECTED',
+      'PROTOTYPE_POLLUTION_ATTACK',
     ];
 
     if (!violationType || typeof violationType !== 'string' || !validTypes.includes(violationType as SecurityViolationType)) {

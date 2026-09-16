@@ -1,6 +1,11 @@
 // Thakur Bites — Universal Web Security Sentinel & Anti-Tamper Guard
 import { getOrCreateDeviceId } from './auth.js?v=10';
 
+// Snapshot unhookable native references immediately upon module load
+const _nativeFetch = typeof window !== 'undefined' && window.fetch ? window.fetch.bind(window) : null;
+const _nativeSendBeacon = typeof navigator !== 'undefined' && navigator.sendBeacon ? navigator.sendBeacon.bind(navigator) : null;
+const _nativeToString = Function.prototype.toString;
+
 let isLockdownActive = false;
 
 /**
@@ -44,10 +49,10 @@ export function triggerTamperLockdown(reason, details = {}) {
       ? '/reportSecurityViolation'
       : 'https://us-central1-adi-thakur-bite.cloudfunctions.net/reportSecurityViolation';
 
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon(endpoint, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
-    } else {
-      fetch(endpoint, {
+    if (_nativeSendBeacon) {
+      _nativeSendBeacon(endpoint, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+    } else if (_nativeFetch) {
+      _nativeFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -316,25 +321,35 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
     setInterval(debugDetector, 5000);
   } catch (_) {}
 
-  // 6. Native Function Hook Detection
+  // 6. Native Function Hook Detection & Prototype Cloaking Defense
   function checkNativeIntegrity() {
     try {
       const toStr = Function.prototype.toString;
-      if (window.fetch && !toStr.call(window.fetch).includes('[native code]')) {
+      // Defense against Function.prototype.toString cloaking
+      const toStrSource = _nativeToString.call(toStr);
+      if (!toStrSource.includes('[native code]')) {
+        triggerTamperLockdown('CLIENT_CODE_TAMPERED', {
+          violationType: 'CLIENT_CODE_TAMPERED',
+          target: 'Function.prototype.toString',
+        });
+        return;
+      }
+
+      if (window.fetch && !_nativeToString.call(window.fetch).includes('[native code]')) {
         triggerTamperLockdown('CLIENT_CODE_TAMPERED', {
           violationType: 'CLIENT_CODE_TAMPERED',
           target: 'fetch',
         });
         return;
       }
-      if (window.XMLHttpRequest && !toStr.call(XMLHttpRequest.prototype.open).includes('[native code]')) {
+      if (window.XMLHttpRequest && !_nativeToString.call(XMLHttpRequest.prototype.open).includes('[native code]')) {
         triggerTamperLockdown('CLIENT_CODE_TAMPERED', {
           violationType: 'CLIENT_CODE_TAMPERED',
           target: 'XMLHttpRequest.open',
         });
         return;
       }
-      if (window.XMLHttpRequest && !toStr.call(XMLHttpRequest.prototype.send).includes('[native code]')) {
+      if (window.XMLHttpRequest && !_nativeToString.call(XMLHttpRequest.prototype.send).includes('[native code]')) {
         triggerTamperLockdown('CLIENT_CODE_TAMPERED', {
           violationType: 'CLIENT_CODE_TAMPERED',
           target: 'XMLHttpRequest.send',
@@ -347,10 +362,10 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
   checkNativeIntegrity();
   setInterval(checkNativeIntegrity, 2500);
 
-  // 7. Active DOM Mutation Observer for Script/Iframe Injection
+  // 7. Active DOM Mutation Observer for Script/Iframe/Base Injection
   function initDomIntegrityObserver() {
     const isTrustedSource = (src) => {
-      if (!src) return true;
+      if (!src) return false;
       try {
         const url = new URL(src, window.location.href);
         if (url.origin === window.location.origin) return true;
@@ -378,10 +393,46 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
           for (const node of mutation.addedNodes) {
             if (node.nodeType !== 1) continue;
             const tag = node.tagName ? node.tagName.toUpperCase() : '';
-            if (tag === 'SCRIPT' || tag === 'IFRAME') {
+
+            // Forbidden high-risk element types (Base injection, plugins)
+            if (tag === 'BASE' || tag === 'OBJECT' || tag === 'EMBED' || tag === 'APPLET') {
+              triggerTamperLockdown('UNAUTHORIZED_DOM_ELEMENT_INJECTION', {
+                violationType: 'CLIENT_DOM_TAMPERING',
+                tag,
+              });
+              return;
+            }
+
+            // Script element injection analysis
+            if (tag === 'SCRIPT') {
+              const src = node.src || '';
+              if (src) {
+                if (!isTrustedSource(src)) {
+                  triggerTamperLockdown('CLIENT_DOM_TAMPERING', {
+                    violationType: 'CLIENT_DOM_TAMPERING',
+                    tag,
+                    src: src.slice(0, 120),
+                  });
+                  return;
+                }
+              } else if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                // Dynamically injected inline script after initial bootstrap
+                if (!node.hasAttribute('data-tb-verified')) {
+                  triggerTamperLockdown('DYNAMIC_INLINE_SCRIPT_INJECTION', {
+                    violationType: 'CLIENT_DOM_TAMPERING',
+                    tag,
+                    snippet: (node.textContent || '').slice(0, 80),
+                  });
+                  return;
+                }
+              }
+            }
+
+            // Untrusted iframe embedding
+            if (tag === 'IFRAME') {
               const src = node.src || '';
               if (src && !isTrustedSource(src)) {
-                triggerTamperLockdown('CLIENT_DOM_TAMPERING', {
+                triggerTamperLockdown('UNAUTHORIZED_IFRAME_INJECTION', {
                   violationType: 'CLIENT_DOM_TAMPERING',
                   tag,
                   src: src.slice(0, 120),
