@@ -187,7 +187,8 @@ class MainActivity : FlutterActivity() {
                         val lower = line.lowercase()
                         if (lower.contains("frida-agent") || lower.contains("gadget.so") || 
                             lower.contains("libxposed") || lower.contains("libsubstrate") ||
-                            lower.contains("libmembi") || lower.contains("frida-gadget")) {
+                            lower.contains("libmembi") || lower.contains("frida-gadget") ||
+                            lower.contains("libgg") || lower.contains("gameguardian") || lower.contains("libhooker")) {
                             return true
                         }
                         // RWX segments violate Android W^X policy and indicate injected shellcode or Frida stubs
@@ -332,7 +333,12 @@ class MainActivity : FlutterActivity() {
                 "com.excelliance.dualsplit",
                 "com.polestar.super.clone",
                 "com.dualspace.multispace.android",
-                "com.applisto.appcloner"
+                "com.applisto.appcloner",
+                "com.gameguardian",
+                "com.cih.game_cih",
+                "com.sbtools.gamehack",
+                "com.formyapp.sbgamehacker",
+                "org.cheatengine.cegui"
             )
             for (pkg in suspectPackages) {
                 try {

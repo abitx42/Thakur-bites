@@ -256,24 +256,64 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
     console.warn('[Sentinel] Prototype defense init notice:', err);
   }
 
-  // 4. Keyboard Shortcut Interceptor for Workstations & Kiosks
-  if (options.blockShortcuts) {
-    window.addEventListener('keydown', (e) => {
-      if (e.key === 'F12' || e.keyCode === 123) {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
+  // 3.2 Automated Headless Bot & Web Scraping Heuristics
+  try {
+    const isBot = Boolean(
+      navigator.webdriver === true ||
+      window.__webdriver_evaluate ||
+      window.__selenium_evaluate ||
+      window._phantom ||
+      window.callPhantom ||
+      window.__nightmare ||
+      (window.Buffer && window.emit)
+    );
+    if (isBot) {
+      console.error('[BOT_PROBE_DETECTED] Headless browser automation detected.');
+      triggerTamperLockdown('AUTOMATED_BOT_PROBE', {
+        violationType: 'AUTOMATED_BOT_PROBE',
+        userAgent: navigator.userAgent,
+      });
+      return;
+    }
+  } catch (_) {}
 
+  // 3.3 ServiceWorker Hijacking & Cache Poisoning Defense
+  try {
+    if ('serviceWorker' in navigator && navigator.serviceWorker) {
+      navigator.serviceWorker.register = function () {
+        return Promise.reject(new Error('ServiceWorker registration strictly disabled by Thakur Bites security policy.'));
+      };
+    }
+  } catch (_) {}
+
+  // 4. Keyboard Shortcut & Context Menu Interceptor for Workstations & Kiosks
+  if (options.blockShortcuts) {
+    // Block context menu (Inspect Element escape)
+    window.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      return false;
+    }, true);
+
+    let devShortcutAttempts = 0;
+    window.addEventListener('keydown', (e) => {
+      const isF12 = e.key === 'F12' || e.keyCode === 123;
       const isCtrlOrCmd = e.ctrlKey || e.metaKey;
       const isShift = e.shiftKey;
-
-      if (
+      const isDevInspect =
         (isCtrlOrCmd && isShift && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) ||
-        (isCtrlOrCmd && ['U', 'u'].includes(e.key))
-      ) {
+        (isCtrlOrCmd && ['U', 'u', 'S', 's'].includes(e.key));
+
+      if (isF12 || isDevInspect) {
         e.preventDefault();
         e.stopPropagation();
+        devShortcutAttempts++;
+        if (devShortcutAttempts >= 4) {
+          triggerTamperLockdown('KEYBOARD_ESCAPE_ATTEMPT', {
+            violationType: 'KEYBOARD_ESCAPE_ATTEMPT',
+            key: e.key,
+            attempts: devShortcutAttempts,
+          });
+        }
         return false;
       }
     }, true);

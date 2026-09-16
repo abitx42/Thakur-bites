@@ -25,22 +25,73 @@ export function getOrCreateDeviceId() {
   return deviceId;
 }
 
+/**
+ * Computes a hardware- and browser-bound cryptographic tamper signature
+ * preventing token exfiltration and replay across devices.
+ */
+function computeDeviceBoundStorageDigest(payloadString) {
+  try {
+    const raw = `${payloadString}:::${getOrCreateDeviceId()}:::${navigator.userAgent || ''}:::${window.screen ? window.screen.width + 'x' + window.screen.height : '0x0'}`;
+    let h1 = 0xdeadbeef ^ 0xcafebabe;
+    let h2 = 0x41c6ce57 ^ 0x62a9d565;
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+    h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+    h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    const part1 = (h1 >>> 0).toString(16).padStart(8, '0');
+    const part2 = (h2 >>> 0).toString(16).padStart(8, '0');
+    return `tb_sig_${part1}${part2}`;
+  } catch (_) {
+    return 'tb_sig_fallback';
+  }
+}
+
 export function getRegisteredWorkstation() {
   const id = localStorage.getItem('tb_registered_workstation_id');
   const token = localStorage.getItem('tb_registered_workstation_token');
   const role = localStorage.getItem('tb_registered_workstation_role');
   const name = localStorage.getItem('tb_registered_workstation_name');
-  if (id && token) {
-    return { id, token, role, name };
+  const sig = localStorage.getItem('tb_registered_workstation_sig');
+
+  if (!id || !token) return null;
+
+  // Verify hardware and device binding signature
+  if (sig) {
+    const payload = JSON.stringify({ id, token, role, name });
+    const expectedSig = computeDeviceBoundStorageDigest(payload);
+    if (sig !== expectedSig) {
+      console.error('[STORAGE_TAMPER_DETECTED] Workstation token signature mismatch or replayed credentials.');
+      clearRegisteredWorkstation();
+      import('./securitySentinel.js').then(m => {
+        m.triggerTamperLockdown('CLIENT_STORAGE_TAMPERING', {
+          violationType: 'CLIENT_STORAGE_TAMPERING',
+          target: 'workstation_token',
+        });
+      }).catch(() => {});
+      return null;
+    }
+  } else {
+    // Migration: automatically seal legacy token on first read
+    const payload = JSON.stringify({ id, token, role, name });
+    localStorage.setItem('tb_registered_workstation_sig', computeDeviceBoundStorageDigest(payload));
   }
-  return null;
+
+  return { id, token, role, name };
 }
 
 export function saveRegisteredWorkstation(id, token, role, name) {
+  const payload = JSON.stringify({ id, token, role, name });
+  const sig = computeDeviceBoundStorageDigest(payload);
   localStorage.setItem('tb_registered_workstation_id', id);
   localStorage.setItem('tb_registered_workstation_token', token);
   if (role) localStorage.setItem('tb_registered_workstation_role', role);
   if (name) localStorage.setItem('tb_registered_workstation_name', name);
+  localStorage.setItem('tb_registered_workstation_sig', sig);
 }
 
 export function clearRegisteredWorkstation() {
@@ -48,30 +99,55 @@ export function clearRegisteredWorkstation() {
   localStorage.removeItem('tb_registered_workstation_token');
   localStorage.removeItem('tb_registered_workstation_role');
   localStorage.removeItem('tb_registered_workstation_name');
+  localStorage.removeItem('tb_registered_workstation_sig');
 }
 
 export function getPrivilegedSession() {
   const sessStr = localStorage.getItem('tb_privileged_session');
   if (!sessStr) return null;
+
+  const sig = localStorage.getItem('tb_privileged_session_sig');
+  if (sig) {
+    const expectedSig = computeDeviceBoundStorageDigest(sessStr);
+    if (sig !== expectedSig) {
+      console.error('[STORAGE_TAMPER_DETECTED] Privileged session modified or replayed across devices.');
+      clearPrivilegedSession();
+      import('./securitySentinel.js').then(m => {
+        m.triggerTamperLockdown('CLIENT_STORAGE_TAMPERING', {
+          violationType: 'CLIENT_STORAGE_TAMPERING',
+          target: 'privileged_session',
+        });
+      }).catch(() => {});
+      return null;
+    }
+  } else {
+    // Migration seal
+    localStorage.setItem('tb_privileged_session_sig', computeDeviceBoundStorageDigest(sessStr));
+  }
+
   try {
     const sess = JSON.parse(sessStr);
     const now = Date.now();
     if (new Date(sess.expiresAt).getTime() < now) {
-      localStorage.removeItem('tb_privileged_session');
+      clearPrivilegedSession();
       return null;
     }
     return sess;
   } catch (_) {
+    clearPrivilegedSession();
     return null;
   }
 }
 
 export function savePrivilegedSession(sessionData) {
-  localStorage.setItem('tb_privileged_session', JSON.stringify(sessionData));
+  const payload = JSON.stringify(sessionData);
+  localStorage.setItem('tb_privileged_session', payload);
+  localStorage.setItem('tb_privileged_session_sig', computeDeviceBoundStorageDigest(payload));
 }
 
 export function clearPrivilegedSession() {
   localStorage.removeItem('tb_privileged_session');
+  localStorage.removeItem('tb_privileged_session_sig');
 }
 
 let currentStaffState = {

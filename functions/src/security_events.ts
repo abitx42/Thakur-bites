@@ -17,7 +17,11 @@ export type SecurityViolationType =
   | 'CANARY_TRIPWIRE_TRIGGERED'
   | 'CLIENT_CODE_TAMPERED'
   | 'CLONED_APP_DETECTED'
-  | 'PROTOTYPE_POLLUTION_ATTACK';
+  | 'PROTOTYPE_POLLUTION_ATTACK'
+  | 'CLIENT_STORAGE_TAMPERING'
+  | 'KEYBOARD_ESCAPE_ATTEMPT'
+  | 'AUTOMATED_BOT_PROBE'
+  | 'MEMORY_CHEAT_ENGINE';
 
 const CRITICAL_VIOLATIONS: Set<SecurityViolationType> = new Set([
   'ROOT_DETECTED',
@@ -29,6 +33,10 @@ const CRITICAL_VIOLATIONS: Set<SecurityViolationType> = new Set([
   'CLIENT_CODE_TAMPERED',
   'CLONED_APP_DETECTED',
   'PROTOTYPE_POLLUTION_ATTACK',
+  'CLIENT_STORAGE_TAMPERING',
+  'KEYBOARD_ESCAPE_ATTEMPT',
+  'AUTOMATED_BOT_PROBE',
+  'MEMORY_CHEAT_ENGINE',
 ]);
 
 export const reportSecurityViolation = onCall(
@@ -64,6 +72,10 @@ export const reportSecurityViolation = onCall(
       'CLIENT_CODE_TAMPERED',
       'CLONED_APP_DETECTED',
       'PROTOTYPE_POLLUTION_ATTACK',
+      'CLIENT_STORAGE_TAMPERING',
+      'KEYBOARD_ESCAPE_ATTEMPT',
+      'AUTOMATED_BOT_PROBE',
+      'MEMORY_CHEAT_ENGINE',
     ];
 
     if (!violationType || typeof violationType !== 'string' || !validTypes.includes(violationType as SecurityViolationType)) {

@@ -43,6 +43,9 @@
           r.unregister();
         }
       });
+      navigator.serviceWorker.register = function () {
+        return Promise.reject(new Error('ServiceWorker registration disabled by security policy.'));
+      };
     }
     if ('caches' in window) {
       caches.keys().then(function (keys) {

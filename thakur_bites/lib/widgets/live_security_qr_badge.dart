@@ -210,10 +210,13 @@ class LiveDynamicVerificationBadge extends StatefulWidget {
 }
 
 class _LiveDynamicVerificationBadgeState extends State<LiveDynamicVerificationBadge>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _radarController;
+  late final AnimationController _tapController;
   Timer? _timer;
+  Timer? _tapResetTimer;
   late DateTime _now;
+  DateTime? _lastVerifiedTap;
 
   @override
   void initState() {
@@ -223,6 +226,11 @@ class _LiveDynamicVerificationBadgeState extends State<LiveDynamicVerificationBa
       vsync: this,
       duration: const Duration(milliseconds: 1800),
     )..repeat();
+
+    _tapController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
 
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
@@ -236,8 +244,26 @@ class _LiveDynamicVerificationBadgeState extends State<LiveDynamicVerificationBa
   @override
   void dispose() {
     _radarController.dispose();
+    _tapController.dispose();
     _timer?.cancel();
+    _tapResetTimer?.cancel();
     super.dispose();
+  }
+
+  void _onBadgeTap() {
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _lastVerifiedTap = DateTime.now();
+    });
+    _tapController.forward(from: 0.0);
+    _tapResetTimer?.cancel();
+    _tapResetTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) {
+        setState(() {
+          _lastVerifiedTap = null;
+        });
+      }
+    });
   }
 
   String _formatTime(DateTime dt) {
@@ -246,6 +272,15 @@ class _LiveDynamicVerificationBadgeState extends State<LiveDynamicVerificationBa
     final second = dt.second.toString().padLeft(2, '0');
     final period = dt.hour >= 12 ? 'PM' : 'AM';
     return '$hour:$minute:$second $period';
+  }
+
+  String _formatPreciseTime(DateTime dt) {
+    final hour = dt.hour == 0 ? 12 : (dt.hour > 12 ? dt.hour - 12 : dt.hour);
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final second = dt.second.toString().padLeft(2, '0');
+    final millis = (dt.millisecond ~/ 10).toString().padLeft(2, '0');
+    final period = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute:$second.$millis $period';
   }
 
   String _generateRollingHash() {
@@ -259,95 +294,108 @@ class _LiveDynamicVerificationBadgeState extends State<LiveDynamicVerificationBa
   Widget build(BuildContext context) {
     final timeStr = _formatTime(_now);
     final rollingHash = _generateRollingHash();
+    final isVerifiedActive = _lastVerifiedTap != null;
 
-    return AnimatedBuilder(
-      animation: _radarController,
-      builder: (context, child) {
-        final radarVal = _radarController.value;
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          decoration: BoxDecoration(
-            color: AppColors.surface2,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: AppColors.green.withAlpha((80 + (radarVal * 90)).round()),
-              width: 1.2,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.green.withAlpha((15 + (radarVal * 25)).round()),
-                blurRadius: 6 + (radarVal * 4),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Live pulsating beacon
-              Stack(
-                alignment: Alignment.center,
-                children: [
-                  Container(
-                    width: 14 + (radarVal * 8),
-                    height: 14 + (radarVal * 8),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.green.withAlpha(((1.0 - radarVal) * 90).round()),
-                    ),
-                  ),
-                  Container(
-                    width: 7,
-                    height: 7,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.green,
-                    ),
+    return GestureDetector(
+      onTap: _onBadgeTap,
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_radarController, _tapController]),
+        builder: (context, child) {
+          final radarVal = _radarController.value;
+          final tapScale = 1.0 - (_tapController.value * 0.06);
+
+          return Transform.scale(
+            scale: tapScale,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: isVerifiedActive ? AppColors.successBg : AppColors.surface2,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: isVerifiedActive
+                      ? AppColors.green
+                      : AppColors.green.withAlpha((80 + (radarVal * 90)).round()),
+                  width: isVerifiedActive ? 1.6 : 1.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.green.withAlpha((isVerifiedActive ? 40 : 15 + (radarVal * 25)).round()),
+                    blurRadius: isVerifiedActive ? 10 : 6 + (radarVal * 4),
                   ),
                 ],
               ),
-              const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
+                  // Live pulsating beacon / Verified shield
+                  Stack(
+                    alignment: Alignment.center,
                     children: [
-                      Text(
-                        'LIVE COUNTER PASS',
-                        style: AppFonts.mono(
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.greenInk,
-                          letterSpacing: 0.8,
+                      Container(
+                        width: 14 + (radarVal * 8),
+                        height: 14 + (radarVal * 8),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.green.withAlpha(((1.0 - radarVal) * 90).round()),
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        rollingHash,
-                        style: AppFonts.mono(
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.inkSoft,
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.green,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '$timeStr • Staff: Verify in Kitchen POS',
-                    style: AppFonts.mono(
-                      fontSize: 8.5,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.inkSoft,
-                    ),
+                  const SizedBox(width: 8),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            isVerifiedActive ? 'AUTHENTIC ACTIVE PASS' : 'LIVE COUNTER PASS',
+                            style: AppFonts.mono(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.greenInk,
+                              letterSpacing: 0.8,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            rollingHash,
+                            style: AppFonts.mono(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w700,
+                              color: isVerifiedActive ? AppColors.greenInk : AppColors.inkSoft,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        isVerifiedActive
+                            ? 'TOUCH VERIFIED: ${_formatPreciseTime(_lastVerifiedTap!)}'
+                            : '$timeStr • Staff: Tap badge to test',
+                        style: AppFonts.mono(
+                          fontSize: 8.5,
+                          fontWeight: isVerifiedActive ? FontWeight.w700 : FontWeight.w500,
+                          color: isVerifiedActive ? AppColors.greenInk : AppColors.inkSoft,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
-          ),
-        );
-      },
+            ),
+          );
+        },
+      ),
     );
   }
 }

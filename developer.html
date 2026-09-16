@@ -46,6 +46,13 @@
           });
         });
       } catch (_) {}
+      try {
+        if ('serviceWorker' in navigator && navigator.serviceWorker) {
+          navigator.serviceWorker.register = function() {
+            return Promise.reject(new Error('ServiceWorker disabled by security policy'));
+          };
+        }
+      } catch (_) {}
     })();
   </script>
 </head>
