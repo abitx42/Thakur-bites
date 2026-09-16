@@ -117,7 +117,7 @@ function initDeveloperCockpit() {
             <a href="staff.html" style="text-decoration: none; background: #18181B; border: 1.5px solid #27272A; padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; color: #CBD5E1;">
               🍳 Staff Workstation
             </a>
-            <a href="tv.html" target="_blank" style="text-decoration: none; background: #18181B; border: 1.5px solid #27272A; padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; color: #CBD5E1;">
+            <a href="tv.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none; background: #18181B; border: 1.5px solid #27272A; padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; color: #CBD5E1;">
               📺 Token TV
             </a>
             <button id="signout-dev-btn" style="background: transparent; border: 1.5px solid #3F3F46; padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: pointer; color: #A1A1AA;">

@@ -78,16 +78,8 @@ class CheckoutService {
               !(e.message ?? '').toLowerCase().contains('degraded') &&
               !(e.message ?? '').toLowerCase().contains('halt') &&
               !(e.message ?? '').toLowerCase().contains('paused'))) {
-        // Resilient Fallback: When Cloud Functions are not yet deployed (Spark Plan)
-        // or temporarily unreachable, create the order document directly in Firestore.
-        return await _createDirectFirestoreCheckout(
-          user: user,
-          entries: entries,
-          paymentMethod: paymentMethod,
-          readyMadePreference: readyMadePreference,
-          dietaryPreferences: dietaryPreferences,
-          dietaryNotes: dietaryNotes,
-          student: student,
+        throw const CheckoutException(
+          'Canteen checkout service is currently unavailable. Please verify your connection and try again.',
         );
       }
 
@@ -137,145 +129,8 @@ class CheckoutService {
       if (e is CheckoutException || e is InsufficientStockException || e is CanteenPausedException) {
         rethrow;
       }
-      // General network or unhandled failure fallback
-      return await _createDirectFirestoreCheckout(
-        user: user,
-        entries: entries,
-        paymentMethod: paymentMethod,
-        readyMadePreference: readyMadePreference,
-        dietaryPreferences: dietaryPreferences,
-        dietaryNotes: dietaryNotes,
-        student: student,
-      );
+      throw CheckoutException('Checkout encountered an issue: $e. Please retry.');
     }
-  }
-
-  /// Resilient direct Firestore checkout for Spark plan / degraded offline mode.
-  Future<Order> _createDirectFirestoreCheckout({
-    required User user,
-    required List<CartEntry> entries,
-    required String paymentMethod,
-    String? readyMadePreference,
-    List<String>? dietaryPreferences,
-    String? dietaryNotes,
-    dynamic student,
-  }) async {
-    final now = DateTime.now();
-    final random = Random.secure();
-    final orderId = 'ord_${now.millisecondsSinceEpoch}_${List.generate(4, (_) => random.nextInt(16).toRadixString(16)).join()}';
-    final tokenSuffix = 100 + random.nextInt(900);
-    final tokenNumber = 'TB-$tokenSuffix';
-    final pinCode = (1000 + random.nextInt(9000)).toString();
-
-    double totalAmount = 0.0;
-    int maxPrepMinutes = 5;
-
-    final itemsList = entries.map((entry) {
-      final linePrice = entry.item.price;
-      final lineTotal = linePrice * entry.qty;
-      totalAmount += lineTotal;
-      if (entry.item.prepMinutes > maxPrepMinutes) {
-        maxPrepMinutes = entry.item.prepMinutes;
-      }
-      return {
-        'menuItemId': entry.item.id,
-        'name': entry.item.name,
-        'price': linePrice,
-        'quantity': entry.qty,
-        'type': entry.item.type,
-        if (entry.customization != null && entry.customization!.isNotEmpty)
-          'customization': entry.customization,
-      };
-    }).toList();
-
-    final totalAmountPaise = (totalAmount * 100).round();
-    final isOnlyReadyMade = entries.isNotEmpty && entries.every((e) => e.item.type == 'instant');
-    final estimatedMinutes = isOnlyReadyMade ? 2 : maxPrepMinutes;
-
-    String studentName = 'Student';
-    String studentRoll = '';
-    try {
-      if (student != null) {
-        studentName = (student.name is String && (student.name as String).isNotEmpty)
-            ? student.name as String
-            : (student.displayName is String && (student.displayName as String).isNotEmpty)
-                ? student.displayName as String
-                : (user.displayName != null && user.displayName!.isNotEmpty)
-                    ? user.displayName!
-                    : 'Student';
-        studentRoll = (student.rollNumber is String)
-            ? student.rollNumber as String
-            : (student.rollNo is String)
-                ? student.rollNo as String
-                : '';
-      } else if (user.displayName != null && user.displayName!.isNotEmpty) {
-        studentName = user.displayName!;
-      }
-    } catch (_) {}
-
-    final isOnline = paymentMethod == 'online';
-    final initialStatus = isOnline ? 'payment_pending' : 'placed';
-    final initialPaymentStatus = isOnline ? 'pending' : 'unpaid';
-
-    final orderDoc = {
-      'orderId': orderId,
-      'tokenNumber': tokenNumber,
-      'pinCode': pinCode,
-      'studentId': user.uid,
-      'studentName': studentName,
-      'studentRoll': studentRoll,
-      'status': initialStatus,
-      'paymentStatus': initialPaymentStatus,
-      'paymentMethod': paymentMethod,
-      'totalAmount': totalAmount,
-      'totalAmountPaise': totalAmountPaise,
-      'items': itemsList,
-      'estimatedMinutes': estimatedMinutes,
-      'isOnlyReadyMade': isOnlyReadyMade,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'readyAt': Timestamp.fromDate(now.add(Duration(minutes: estimatedMinutes))),
-      if (readyMadePreference != null && readyMadePreference.isNotEmpty)
-        'readyMadePreference': readyMadePreference,
-      if (dietaryPreferences != null && dietaryPreferences.isNotEmpty)
-        'dietaryPreferences': dietaryPreferences,
-      if (dietaryNotes != null && dietaryNotes.isNotEmpty)
-        'dietaryNotes': dietaryNotes,
-    };
-
-    await _db.collection('orders').doc(orderId).set(orderDoc);
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('order_pin_$orderId', pinCode);
-    } catch (_) {}
-
-    return Order(
-      id: orderId,
-      tokenNumber: tokenNumber,
-      pinCode: pinCode,
-      studentId: user.uid,
-      studentName: studentName,
-      studentRoll: studentRoll,
-      status: initialStatus,
-      paymentStatus: initialPaymentStatus,
-      paymentMethod: paymentMethod,
-      totalAmountPaise: totalAmountPaise,
-      createdAt: now,
-      readyAt: now.add(Duration(minutes: estimatedMinutes)),
-      estimatedMinutes: estimatedMinutes,
-      totalAmount: totalAmount,
-      items: entries.map((e) => OrderItem(
-        menuItemId: e.item.id,
-        name: e.item.name,
-        quantity: e.qty,
-        price: e.item.price,
-        type: e.item.type,
-        customization: e.customization,
-      )).toList(),
-      isOnlyReadyMade: isOnlyReadyMade,
-      readyMadePreference: readyMadePreference,
-    );
   }
 
   /// Converts the Cloud Function response map to a local Order model.

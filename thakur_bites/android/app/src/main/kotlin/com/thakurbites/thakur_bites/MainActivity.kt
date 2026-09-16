@@ -3,6 +3,7 @@ package com.thakurbites.thakur_bites
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Process
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -158,11 +159,26 @@ class MainActivity : FlutterActivity() {
             }
         } catch (_: Exception) {}
 
+        // 5. SELinux Enforcing Status Check (detects Permissive or Disabled SELinux common in custom rooted ROMs)
+        if (checkSelinuxPermissive()) return true
+
         return false
     }
 
+    private fun checkSelinuxPermissive(): Boolean {
+        return try {
+            val process = Runtime.getRuntime().exec("getenforce")
+            process.inputStream.bufferedReader().use { reader ->
+                val status = reader.readLine()?.trim()?.lowercase()
+                status == "permissive" || status == "disabled"
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun checkFridaAndHooking(): Boolean {
-        // 1. Memory map inspection for injected hooking libraries
+        // 1. Memory map inspection for injected hooking libraries & RWX dynamic memory
         try {
             val mapsFile = File("/proc/self/maps")
             if (mapsFile.exists()) {
@@ -170,8 +186,17 @@ class MainActivity : FlutterActivity() {
                     for (line in lines) {
                         val lower = line.lowercase()
                         if (lower.contains("frida-agent") || lower.contains("gadget.so") || 
-                            lower.contains("libxposed") || lower.contains("libsubstrate")) {
+                            lower.contains("libxposed") || lower.contains("libsubstrate") ||
+                            lower.contains("libmembi") || lower.contains("frida-gadget")) {
                             return true
+                        }
+                        // RWX segments violate Android W^X policy and indicate injected shellcode or Frida stubs
+                        val tokens = line.trim().split("\\s+".toRegex())
+                        if (tokens.size >= 2) {
+                            val perms = tokens[1]
+                            if (perms.contains("r") && perms.contains("w") && perms.contains("x")) {
+                                return true
+                            }
                         }
                     }
                 }
@@ -270,6 +295,14 @@ class MainActivity : FlutterActivity() {
 
     private fun checkClonedOrSandboxed(): Boolean {
         try {
+            // 0. Process UID vs Package ApplicationInfo UID Integrity Check
+            // Dual-space containers run isolated apps under their host UID, causing a process/package UID mismatch
+            val myUid = Process.myUid()
+            val appUid = applicationInfo.uid
+            if (myUid != appUid) {
+                return true
+            }
+
             // 1. Filesystem Directory Namespace Integrity
             // Genuine paths: /data/user/0/com.thakurbites.thakur_bites/files or /data/data/com.thakurbites.thakur_bites/files
             val filesPath = applicationContext.filesDir.absolutePath

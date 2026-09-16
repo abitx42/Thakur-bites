@@ -42,6 +42,15 @@ class DeviceSecurityService extends ChangeNotifier {
   String get signatureHash => _signatureHash;
   String get deviceId => _deviceId;
 
+  /// Authoritative SHA-256 certificate digests whitelisted for Thakur Bites.
+  /// Any APK signature not present in this whitelist is flagged as an unauthorized mod.
+  static const Set<String> _authoritativeSignatures = {
+    // Standard Android debug certificate digest (used in local development and staging APK builds)
+    'dacc0379fac874a85e1e2f89055f545939f92705fc0a81a674bfab3114141515',
+    // Official release certificate / Google Play App Signing key placeholder
+    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+  };
+
   /// In production release mode, active Developer Options or USB Debugging blocks the ordering flow.
   /// In debug mode (kDebugMode), this policy is bypassed to avoid blocking developers.
   bool get isDeveloperModeBlocked {
@@ -49,10 +58,16 @@ class DeviceSecurityService extends ChangeNotifier {
     return _isDevOptionsEnabled || _isAdbEnabled;
   }
 
-  /// Detects unauthorized APK repackaging or modding via invalid certificate digests
+  /// Detects unauthorized APK repackaging or modding via invalid certificate digests.
+  /// If the signature does not strictly match the authoritative whitelist, the APK has been modified.
   bool get isTamperedSignature {
     if (kDebugMode || kIsWeb) return false;
-    return _signatureHash.isEmpty || _signatureHash == 'UNSIGNED' || _signatureHash.startsWith('ERROR_');
+    if (_signatureHash.isEmpty || _signatureHash == 'UNSIGNED' || _signatureHash.startsWith('ERROR_')) {
+      return true;
+    }
+    final normalized = _signatureHash.toLowerCase().replaceAll(':', '').trim();
+    // In release mode, signature must match one of the authoritative digests
+    return !_authoritativeSignatures.contains(normalized);
   }
 
   /// Critical tampering (root exploit detected, Frida dynamic hooking, debugger attachment, sandboxed clone, or APK modding)

@@ -139,6 +139,20 @@
       }
     }
 
+    // 3.1 Check if session was previously quarantined
+    try {
+      var prevBreach = sessionStorage.getItem('tb_web_lockdown_active') || sessionStorage.getItem('tb_tamper_lockdown_active');
+      if (prevBreach) {
+        if (document.body) {
+          triggerWebTamperLockdown(prevBreach, { violationType: 'PERSISTED_LOCKDOWN' });
+        } else {
+          window.addEventListener('DOMContentLoaded', function() {
+            triggerWebTamperLockdown(prevBreach, { violationType: 'PERSISTED_LOCKDOWN' });
+          });
+        }
+      }
+    } catch (_) {}
+
     // 4. Client Canary Honeypot Traps (Triggers lockdown on write)
     ['debugMode', 'bypassAuth', 'bypassPayment', 'overridePrice', 'forceRole', 'adminKey', '__DEBUG__'].forEach(function(key) {
       try {
@@ -148,6 +162,20 @@
           set: function(val) {
             console.error('[CANARY_TRAP] Tamper write on window.' + key + ' =', val);
             triggerWebTamperLockdown('CANARY_TRIPWIRE_TRIGGERED', { violationType: 'CANARY_TRIPWIRE_TRIGGERED', key: key });
+          }
+        });
+      } catch (_) {}
+    });
+
+    // 4.1 Prototype Pollution Defense (Canary traps on Object.prototype)
+    ['isAdmin', 'role', 'isSuperUser', 'isDeveloper', 'debugMode', 'bypassAuth'].forEach(function(prop) {
+      try {
+        Object.defineProperty(Object.prototype, prop, {
+          configurable: false,
+          get: function() { return undefined; },
+          set: function(val) {
+            console.error('[PROTOTYPE_POLLUTION] Tamper write on Object.prototype.' + prop + ' =', val);
+            triggerWebTamperLockdown('PROTOTYPE_POLLUTION_ATTACK', { violationType: 'CLIENT_DOM_TAMPERING', property: prop });
           }
         });
       } catch (_) {}

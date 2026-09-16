@@ -184,7 +184,7 @@ function initPortalGateway() {
                   • No Authentication Required
                 </div>
               </div>
-              <a href="tv.html" target="_blank" class="btn btn--success btn--lg" style="width: 100%; text-decoration: none; color: #FFF;">
+              <a href="tv.html" target="_blank" rel="noopener noreferrer" class="btn btn--success btn--lg" style="width: 100%; text-decoration: none; color: #FFF;">
                 Open Token TV Board ↗
               </a>
             </div>

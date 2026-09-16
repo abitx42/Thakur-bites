@@ -777,6 +777,14 @@ class _TicketScreenState extends State<TicketScreen> {
                   ),
                 ],
 
+                const SizedBox(height: 8),
+
+                // Anti-screenshot live dynamic counter verification watermark
+                LiveDynamicVerificationBadge(
+                  orderId: order.id,
+                  tokenNumber: order.tokenNumber,
+                ),
+
                 if (order.isOnlyReadyMade) ...[
                   const SizedBox(height: 10),
                   Container(

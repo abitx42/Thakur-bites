@@ -178,7 +178,7 @@ function initStaffWorkstation() {
             <span style="background: #F0FDF4; border: 1.5px solid #86EFAC; color: #166534; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 800; padding: 5px 10px; border-radius: 8px; display: inline-flex; align-items: center; gap: 5px;">
               🛡️ SENTINEL ACTIVE
             </span>
-            <a href="tv.html" target="_blank" style="text-decoration: none; background: #09090B; color: #FFF; border: 1.5px solid #27272A; padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+            <a href="tv.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none; background: #09090B; color: #FFF; border: 1.5px solid #27272A; padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
               📺 Token TV
             </a>
             ${isElevatedRole ? `

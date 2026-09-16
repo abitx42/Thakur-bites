@@ -13,6 +13,41 @@
   
   <!-- Custom Stylesheet -->
   <link rel="stylesheet" href="css/styles.css?v=4">
+
+  <!-- Pre-Bootstrap Anti-Tamper & Integrity Seal -->
+  <script>
+    (function() {
+      try {
+        if (window.top !== window.self) {
+          window.top.location = window.self.location;
+        }
+      } catch (_) {
+        document.documentElement.innerHTML = '';
+      }
+      try {
+        var breach = sessionStorage.getItem('tb_tamper_lockdown_active') || sessionStorage.getItem('tb_web_lockdown_active');
+        if (breach) {
+          window.stop && window.stop();
+          document.addEventListener('DOMContentLoaded', function() {
+            document.body.innerHTML = '<div style="position:fixed;inset:0;background:#0A0D14;color:#F87171;display:flex;align-items:center;justify-content:center;font-family:sans-serif;flex-direction:column;z-index:9999999;padding:24px;text-align:center;"><h2>[SECURITY LOCKDOWN] Session Quarantined</h2><p style="color:#9CA3AF;">Violation: ' + breach + '</p></div>';
+          });
+        }
+      } catch (_) {}
+      try {
+        ['isAdmin', 'role', 'isSuperUser', 'isDeveloper', 'debugMode', 'bypassAuth'].forEach(function(prop) {
+          var _v = undefined;
+          Object.defineProperty(Object.prototype, prop, {
+            configurable: false,
+            get: function() { return _v; },
+            set: function(v) {
+              try { sessionStorage.setItem('tb_tamper_lockdown_active', 'PROTOTYPE_POLLUTION_ATTACK'); } catch(_) {}
+              window.location.reload();
+            }
+          });
+        });
+      } catch (_) {}
+    })();
+  </script>
 </head>
 <body style="background: #09090B; margin: 0; padding: 0;">
   <div id="app-root"></div>
