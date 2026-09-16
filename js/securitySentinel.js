@@ -12,12 +12,15 @@ export function triggerTamperLockdown(reason, details = {}) {
 
   console.error(`[SECURITY TAMPER LOCKDOWN] Violation: ${reason}`, details);
 
-  // 1. Evict sensitive session markers and tokens
+  // 1. Evict sensitive session markers and tokens, and scrub in-memory references
   try {
     sessionStorage.setItem('tb_tamper_lockdown_active', reason);
     localStorage.removeItem('tb_staff_token');
     localStorage.removeItem('tb_privileged_session');
     localStorage.removeItem('tb_registered_workstation_token');
+    // Wipe sensitive runtime memory references
+    if (window.__TB_CURRENT_ORDERS__) window.__TB_CURRENT_ORDERS__ = [];
+    if (window.__TB_ACTIVE_TICKETS__) window.__TB_ACTIVE_TICKETS__ = [];
   } catch (_) {}
 
   // 2. Dispatch security telemetry breach report to backend
@@ -154,10 +157,16 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
     }
   } catch (_) {}
 
-  // 1. Anti-Clickjacking Framebusting Guard (RFC 7034 / OWASP A05)
+  // 1. Anti-Clickjacking Framebusting Guard (RFC 7034 / OWASP A05 — Fail-Closed)
   try {
     if (window.top !== window.self) {
-      window.top.location = window.self.location;
+      try {
+        window.top.location = window.self.location;
+      } catch (_) {
+        // If cross-origin framing blocks top redirection, fail-closed by blanking DOM
+        document.documentElement.innerHTML = '<div style="background:#0A0D14;color:#FFF;padding:60px;text-align:center;font-family:sans-serif;"><h2>Security Violation: Framing Prohibited</h2></div>';
+        throw new Error('Framing prohibited');
+      }
     }
   } catch (_) {}
 
@@ -214,6 +223,29 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
       });
     } catch (_) {}
   });
+
+  // 3.1 Client-Side Prototype Pollution Defense (OWASP A03 / Client-Side Pollution)
+  try {
+    const PROTOTYPE_CANARIES = ['isAdmin', 'role', 'isSuperUser', 'isDeveloper', 'debugMode', 'bypassAuth'];
+    PROTOTYPE_CANARIES.forEach((prop) => {
+      let protoVal = undefined;
+      Object.defineProperty(Object.prototype, prop, {
+        configurable: false,
+        get: () => protoVal,
+        set: (v) => {
+          console.error(`[PROTOTYPE_POLLUTION_ATTACK] Tamper on Object.prototype.${prop} =`, v);
+          protoVal = v;
+          triggerTamperLockdown('PROTOTYPE_POLLUTION_ATTACK', {
+            violationType: 'CLIENT_DOM_TAMPERING',
+            property: prop,
+            value: String(v).slice(0, 32),
+          });
+        },
+      });
+    });
+  } catch (err) {
+    console.warn('[Sentinel] Prototype defense init notice:', err);
+  }
 
   // 4. Keyboard Shortcut Interceptor for Workstations & Kiosks
   if (options.blockShortcuts) {

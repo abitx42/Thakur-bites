@@ -559,7 +559,7 @@ export function renderAdminView(container, options = {}) {
                     <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 1rem; border-top: 1.5px solid var(--border-light); margin-top: 1rem;">
                       <button 
                         class="btn ${isAvailable ? 'btn--outline-success' : 'btn--outline-danger'} btn--sm btn--pill toggle-cooked-btn" 
-                        data-item-id="${item.id}" 
+                        data-item-id="${escapeHtml(item.id)}" 
                         data-available="${isAvailable}"
                       >
                         <span>${isAvailable ? '✓' : '✕'}</span>
@@ -568,7 +568,7 @@ export function renderAdminView(container, options = {}) {
 
                       <button 
                         class="btn btn--secondary btn--sm edit-item-btn" 
-                        data-item-id="${item.id}"
+                        data-item-id="${escapeHtml(item.id)}"
                       >
                         ✏️ Edit
                       </button>
@@ -662,7 +662,7 @@ export function renderAdminView(container, options = {}) {
                           <!-- Minus Button -->
                           <button 
                             class="stock-step-btn minus-stock-btn" 
-                            data-item-id="${item.id}" 
+                            data-item-id="${escapeHtml(item.id)}" 
                             data-current-stock="${stock}"
                             style="width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
                           >
@@ -673,7 +673,7 @@ export function renderAdminView(container, options = {}) {
                           <input 
                             type="number" 
                             class="stock-count-input" 
-                            data-item-id="${item.id}" 
+                            data-item-id="${escapeHtml(item.id)}" 
                             value="${stock}" 
                             min="0"
                             style="width: 55px; padding: 4px; border-radius: 6px; border: 1.5px solid ${isInStock ? 'var(--border-light)' : '#EF4444'}; font-family: var(--font-mono); font-size: 1.05rem; font-weight: 800; text-align: center; color: ${isInStock ? 'var(--ink-primary)' : '#DC2626'};"
@@ -682,7 +682,7 @@ export function renderAdminView(container, options = {}) {
                           <!-- Plus Button -->
                           <button 
                             class="stock-step-btn plus-stock-btn" 
-                            data-item-id="${item.id}" 
+                            data-item-id="${escapeHtml(item.id)}" 
                             data-current-stock="${stock}"
                             style="width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
                           >
@@ -697,7 +697,7 @@ export function renderAdminView(container, options = {}) {
                           ${[5, 10, 25].map(add => `
                             <button 
                               class="btn btn--secondary btn--sm quick-restock-btn" 
-                              data-item-id="${item.id}" 
+                              data-item-id="${escapeHtml(item.id)}" 
                               data-current-stock="${stock}" 
                               data-add="${add}"
                             >
@@ -708,7 +708,7 @@ export function renderAdminView(container, options = {}) {
                           ${isInStock ? `
                             <button 
                               class="btn btn--outline-danger btn--sm mark-soldout-btn" 
-                              data-item-id="${item.id}" 
+                              data-item-id="${escapeHtml(item.id)}" 
                               title="Set quantity to 0 and mark sold out"
                             >
                               ✕ Sold Out
@@ -716,7 +716,7 @@ export function renderAdminView(container, options = {}) {
                           ` : `
                             <button 
                               class="btn btn--outline-success btn--sm quick-restock-btn" 
-                              data-item-id="${item.id}" 
+                              data-item-id="${escapeHtml(item.id)}" 
                               data-current-stock="0" 
                               data-add="10" 
                               title="Restock 10 units"
@@ -728,7 +728,7 @@ export function renderAdminView(container, options = {}) {
 
                         <button 
                           class="btn btn--secondary btn--sm edit-item-btn" 
-                          data-item-id="${item.id}"
+                          data-item-id="${escapeHtml(item.id)}"
                         >
                           ✏️ Edit
                         </button>

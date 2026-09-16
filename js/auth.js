@@ -211,6 +211,7 @@ export const staffAuth = {
       localStorage.removeItem('tb_staff_authenticated');
       localStorage.removeItem('tb_staff_role');
       localStorage.removeItem('tb_staff_email');
+      localStorage.removeItem('tb_privileged_session');
     } catch (_) {}
     await staffLogout().catch(() => {});
     currentStaffState = { user: null, role: null, isAuthenticated: false, deviceId: getOrCreateDeviceId() };

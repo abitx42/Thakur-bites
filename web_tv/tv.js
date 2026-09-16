@@ -18,7 +18,11 @@ const firebaseConfig = {
 // ─── Kiosk Security Sentinel & Anti-Tamper Perimeter ─────────────────────────
 try {
   if (window.top !== window.self) {
-    window.top.location = window.self.location;
+    try {
+      window.top.location = window.self.location;
+    } catch (_) {
+      document.documentElement.innerHTML = '<div style="background:#000;color:#FFF;padding:40px;text-align:center;font-family:sans-serif;"><h3>Framing Prohibited</h3></div>';
+    }
   }
 } catch (_) {}
 

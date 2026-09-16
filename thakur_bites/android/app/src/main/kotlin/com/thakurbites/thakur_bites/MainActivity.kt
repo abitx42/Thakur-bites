@@ -115,7 +115,11 @@ class MainActivity : FlutterActivity() {
             "/data/local/su",
             "/sbin/.magisk",
             "/data/adb/magisk",
-            "/data/adb/ksu"
+            "/data/adb/ksu",
+            "/data/adb/modules",
+            "/system/bin/.ext/.su",
+            "/system/xbin/daemonsu",
+            "/dev/com.koushikdutta.superuser.daemon/"
         )
         for (path in paths) {
             if (File(path).exists()) return true
@@ -175,15 +179,37 @@ class MainActivity : FlutterActivity() {
             if (File(p).exists()) return true
         }
 
-        // 3. Socket connectivity probe to default Frida server port 27042
+        // 3. Socket connectivity probe to default Frida server ports 27042 and 27043
+        for (port in arrayOf(27042, 27043)) {
+            try {
+                val socket = java.net.Socket()
+                socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 150)
+                socket.close()
+                return true
+            } catch (_: Exception) {}
+        }
+
+        // 4. Kernel socket table inspection (/proc/net/tcp and /proc/net/tcp6 for 0x69A2 / 0x69A3)
         try {
-            val socket = java.net.Socket()
-            socket.connect(java.net.InetSocketAddress("127.0.0.1", 27042), 150)
-            socket.close()
-            return true
+            for (procPath in arrayOf("/proc/net/tcp", "/proc/net/tcp6")) {
+                val tcpFile = File(procPath)
+                if (tcpFile.exists()) {
+                    tcpFile.bufferedReader().useLines { lines ->
+                        for (line in lines) {
+                            val parts = line.trim().split("\\s+".toRegex())
+                            if (parts.size >= 2) {
+                                val localAddress = parts[1]
+                                if (localAddress.endsWith(":69A2") || localAddress.endsWith(":69A3")) {
+                                    return true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } catch (_: Exception) {}
 
-        // 4. Frida dynamic thread inspection
+        // 5. Frida dynamic thread inspection
         try {
             val taskDir = File("/proc/self/task")
             if (taskDir.exists() && taskDir.isDirectory) {

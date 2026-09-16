@@ -12,10 +12,36 @@ initSecuritySentinel({ blockShortcuts: true, portalName: 'Staff Workstation' });
 let currentStaffWorkstationView = 'kitchen'; // 'kitchen' | 'pickup' | 'cashier' | 'menu'
 let currentDailyBoardState = null;
 let isBoardSubscribed = false;
+let isWorkstationLocked = false;
+let lastActivityTime = Date.now();
+const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes of idle inactivity
+
+function recordActivity() {
+  lastActivityTime = Date.now();
+}
+
+['mousemove', 'mousedown', 'keydown', 'touchstart', 'pointerdown', 'scroll'].forEach((evt) => {
+  window.addEventListener(evt, recordActivity, { passive: true });
+});
 
 function initStaffWorkstation() {
   const root = document.getElementById('app-root');
   if (!root) return;
+
+  // Background Inactivity Sentinel Check
+  setInterval(() => {
+    if (staffAuth.isAuthenticated() && !isWorkstationLocked) {
+      if (Date.now() - lastActivityTime >= INACTIVITY_TIMEOUT_MS) {
+        lockWorkstation('Workstation auto-locked due to 10 minutes of inactivity.');
+      }
+    }
+  }, 15000);
+
+  function lockWorkstation(reason = 'Workstation locked for counter security.') {
+    isWorkstationLocked = true;
+    cleanupCurrentStation();
+    render();
+  }
 
   if (!isBoardSubscribed) {
     isBoardSubscribed = true;
@@ -45,9 +71,12 @@ function initStaffWorkstation() {
   }
 
   function render() {
-    // If not authenticated, render the Shift PIN / staff login modal
-    if (!staffAuth.isAuthenticated()) {
+    // If not authenticated or workstation is idle/locked, render Shift PIN keypad
+    if (!staffAuth.isAuthenticated() || isWorkstationLocked) {
+      cleanupCurrentStation();
       renderPinPadModal(root, () => {
+        isWorkstationLocked = false;
+        lastActivityTime = Date.now();
         render();
       });
       return;
@@ -146,6 +175,9 @@ function initStaffWorkstation() {
 
           <!-- Quick Portal Actions -->
           <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="background: #F0FDF4; border: 1.5px solid #86EFAC; color: #166534; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 800; padding: 5px 10px; border-radius: 8px; display: inline-flex; align-items: center; gap: 5px;">
+              🛡️ SENTINEL ACTIVE
+            </span>
             <a href="tv.html" target="_blank" style="text-decoration: none; background: #09090B; color: #FFF; border: 1.5px solid #27272A; padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
               📺 Token TV
             </a>
@@ -154,8 +186,11 @@ function initStaffWorkstation() {
                 📋 Admin Portal
               </a>
             ` : ''}
+            <button id="lock-station-btn" style="background: #FFFBEB; border: 1.5px solid #F59E0B; color: #92400E; padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
+              🔒 Lock Station
+            </button>
             <button id="signout-station-btn" style="background: transparent; border: 1.5px solid var(--border-light); padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--ink-secondary);">
-              🔒 Sign Out
+              Sign Out
             </button>
           </div>
         </div>
@@ -238,8 +273,13 @@ function initStaffWorkstation() {
       });
     });
 
+    root.querySelector('#lock-station-btn')?.addEventListener('click', () => {
+      lockWorkstation('Workstation manually locked by operator.');
+    });
+
     root.querySelector('#signout-station-btn')?.addEventListener('click', async () => {
       cleanupCurrentStation();
+      currentDailyBoardState = null;
       await staffAuth.logout();
       render();
     });

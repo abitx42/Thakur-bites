@@ -181,7 +181,7 @@ export function renderCashierView(container) {
                 return `
                   <div 
                     class="cash-order-card ${isSelected ? 'selected' : ''}" 
-                    data-order-id="${order.id || order.orderId}"
+                    data-order-id="${escapeHtml(order.id || order.orderId)}"
                     style="padding: 12px 16px; border-radius: 12px; border: 2px solid ${isSelected ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${isSelected ? '#FEF2F2' : '#FFF'}; cursor: pointer; transition: all 0.15s ease;"
                   >
                     <div style="display: flex; justify-content: space-between; align-items: center;">

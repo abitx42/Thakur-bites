@@ -14,7 +14,7 @@ import '../services/eta_service.dart';
 import '../theme/app_theme.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:qr_flutter/qr_flutter.dart';
+import '../widgets/live_security_qr_badge.dart';
 import 'cart_screen.dart';
 import 'ticket_screen.dart';
 
@@ -1009,33 +1009,12 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
           ),
           const SizedBox(height: 14),
 
-          // Dynamic Hardware Scannable QR Code
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: AppRadius.radiusMd,
-              border: Border.all(color: AppColors.green.withAlpha(100), width: 1.5),
-            ),
-            child: QrImageView(
-              data: 'TB:${order.id}:${order.tokenNumber}:$effectivePin',
-              version: QrVersions.auto,
-              size: 130,
-              backgroundColor: Colors.white,
-              eyeStyle: const QrEyeStyle(
-                eyeShape: QrEyeShape.square,
-                color: Colors.black,
-              ),
-              dataModuleStyle: const QrDataModuleStyle(
-                dataModuleShape: QrDataModuleShape.square,
-                color: Colors.black,
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Scan QR code at counter scanner or read PIN',
-            style: AppFonts.body(fontSize: 11, color: AppColors.greenInk),
+          // Dynamic Hardware Scannable QR Code with Live Pulsing Security Watermark
+          LiveSecurityQrBadge(
+            qrData: 'TB:${order.id}:${order.tokenNumber}:$effectivePin',
+            isReady: true,
+            size: 130,
+            tokenNumber: order.tokenNumber,
           ),
           const SizedBox(height: 12),
 
