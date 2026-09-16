@@ -6,6 +6,16 @@ import { initSecuritySentinel } from './securitySentinel.js?v=2';
 
 initSecuritySentinel({ blockShortcuts: true, portalName: 'Developer Command Cockpit' });
 
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function initDeveloperCockpit() {
   const root = document.getElementById('app-root');
   if (!root) return;
@@ -31,7 +41,7 @@ function initDeveloperCockpit() {
             ENGINEERING COCKPIT LOCKED
           </h2>
           <p style="font-family: var(--font-sans); color: #A1A1AA; font-size: 0.95rem; line-height: 1.5; margin-bottom: 1.5rem;">
-            Your account has role <code style="background: #27272A; color: #EF4444; padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); font-weight: 700;">${currentRole}</code>. Developer telemetry, system kill switches, and cryptographic diagnostics require <strong>Developer</strong> or <strong>Security Administrator</strong> clearance.
+            Your account has role <code style="background: #27272A; color: #EF4444; padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); font-weight: 700;">${escapeHtml(currentRole)}</code>. Developer telemetry, system kill switches, and cryptographic diagnostics require <strong>Developer</strong> or <strong>Security Administrator</strong> clearance.
           </p>
           <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
             <a href="staff.html" style="padding: 10px 18px; border-radius: 8px; background: var(--brand-red); color: #FFF; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; text-decoration: none;">
@@ -84,7 +94,7 @@ function initDeveloperCockpit() {
                 <span style="display: inline-block; width: 7px; height: 7px; background: #22C55E; border-radius: 50%;"></span>
                 SENTINEL TELEMETRY · PRODUCTION RUNTIME
                 <span style="background: #27272A; color: #CBD5E1; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; text-transform: uppercase;">
-                  CLEARANCE: ${currentRole}
+                  CLEARANCE: ${escapeHtml(currentRole)}
                 </span>
                 ${privSession && privTimeLeftStr ? `
                   <span style="background: #064E3B; color: #34D399; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 800; border: 1px solid #059669;">

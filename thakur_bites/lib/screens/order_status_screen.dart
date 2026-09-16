@@ -1085,14 +1085,19 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    effectivePin.isEmpty ? '••••' : effectivePin,
-                    style: AppFonts.mono(
-                      fontSize: 34,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 8,
-                      color: AppColors.greenInk,
+                  Semantics(
+                    obscured: true,
+                    label: 'Campus Pickup PIN',
+                    child: ExcludeSemantics(
+                      child: Text(
+                        effectivePin.isEmpty ? '••••' : effectivePin,
+                        style: AppFonts.mono(
+                          fontSize: 34,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 8,
+                          color: AppColors.greenInk,
+                        ),
+                      ),
                     ),
                   ),
                 ],

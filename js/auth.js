@@ -13,7 +13,13 @@ try {
 export function getOrCreateDeviceId() {
   let deviceId = localStorage.getItem('tb_workstation_device_id');
   if (!deviceId) {
-    deviceId = 'tb_ws_' + Math.random().toString(16).substring(2, 10) + Math.random().toString(16).substring(2, 6);
+    try {
+      const bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      deviceId = 'tb_ws_' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (_) {
+      deviceId = 'tb_ws_' + Math.random().toString(16).substring(2, 10) + Date.now().toString(16);
+    }
     localStorage.setItem('tb_workstation_device_id', deviceId);
   }
   return deviceId;

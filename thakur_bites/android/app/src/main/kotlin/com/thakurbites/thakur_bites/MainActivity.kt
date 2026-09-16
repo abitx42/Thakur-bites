@@ -29,6 +29,13 @@ class MainActivity : FlutterActivity() {
             window.decorView.filterTouchesWhenObscured = true
         } catch (_: Exception) {}
 
+        // Android 12+ (API 31+) Overlay Window Concealment (Hides all non-system overlay windows)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                window.setHideOverlayWindows(true)
+            } catch (_: Exception) {}
+        }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getDeviceSecurityPosture" -> {

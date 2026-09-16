@@ -28,36 +28,40 @@ export function triggerTamperLockdown(reason, details = {}) {
     if (window.__TB_ACTIVE_TICKETS__) window.__TB_ACTIVE_TICKETS__ = [];
   } catch (_) {}
 
-  // 2. Dispatch security telemetry breach report to backend
+  // 2. Dispatch security telemetry breach report to backend (deduplicated per session)
   try {
-    const deviceId = getOrCreateDeviceId();
-    const payload = {
-      data: {
-        violationType: details.violationType || 'CLIENT_DOM_TAMPERING',
-        deviceId: deviceId,
-        details: {
-          reason: reason,
-          url: window.location.href,
-          userAgent: navigator.userAgent,
-          timestamp: new Date().toISOString(),
-          ...details,
+    const hasAlreadyReported = sessionStorage.getItem('tb_lockdown_telemetry_sent') === 'true';
+    if (!hasAlreadyReported) {
+      sessionStorage.setItem('tb_lockdown_telemetry_sent', 'true');
+      const deviceId = getOrCreateDeviceId();
+      const payload = {
+        data: {
+          violationType: details.violationType || 'CLIENT_DOM_TAMPERING',
+          deviceId: deviceId,
+          details: {
+            reason: reason,
+            url: window.location.href,
+            userAgent: navigator.userAgent,
+            timestamp: new Date().toISOString(),
+            ...details,
+          },
         },
-      },
-    };
+      };
 
-    const endpoint = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-      ? '/reportSecurityViolation'
-      : 'https://us-central1-adi-thakur-bite.cloudfunctions.net/reportSecurityViolation';
+      const endpoint = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        ? '/reportSecurityViolation'
+        : 'https://us-central1-adi-thakur-bite.cloudfunctions.net/reportSecurityViolation';
 
-    if (_nativeSendBeacon) {
-      _nativeSendBeacon(endpoint, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
-    } else if (_nativeFetch) {
-      _nativeFetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        keepalive: true,
-      }).catch(() => {});
+      if (_nativeSendBeacon) {
+        _nativeSendBeacon(endpoint, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+      } else if (_nativeFetch) {
+        _nativeFetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          keepalive: true,
+        }).catch(() => {});
+      }
     }
   } catch (err) {
     console.warn('[Sentinel] Failed to dispatch breach report:', err);

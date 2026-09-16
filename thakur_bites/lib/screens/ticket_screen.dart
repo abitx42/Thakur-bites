@@ -714,12 +714,18 @@ class _TicketScreenState extends State<TicketScreen> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            'PICKUP PIN: ${resolvedPin.isEmpty ? "••••" : resolvedPin}',
-                            style: AppFonts.mono(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.ink,
+                          Semantics(
+                            obscured: true,
+                            label: 'Campus Pickup PIN',
+                            child: ExcludeSemantics(
+                              child: Text(
+                                'PICKUP PIN: ${resolvedPin.isEmpty ? "••••" : resolvedPin}',
+                                style: AppFonts.mono(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.ink,
+                                ),
+                              ),
                             ),
                           ),
                           if (resolvedPin.isNotEmpty) ...[
