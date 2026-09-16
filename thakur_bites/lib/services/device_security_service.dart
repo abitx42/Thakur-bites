@@ -21,6 +21,9 @@ class DeviceSecurityService extends ChangeNotifier {
   bool _isDevOptionsEnabled = false;
   bool _isAdbEnabled = false;
   bool _isRooted = false;
+  bool _isHooked = false;
+  bool _isDebuggerAttached = false;
+  bool _isEmulator = false;
   String _signatureHash = '';
   String _deviceId = '';
   bool _hasReportedViolation = false;
@@ -29,6 +32,9 @@ class DeviceSecurityService extends ChangeNotifier {
   bool get isDevOptionsEnabled => _isDevOptionsEnabled;
   bool get isAdbEnabled => _isAdbEnabled;
   bool get isRooted => _isRooted;
+  bool get isHooked => _isHooked;
+  bool get isDebuggerAttached => _isDebuggerAttached;
+  bool get isEmulator => _isEmulator;
   String get signatureHash => _signatureHash;
   String get deviceId => _deviceId;
 
@@ -39,10 +45,10 @@ class DeviceSecurityService extends ChangeNotifier {
     return _isDevOptionsEnabled || _isAdbEnabled;
   }
 
-  /// Critical tampering (root exploit detected or unauthorized APK repackaging)
+  /// Critical tampering (root exploit detected, Frida dynamic hooking, or debugger attachment)
   bool get isCriticalTamperDetected {
     if (kDebugMode || kIsWeb) return false;
-    return _isRooted;
+    return _isRooted || _isHooked || _isDebuggerAttached;
   }
 
   /// Evaluates device security posture against native sentinel
@@ -59,18 +65,27 @@ class DeviceSecurityService extends ChangeNotifier {
         _isDevOptionsEnabled = result['isDevOptionsEnabled'] == true;
         _isAdbEnabled = result['isAdbEnabled'] == true;
         _isRooted = result['isRooted'] == true;
+        _isHooked = result['isHooked'] == true;
+        _isDebuggerAttached = result['isDebuggerAttached'] == true;
+        _isEmulator = result['isEmulator'] == true;
         _signatureHash = result['signatureHash']?.toString() ?? '';
         _deviceId = result['deviceId']?.toString() ?? '';
 
-        debugPrint('[SecuritySentinel] Posture evaluated: devOptions=$_isDevOptionsEnabled, adb=$_isAdbEnabled, root=$_isRooted, deviceId=$_deviceId');
+        debugPrint('[SecuritySentinel] Posture evaluated: devOptions=$_isDevOptionsEnabled, adb=$_isAdbEnabled, root=$_isRooted, hooked=$_isHooked, debugger=$_isDebuggerAttached, emulator=$_isEmulator, deviceId=$_deviceId');
 
         // Automatically report critical tampering once per session
         if (!_hasReportedViolation && isCriticalTamperDetected) {
           _hasReportedViolation = true;
+          final violationType = _isHooked
+              ? 'FRIDA_HOOK_DETECTED'
+              : (_isDebuggerAttached ? 'DEBUGGER_ATTACHED' : 'ROOT_DETECTED');
           await reportSecurityViolation(
-            violationType: 'ROOT_DETECTED',
+            violationType: violationType,
             details: {
               'isRooted': _isRooted,
+              'isHooked': _isHooked,
+              'isDebuggerAttached': _isDebuggerAttached,
+              'isEmulator': _isEmulator,
               'signatureHash': _signatureHash,
               'deviceId': _deviceId,
             },

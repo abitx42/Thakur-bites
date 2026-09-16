@@ -362,7 +362,7 @@ service cloud.firestore {
         && (!('department' in request.resource.data) || (request.resource.data.department is string && request.resource.data.department.size() <= 50))
         && (!('designation' in request.resource.data) || (request.resource.data.designation is string && request.resource.data.designation.size() <= 50))
         && request.resource.data.keys().hasOnly(['applicationId', 'userId', 'applicationType', 'employeeId', 'department', 'designation', 'officialEmail', 'claimedEmployeeId', 'claimedDepartment', 'claimedDesignation', 'claimedOfficialEmail', 'idProofStoragePath', 'status', 'submittedAt']);
-      allow update, delete: if isManagerOrAdmin();
+      allow update, delete: if false; // Server Cloud Function reviewVerificationApplication ONLY
     }
 
 

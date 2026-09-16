@@ -68,16 +68,136 @@
       );
     } catch (_) {}
 
-    // 3. Client Canary Honeypot Traps
+    // 3. Universal Web Anti-Tamper & Mod-Lockdown Guard
+    var isWebLockdownActive = false;
+    function triggerWebTamperLockdown(reason, details) {
+      if (isWebLockdownActive) return;
+      isWebLockdownActive = true;
+      details = details || {};
+
+      console.error('[SECURITY TAMPER LOCKDOWN] Violation: ' + reason, details);
+
+      try {
+        sessionStorage.setItem('tb_web_lockdown_active', reason);
+        localStorage.removeItem('flutter.authToken');
+        localStorage.removeItem('flutter.userData');
+      } catch (_) {}
+
+      // Telemetry report
+      try {
+        var payload = {
+          data: {
+            violationType: details.violationType || 'CLIENT_DOM_TAMPERING',
+            deviceId: 'web_' + (navigator.userAgent || '').slice(0, 32),
+            details: {
+              reason: reason,
+              url: window.location.href,
+              userAgent: navigator.userAgent,
+              timestamp: new Date().toISOString()
+            }
+          }
+        };
+        var endpoint = 'https://us-central1-adi-thakur-bite.cloudfunctions.net/reportSecurityViolation';
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(endpoint, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+        } else {
+          fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            keepalive: true
+          }).catch(function () {});
+        }
+      } catch (_) {}
+
+      // Render Full-Screen Lockdown Overlay
+      var overlay = document.getElementById('tb-web-lockdown-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'tb-web-lockdown-overlay';
+        overlay.setAttribute('style',
+          'position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
+          'background:#0A0D14!important;color:#F3F4F6!important;z-index:2147483647!important;' +
+          'display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;' +
+          'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif!important;padding:24px!important;box-sizing:border-box!important;text-align:center!important;'
+        );
+        overlay.innerHTML =
+          '<div style="max-width:480px;width:100%;background:#111827;border:1px solid #DC2626;border-radius:16px;padding:32px 24px;box-shadow:0 25px 50px -12px rgba(220,38,38,0.3);text-align:center;">' +
+            '<div style="width:64px;height:64px;background:rgba(220,38,38,0.15);border:2px solid #EF4444;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">' +
+              '<span style="font-size:32px;">🛡️</span>' +
+            '</div>' +
+            '<div style="font-size:11px;font-weight:800;letter-spacing:1.5px;color:#EF4444;text-transform:uppercase;margin-bottom:6px;">SECURITY INTEGRITY LOCKDOWN</div>' +
+            '<h1 style="font-size:20px;font-weight:800;color:#FFF;margin:0 0 10px 0;">Tampering or Mod Detected</h1>' +
+            '<p style="font-size:13px;line-height:1.6;color:#9CA3AF;margin:0 0 20px 0;">Client-side tampering or unauthorized script execution was detected. Ordering on this device has been restricted for this session.</p>' +
+            '<div style="background:#1F2937;border-radius:8px;padding:12px 14px;text-align:left;font-family:monospace;font-size:12px;margin-bottom:20px;border:1px solid #374151;">' +
+              '<div style="color:#9CA3AF;margin-bottom:4px;">VIOLATION: <span style="color:#F87171;font-weight:bold;">' + reason + '</span></div>' +
+              '<div style="color:#9CA3AF;">STATUS: <span style="color:#34D399;font-weight:bold;">BREACH LOGGED TO DEVELOPER</span></div>' +
+            '</div>' +
+            '<div style="font-size:12px;color:#6B7280;">If you believe this is an error, please contact Thakur Bites Canteen support.</div>' +
+          '</div>';
+        document.body.appendChild(overlay);
+      }
+    }
+
+    // 4. Client Canary Honeypot Traps (Triggers lockdown on write)
     ['debugMode', 'bypassAuth', 'bypassPayment', 'overridePrice', 'forceRole', 'adminKey', '__DEBUG__'].forEach(function(key) {
       try {
         Object.defineProperty(window, key, {
-          configurable: true,
+          configurable: false,
           get: function() { console.warn('[CANARY_TRAP] Unauthorized property read probe on window.' + key); return undefined; },
-          set: function(val) { console.warn('[CANARY_TRAP] Unauthorized property write attack on window.' + key); }
+          set: function(val) {
+            console.error('[CANARY_TRAP] Tamper write on window.' + key + ' =', val);
+            triggerWebTamperLockdown('CANARY_TRIPWIRE_TRIGGERED', { violationType: 'CANARY_TRIPWIRE_TRIGGERED', key: key });
+          }
         });
       } catch (_) {}
     });
+
+    // 5. Native Function Hook Detection
+    setInterval(function() {
+      try {
+        var toStr = Function.prototype.toString;
+        if (window.fetch && !toStr.call(window.fetch).includes('[native code]')) {
+          triggerWebTamperLockdown('CLIENT_CODE_TAMPERED', { target: 'fetch' });
+        }
+        if (window.XMLHttpRequest && !toStr.call(XMLHttpRequest.prototype.open).includes('[native code]')) {
+          triggerWebTamperLockdown('CLIENT_CODE_TAMPERED', { target: 'XMLHttpRequest.open' });
+        }
+      } catch (_) {}
+    }, 2500);
+
+    // 6. DOM Mutation Observer for Untrusted Script/Iframe Injection
+    try {
+      var isTrusted = function(src) {
+        if (!src) return true;
+        try {
+          var u = new URL(src, window.location.href);
+          if (u.origin === window.location.origin) return true;
+          var h = u.hostname.toLowerCase();
+          return h.endsWith('.gstatic.com') || h.endsWith('.googleapis.com') || h.endsWith('.google.com') ||
+                 h.endsWith('.razorpay.com') || h.endsWith('.jsdelivr.net') || u.protocol === 'blob:';
+        } catch (_) { return false; }
+      };
+
+      var domObs = new MutationObserver(function(mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+          var added = mutations[i].addedNodes;
+          for (var j = 0; j < added.length; j++) {
+            var n = added[j];
+            if (n.nodeType !== 1) continue;
+            var t = (n.tagName || '').toUpperCase();
+            if (t === 'SCRIPT' || t === 'IFRAME') {
+              var s = n.src || '';
+              if (s && !isTrusted(s)) {
+                triggerWebTamperLockdown('CLIENT_DOM_TAMPERING', { tag: t, src: s.slice(0, 100) });
+                return;
+              }
+            }
+          }
+        }
+      });
+      domObs.observe(document.documentElement, { childList: true, subtree: true });
+    } catch (_) {}
   </script>
 
   <!-- Razorpay Official Checkout SDK & Web Bridge -->

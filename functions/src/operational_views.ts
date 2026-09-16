@@ -37,7 +37,6 @@ export interface PickupOrderView {
   readyMadePreference?: string;
   failedPinAttempts?: number;
   isLockedForInvestigation?: boolean;
-  pinCode?: string;
   items: Array<{
     name: string;
     quantity: number;
@@ -181,7 +180,6 @@ export const getPickupOrders = onCall<void, Promise<PickupOrderView[]>>(async (r
       readyMadePreference: data.readyMadePreference || (isOnlyReadyMade ? 'Chilled ❄️ · Direct Handover ✋' : undefined),
       failedPinAttempts: typeof data.failedPinAttempts === 'number' ? data.failedPinAttempts : 0,
       isLockedForInvestigation: Boolean(data.isLockedForInvestigation),
-      pinCode: data.pinCode ? String(data.pinCode) : undefined,
       items: (data.items || []).map((it: any) => ({
         name: it.name,
         quantity: it.quantity,

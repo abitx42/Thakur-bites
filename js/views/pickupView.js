@@ -248,12 +248,10 @@ export function renderPickupView(container) {
 
     const filterFn = (order) => {
       if (!cleanSearch) return true;
-      const pin = order.pinCode ? order.pinCode.toString() : '';
-      const pinMatch = cleanSearch.length === 4 ? pin === cleanSearch : pin.startsWith(cleanSearch);
       const tokenMatch = order.tokenNumber && order.tokenNumber.toString().toLowerCase().replace('#', '').includes(cleanSearch);
       const nameMatch = order.studentName && order.studentName.toLowerCase().includes(cleanSearch);
       const rollMatch = order.studentRoll && order.studentRoll.toLowerCase().includes(cleanSearch);
-      return pinMatch || tokenMatch || nameMatch || rollMatch;
+      return tokenMatch || nameMatch || rollMatch;
     };
 
     const displayReady = readyOrders.filter(filterFn);
@@ -646,11 +644,6 @@ function renderOrderCard(order, isReady) {
             <div style="background: ${isReady ? '#DCFCE7' : (order.isOnlyReadyMade ? '#DCFCE7' : '#FEF3C7')}; color: ${isReady ? '#15803D' : (order.isOnlyReadyMade ? '#15803D' : '#B45309')}; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 3px 8px; border-radius: 6px; text-transform: uppercase;">
               ${order.isOnlyReadyMade && !isReady ? 'READY FOR PICKUP' : escapeHtml(order.status)}
             </div>
-            ${order.pinCode ? `
-              <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #2563EB; margin-top: 4px;">
-                PIN: ${escapeHtml(order.pinCode)}
-              </div>
-            ` : ''}
           </div>
         </div>
 

@@ -1,8 +1,158 @@
 // Thakur Bites — Universal Web Security Sentinel & Anti-Tamper Guard
 import { getOrCreateDeviceId } from './auth.js?v=10';
 
+let isLockdownActive = false;
+
+/**
+ * Triggers full-screen lockdown, wipes credentials, and reports breach telemetry to developer.
+ */
+export function triggerTamperLockdown(reason, details = {}) {
+  if (isLockdownActive) return;
+  isLockdownActive = true;
+
+  console.error(`[SECURITY TAMPER LOCKDOWN] Violation: ${reason}`, details);
+
+  // 1. Evict sensitive session markers and tokens
+  try {
+    sessionStorage.setItem('tb_tamper_lockdown_active', reason);
+    localStorage.removeItem('tb_staff_token');
+    localStorage.removeItem('tb_privileged_session');
+    localStorage.removeItem('tb_registered_workstation_token');
+  } catch (_) {}
+
+  // 2. Dispatch security telemetry breach report to backend
+  try {
+    const deviceId = getOrCreateDeviceId();
+    const payload = {
+      data: {
+        violationType: details.violationType || 'CLIENT_DOM_TAMPERING',
+        deviceId: deviceId,
+        details: {
+          reason: reason,
+          url: window.location.href,
+          userAgent: navigator.userAgent,
+          timestamp: new Date().toISOString(),
+          ...details,
+        },
+      },
+    };
+
+    const endpoint = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? '/reportSecurityViolation'
+      : 'https://us-central1-adi-thakur-bite.cloudfunctions.net/reportSecurityViolation';
+
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(endpoint, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+    } else {
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {});
+    }
+  } catch (err) {
+    console.warn('[Sentinel] Failed to dispatch breach report:', err);
+  }
+
+  // 3. Render un-bypassable full-page Lockdown Screen
+  renderLockdownScreen(reason, details);
+}
+
+/**
+ * Renders an un-dismissable, full-screen lockdown screen protecting the campus portal.
+ */
+function renderLockdownScreen(reason, details = {}) {
+  const deviceId = getOrCreateDeviceId();
+  const timestamp = new Date().toLocaleString();
+
+  let lockdownEl = document.getElementById('tb-security-lockdown-overlay');
+  if (!lockdownEl) {
+    lockdownEl = document.createElement('div');
+    lockdownEl.id = 'tb-security-lockdown-overlay';
+  }
+
+  lockdownEl.setAttribute('style', `
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    background: #0A0D14 !important;
+    color: #F3F4F6 !important;
+    z-index: 2147483647 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    padding: 24px !important;
+    box-sizing: border-box !important;
+    text-align: center !important;
+    user-select: none !important;
+    pointer-events: all !important;
+  `);
+
+  lockdownEl.innerHTML = `
+    <div style="max-width: 520px; width: 100%; background: #111827; border: 1px solid #DC2626; border-radius: 16px; padding: 36px 28px; box-shadow: 0 25px 50px -12px rgba(220, 38, 38, 0.35); text-align: center;">
+      <div style="width: 72px; height: 72px; background: rgba(220, 38, 38, 0.15); border: 2px solid #EF4444; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+      </div>
+
+      <div style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px; color: #EF4444; text-transform: uppercase; margin-bottom: 8px;">
+        SECURITY INTEGRITY LOCKDOWN
+      </div>
+
+      <h1 style="font-size: 22px; font-weight: 800; color: #FFFFFF; margin: 0 0 12px 0; letter-spacing: -0.5px;">
+        Tampering or Mod Detected
+      </h1>
+
+      <p style="font-size: 14px; line-height: 1.6; color: #9CA3AF; margin: 0 0 24px 0;">
+        Unauthorized client-side modification, script injection, or native runtime hooking has been detected. To protect campus financial transactions and counter security, this portal has been locked down for this session.
+      </p>
+
+      <div style="background: #1F2937; border-radius: 10px; padding: 14px 18px; text-align: left; font-family: monospace; font-size: 12px; margin-bottom: 24px; border: 1px solid #374151;">
+        <div style="color: #9CA3AF; margin-bottom: 4px;">VIOLATION: <span style="color: #F87171; font-weight: bold;">${reason}</span></div>
+        <div style="color: #9CA3AF; margin-bottom: 4px;">DEVICE ID: <span style="color: #E5E7EB;">${deviceId}</span></div>
+        <div style="color: #9CA3AF; margin-bottom: 4px;">TIMESTAMP: <span style="color: #E5E7EB;">${timestamp}</span></div>
+        <div style="color: #9CA3AF;">STATUS: <span style="color: #34D399; font-weight: bold;">TELEMETRY DELIVERED TO DEVELOPER</span></div>
+      </div>
+
+      <div style="font-size: 13px; color: #6B7280;">
+        If you are an authorized operator encountering this by error, please contact Thakur Bites Canteen Management with your Device ID.
+      </div>
+    </div>
+  `;
+
+  if (!document.body.contains(lockdownEl)) {
+    document.body.appendChild(lockdownEl);
+  }
+
+  // Self-healing guard: re-mount if an attacker tries to remove it from devtools
+  try {
+    const observer = new MutationObserver(() => {
+      if (!document.getElementById('tb-security-lockdown-overlay')) {
+        document.body.appendChild(lockdownEl);
+      }
+    });
+    observer.observe(document.body, { childList: true });
+  } catch (_) {}
+}
+
 export function initSecuritySentinel(options = { blockShortcuts: false, portalName: 'Thakur Bites' }) {
   const portal = options.portalName || 'Thakur Bites';
+
+  // 0. Check if this session was already locked down
+  try {
+    const previousViolation = sessionStorage.getItem('tb_tamper_lockdown_active');
+    if (previousViolation) {
+      triggerTamperLockdown(previousViolation, { violationType: 'CLIENT_DOM_TAMPERING' });
+      return;
+    }
+  } catch (_) {}
 
   // 1. Anti-Clickjacking Framebusting Guard (RFC 7034 / OWASP A05)
   try {
@@ -26,11 +176,10 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
       '• Hardware Telemetry: Client activities are fingerprinted and linked to college audit logs.',
       bannerStyle2
     );
-    console.log(`%c[Sentinel 2.1 — ${portal}] Hardware Device Fingerprint: ` + getOrCreateDeviceId(), bannerStyle3);
+    console.log(`%c[Sentinel 2.2 — ${portal}] Hardware Device Fingerprint: ` + getOrCreateDeviceId(), bannerStyle3);
   } catch (_) {}
 
-  // 3. Client-Side Canary Deception Traps
-  // Attackers or automated LLM agents probing window properties will trip these canary traps.
+  // 3. Client-Side Canary Deception Traps (Triggers lockdown on write)
   const CANARY_TRAP_KEYS = [
     'debugMode',
     'bypassAuth',
@@ -47,21 +196,20 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
     let internalVal = undefined;
     try {
       Object.defineProperty(window, key, {
-        configurable: true,
+        configurable: false,
         enumerable: false,
         get: () => {
           console.warn(`[CANARY_TRAP] Unauthorized property read probe on window.${key}`);
-          try {
-            sessionStorage.setItem('tb_security_canary_tripped', key);
-          } catch (_) {}
           return internalVal;
         },
         set: (val) => {
-          console.warn(`[CANARY_TRAP] Unauthorized property write attack on window.${key} =`, val);
-          try {
-            sessionStorage.setItem('tb_security_canary_tripped', `${key}:${String(val).slice(0, 32)}`);
-          } catch (_) {}
+          console.error(`[CANARY_TRAP] Tamper write on window.${key} =`, val);
           internalVal = val;
+          triggerTamperLockdown('CANARY_TRIPWIRE_TRIGGERED', {
+            violationType: 'CANARY_TRIPWIRE_TRIGGERED',
+            key: key,
+            val: String(val).slice(0, 32),
+          });
         },
       });
     } catch (_) {}
@@ -70,7 +218,6 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
   // 4. Keyboard Shortcut Interceptor for Workstations & Kiosks
   if (options.blockShortcuts) {
     window.addEventListener('keydown', (e) => {
-      // F12
       if (e.key === 'F12' || e.keyCode === 123) {
         e.preventDefault();
         e.stopPropagation();
@@ -80,13 +227,9 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
       const isCtrlOrCmd = e.ctrlKey || e.metaKey;
       const isShift = e.shiftKey;
 
-      // Ctrl+Shift+I / Cmd+Option+I (Inspect Element)
-      // Ctrl+Shift+J / Cmd+Option+J (Console)
-      // Ctrl+Shift+C / Cmd+Option+C (Element Picker)
-      // Ctrl+U / Cmd+Option+U (View Source)
       if (
-        (isCtrlOrCmd && isShift && (e.key === 'I' || e.key === 'i' || e.key === 'J' || e.key === 'j' || e.key === 'C' || e.key === 'c')) ||
-        (isCtrlOrCmd && (e.key === 'U' || e.key === 'u'))
+        (isCtrlOrCmd && isShift && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) ||
+        (isCtrlOrCmd && ['U', 'u'].includes(e.key))
       ) {
         e.preventDefault();
         e.stopPropagation();
@@ -109,5 +252,92 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
 
   window.addEventListener('resize', checkDevTools);
   setInterval(checkDevTools, 3000);
+
+  // 6. Native Function Hook Detection
+  function checkNativeIntegrity() {
+    try {
+      const toStr = Function.prototype.toString;
+      if (window.fetch && !toStr.call(window.fetch).includes('[native code]')) {
+        triggerTamperLockdown('CLIENT_CODE_TAMPERED', {
+          violationType: 'CLIENT_CODE_TAMPERED',
+          target: 'fetch',
+        });
+        return;
+      }
+      if (window.XMLHttpRequest && !toStr.call(XMLHttpRequest.prototype.open).includes('[native code]')) {
+        triggerTamperLockdown('CLIENT_CODE_TAMPERED', {
+          violationType: 'CLIENT_CODE_TAMPERED',
+          target: 'XMLHttpRequest.open',
+        });
+        return;
+      }
+      if (window.XMLHttpRequest && !toStr.call(XMLHttpRequest.prototype.send).includes('[native code]')) {
+        triggerTamperLockdown('CLIENT_CODE_TAMPERED', {
+          violationType: 'CLIENT_CODE_TAMPERED',
+          target: 'XMLHttpRequest.send',
+        });
+        return;
+      }
+    } catch (_) {}
+  }
+
+  checkNativeIntegrity();
+  setInterval(checkNativeIntegrity, 2500);
+
+  // 7. Active DOM Mutation Observer for Script/Iframe Injection
+  function initDomIntegrityObserver() {
+    const isTrustedSource = (src) => {
+      if (!src) return true;
+      try {
+        const url = new URL(src, window.location.href);
+        if (url.origin === window.location.origin) return true;
+        const host = url.hostname.toLowerCase();
+        if (
+          host.endsWith('.gstatic.com') ||
+          host.endsWith('.googleapis.com') ||
+          host.endsWith('.google.com') ||
+          host.endsWith('.razorpay.com') ||
+          host.endsWith('.trycloudflare.com') ||
+          host.endsWith('.jsdelivr.net') ||
+          url.protocol === 'blob:'
+        ) {
+          return true;
+        }
+        return false;
+      } catch (_) {
+        return false;
+      }
+    };
+
+    try {
+      const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType !== 1) continue;
+            const tag = node.tagName ? node.tagName.toUpperCase() : '';
+            if (tag === 'SCRIPT' || tag === 'IFRAME') {
+              const src = node.src || '';
+              if (src && !isTrustedSource(src)) {
+                triggerTamperLockdown('CLIENT_DOM_TAMPERING', {
+                  violationType: 'CLIENT_DOM_TAMPERING',
+                  tag,
+                  src: src.slice(0, 120),
+                });
+                return;
+              }
+            }
+          }
+        }
+      });
+
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+    } catch (_) {}
+  }
+
+  initDomIntegrityObserver();
 }
+
 

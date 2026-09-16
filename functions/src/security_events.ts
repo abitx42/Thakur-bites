@@ -2,30 +2,42 @@ import { onCall, HttpsError, CallableRequest } from 'firebase-functions/v2/https
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { Timestamp } from 'firebase-admin/firestore';
-import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 export type SecurityViolationType =
   | 'DEV_OPTIONS_ACTIVE'
   | 'ADB_ACTIVE'
   | 'ROOT_DETECTED'
   | 'TAMPERED_APK_SIGNATURE'
-  | 'CLIENT_DOM_TAMPERING';
+  | 'CLIENT_DOM_TAMPERING'
+  | 'FRIDA_HOOK_DETECTED'
+  | 'DEBUGGER_ATTACHED'
+  | 'CANARY_TRIPWIRE_TRIGGERED'
+  | 'CLIENT_CODE_TAMPERED';
 
 const CRITICAL_VIOLATIONS: Set<SecurityViolationType> = new Set([
   'ROOT_DETECTED',
   'TAMPERED_APK_SIGNATURE',
   'CLIENT_DOM_TAMPERING',
+  'FRIDA_HOOK_DETECTED',
+  'DEBUGGER_ATTACHED',
+  'CANARY_TRIPWIRE_TRIGGERED',
+  'CLIENT_CODE_TAMPERED',
 ]);
 
 export const reportSecurityViolation = onCall(
   {
-    region: 'asia-south1',
+    region: 'us-central1',
     maxInstances: 20,
   },
   async (request: CallableRequest<any>) => {
-    enforceAppCheck(request);
+    // VULN-17: Record App Check attestation as telemetry rather than hard-blocking,
+    // allowing rooted/compromised devices where Play Integrity fails to deliver security telemetry.
+    const appCheckAttested = Boolean(request.app);
+
+    await assertNoHoneytokens(request.data, request.auth?.uid, 'reportSecurityViolation');
 
     const actorUid = request.auth?.uid || 'anonymous';
     const rawDevId = typeof request.data?.deviceId === 'string' ? request.data.deviceId.trim().slice(0, 128) : '';
@@ -42,6 +54,10 @@ export const reportSecurityViolation = onCall(
       'ROOT_DETECTED',
       'TAMPERED_APK_SIGNATURE',
       'CLIENT_DOM_TAMPERING',
+      'FRIDA_HOOK_DETECTED',
+      'DEBUGGER_ATTACHED',
+      'CANARY_TRIPWIRE_TRIGGERED',
+      'CLIENT_CODE_TAMPERED',
     ];
 
     if (!violationType || typeof violationType !== 'string' || !validTypes.includes(violationType as SecurityViolationType)) {
@@ -65,6 +81,7 @@ export const reportSecurityViolation = onCall(
         violationType: type,
         deviceId: sanitizedDeviceId || 'UNKNOWN',
         clientIp: request.rawRequest.ip || 'UNKNOWN',
+        appCheckAttested,
         ...details,
       },
     });

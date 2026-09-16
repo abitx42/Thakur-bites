@@ -63,7 +63,10 @@ class MainActivity : FlutterActivity() {
             false
         }
 
-        val isRooted = checkRootMethod2() || checkRootMethod3()
+        val isRooted = checkRoot()
+        val isHooked = checkFridaAndHooking()
+        val isDebuggerAttached = checkDebugger()
+        val isEmulator = checkEmulator()
         val signatureHash = getApkSignatureHash()
         val deviceId = getAnonymousDeviceId()
 
@@ -71,6 +74,9 @@ class MainActivity : FlutterActivity() {
             "isDevOptionsEnabled" to isDevOptionsEnabled,
             "isAdbEnabled" to isAdbEnabled,
             "isRooted" to isRooted,
+            "isHooked" to isHooked,
+            "isDebuggerAttached" to isDebuggerAttached,
+            "isEmulator" to isEmulator,
             "signatureHash" to signatureHash,
             "deviceId" to deviceId,
             "osVersion" to (Build.VERSION.RELEASE ?: "UNKNOWN"),
@@ -78,12 +84,12 @@ class MainActivity : FlutterActivity() {
         )
     }
 
-    private fun checkRootMethod1(): Boolean {
+    private fun checkRoot(): Boolean {
+        // 1. Build tags check
         val buildTags = Build.TAGS
-        return buildTags != null && buildTags.contains("test-keys")
-    }
+        if (buildTags != null && buildTags.contains("test-keys")) return true
 
-    private fun checkRootMethod2(): Boolean {
+        // 2. SU & Magisk filesystem checks
         val paths = arrayOf(
             "/system/app/Superuser.apk",
             "/sbin/su",
@@ -93,18 +99,72 @@ class MainActivity : FlutterActivity() {
             "/data/local/bin/su",
             "/system/sd/xbin/su",
             "/system/bin/failsafe/su",
-            "/data/local/su"
+            "/data/local/su",
+            "/sbin/.magisk",
+            "/data/adb/magisk",
+            "/data/adb/ksu"
         )
         for (path in paths) {
             if (File(path).exists()) return true
         }
-        return false
-    }
 
-    private fun checkRootMethod3(): Boolean {
+        // 3. Which SU runtime check
         return try {
             val process = Runtime.getRuntime().exec(arrayOf("/system/xbin/which", "su"))
             process.inputStream.bufferedReader().use { it.readLine() != null }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun checkFridaAndHooking(): Boolean {
+        // 1. Memory map inspection for injected hooking libraries
+        try {
+            val mapsFile = File("/proc/self/maps")
+            if (mapsFile.exists()) {
+                mapsFile.bufferedReader().useLines { lines ->
+                    for (line in lines) {
+                        val lower = line.lowercase()
+                        if (lower.contains("frida-agent") || lower.contains("gadget.so") || 
+                            lower.contains("libxposed") || lower.contains("libsubstrate")) {
+                            return true
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 2. File traces of Frida server
+        val fridaPaths = arrayOf(
+            "/data/local/tmp/frida-server",
+            "/data/local/tmp/re.frida.server",
+            "/data/local/tmp/frida"
+        )
+        for (p in fridaPaths) {
+            if (File(p).exists()) return true
+        }
+
+        return false
+    }
+
+    private fun checkDebugger(): Boolean {
+        return try {
+            android.os.Debug.isDebuggerConnected() || android.os.Debug.waitingForDebugger()
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun checkEmulator(): Boolean {
+        return try {
+            (Build.FINGERPRINT.startsWith("generic")
+                || Build.FINGERPRINT.startsWith("unknown")
+                || Build.MODEL.contains("google_sdk")
+                || Build.MODEL.contains("Emulator")
+                || Build.MODEL.contains("Android SDK built for x86")
+                || Build.MANUFACTURER.contains("Genymotion")
+                || Build.HARDWARE.contains("goldfish")
+                || Build.HARDWARE.contains("ranchu"))
         } catch (_: Exception) {
             false
         }
