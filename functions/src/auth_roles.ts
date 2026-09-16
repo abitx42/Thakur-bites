@@ -7,6 +7,7 @@ import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { syncUserCustomClaims } from './claims_manager';
 import { assertCapability, isDeveloperRole } from './authorization_policy';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 const db = admin.firestore();
 
@@ -22,6 +23,7 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
+  await assertNoHoneytokens(request.data, request.auth.uid, 'assignStaffRole');
   await enforceRateLimit(request.auth.uid, 'role_assignment');
 
   const callerRole = (request.auth.token.role as UserRole) || 'student';
@@ -55,6 +57,11 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     existingRole = (existingClaims.role as UserRole) || 'student';
   } catch (err: any) {
     throw new HttpsError('not-found', `Target user ${targetUid} does not exist in Firebase Auth.`);
+  }
+
+  // Self-Role Protection Invariant (VULN-20): Administrators cannot modify or elevate their own role
+  if (targetUid === request.auth.uid && newRole !== existingRole) {
+    throw new HttpsError('permission-denied', 'Administrators cannot modify their own role. Secondary administrative approval required.');
   }
 
   // Last Engineering Admin (Developer / Security Admin) Protection (TB-NEW-024)

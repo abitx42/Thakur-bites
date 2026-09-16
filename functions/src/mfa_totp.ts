@@ -184,6 +184,8 @@ export const verifyAndEnableMfaTotp = onCall(async (request) => {
   }
 
   const userId = request.auth.uid;
+  await enforceRateLimit(userId, 'mfa_activation');
+
   const { code } = request.data || {};
 
   if (!code || typeof code !== 'string') {

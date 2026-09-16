@@ -450,6 +450,14 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
     return;
   }
 
+  const clientIp = (req.ip || (req.headers['x-forwarded-for'] as string) || '0.0.0.0').split(',')[0].trim();
+  try {
+    await enforceRateLimit(clientIp, 'webhook_ingress');
+  } catch (_) {
+    res.status(429).send('Too Many Requests');
+    return;
+  }
+
   const webhookSignature = req.headers['x-razorpay-signature'] as string;
   if (!webhookSignature) {
     res.status(400).send('Missing webhook signature header.');

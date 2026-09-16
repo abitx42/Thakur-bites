@@ -5,6 +5,7 @@ import { enforceAppCheck } from './app_check';
 import { logSecurityEvent } from './security_logger';
 import { assertOperationalMode } from './kill_switch';
 import { enforceAppVersionPolicy } from './version_policy';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -50,6 +51,7 @@ export interface ReorderResponse {
  */
 export const reorderPreviousOrder = onCall<ReorderRequest>(async (request) => {
   enforceAppCheck(request);
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'reorderPreviousOrder');
   await enforceAppVersionPolicy(request.data?.appVersion);
   await assertOperationalMode('checkout');
 

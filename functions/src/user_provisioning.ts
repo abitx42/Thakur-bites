@@ -7,6 +7,7 @@ import { enforceAppCheck } from './app_check';
 import { logSecurityEvent } from './security_logger';
 import { syncUserCustomClaims } from './claims_manager';
 import { enforceAppVersionPolicy } from './version_policy';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 const db = admin.firestore();
 
@@ -35,6 +36,7 @@ export interface ProvisionUserRequest {
  */
 export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request) => {
   enforceAppCheck(request);
+  await assertNoHoneytokens(request.data, request.auth?.uid, 'provisionUserProfile');
   await enforceAppVersionPolicy(request.data?.appVersion);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');

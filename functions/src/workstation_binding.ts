@@ -6,6 +6,7 @@ import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
 import { assertCapability, isManagerOrAdmin } from './authorization_policy';
+import { assertNoHoneytokens } from './honeypot_defense';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -42,6 +43,8 @@ export const createWorkstationInvite = onCall<CreateWorkstationInviteRequest>(as
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Staff authentication required.');
   }
+
+  await assertNoHoneytokens(request.data, request.auth.uid, 'createWorkstationInvite');
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'manage_shift_pins', 'Only managers or administrators can enroll workstations.');
@@ -93,6 +96,7 @@ export const createWorkstationInvite = onCall<CreateWorkstationInviteRequest>(as
  */
 export const enrollWorkstation = onCall<EnrollWorkstationRequest>(async (request) => {
   enforceAppCheck(request);
+  await assertNoHoneytokens(request.data, undefined, 'enrollWorkstation');
 
   const { inviteCode, deviceName } = request.data || {};
   if (!inviteCode || typeof inviteCode !== 'string') {
@@ -219,6 +223,8 @@ export const revokeWorkstation = onCall(async (request) => {
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Staff authentication required.');
   }
+
+  await assertNoHoneytokens(request.data, request.auth.uid, 'revokeWorkstation');
 
   const callerRole = (request.auth.token.role as string | undefined) || '';
   assertCapability(callerRole, 'revoke_shift_pin', 'Only managers or administrators can revoke workstations.');

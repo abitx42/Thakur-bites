@@ -238,20 +238,38 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
     }, true);
   }
 
-  // 5. DevTools Active State Heuristic Detector
+  // 5. DevTools Active State Heuristic Detector (Window geometry + Console getter for undocked DevTools)
   let devToolsOpenLogged = false;
-  function checkDevTools() {
-    const widthThreshold = window.outerWidth - window.innerWidth > 160;
-    const heightThreshold = window.outerHeight - window.innerHeight > 160;
-
-    if ((widthThreshold || heightThreshold) && !devToolsOpenLogged) {
+  function onDevToolsDetected() {
+    if (!devToolsOpenLogged) {
       devToolsOpenLogged = true;
       console.warn(`[SECURITY] Browser DevTools activity detected on ${portal}.`);
     }
   }
 
+  function checkDevTools() {
+    const widthThreshold = window.outerWidth - window.innerWidth > 160;
+    const heightThreshold = window.outerHeight - window.innerHeight > 160;
+
+    if (widthThreshold || heightThreshold) {
+      onDevToolsDetected();
+    }
+  }
+
   window.addEventListener('resize', checkDevTools);
   setInterval(checkDevTools, 3000);
+
+  // Undocked DevTools console getter probe
+  try {
+    const probe = /./;
+    probe.toString = function () {
+      onDevToolsDetected();
+      return ' ';
+    };
+    setInterval(() => {
+      console.debug?.(probe);
+    }, 4000);
+  } catch (_) {}
 
   // 6. Native Function Hook Detection
   function checkNativeIntegrity() {
@@ -338,6 +356,35 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
   }
 
   initDomIntegrityObserver();
+
+  // 8. Cross-Tab Storage Tamper Guard
+  try {
+    window.addEventListener('storage', (e) => {
+      if (!e.key) return;
+      if (e.key === 'tb_tamper_lockdown_active' && !e.newValue && e.oldValue) {
+        triggerTamperLockdown('STORAGE_TAMPER_LOCKDOWN_EVICTION', {
+          violationType: 'CLIENT_DOM_TAMPERING',
+          key: e.key,
+        });
+      }
+    });
+  } catch (_) {}
 }
+
+// 9. Sealed Immutable Sentinel Namespace
+try {
+  const sentinelApi = Object.freeze({
+    triggerTamperLockdown,
+    initSecuritySentinel,
+    version: '2.3',
+  });
+  Object.defineProperty(window, '__TB_SENTINEL__', {
+    value: sentinelApi,
+    writable: false,
+    configurable: false,
+    enumerable: false,
+  });
+} catch (_) {}
+
 
 

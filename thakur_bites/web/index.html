@@ -198,6 +198,28 @@
       });
       domObs.observe(document.documentElement, { childList: true, subtree: true });
     } catch (_) {}
+
+    // 7. Cross-Tab Storage Tamper Guard
+    try {
+      window.addEventListener('storage', function(e) {
+        if (!e.key) return;
+        if (e.key === 'tb_web_lockdown_active' && !e.newValue && e.oldValue) {
+          triggerWebTamperLockdown('STORAGE_TAMPER_EVICTED', { key: e.key });
+        }
+      });
+    } catch (_) {}
+
+    // 8. Undocked DevTools Console Probe
+    try {
+      var devToolsProbe = /./;
+      devToolsProbe.toString = function() {
+        console.warn('[SECURITY] Browser DevTools activity detected.');
+        return ' ';
+      };
+      setInterval(function() {
+        if (console.debug) console.debug(devToolsProbe);
+      }, 4000);
+    } catch (_) {}
   </script>
 
   <!-- Razorpay Official Checkout SDK & Web Bridge -->

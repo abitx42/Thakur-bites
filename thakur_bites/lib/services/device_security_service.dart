@@ -45,10 +45,16 @@ class DeviceSecurityService extends ChangeNotifier {
     return _isDevOptionsEnabled || _isAdbEnabled;
   }
 
-  /// Critical tampering (root exploit detected, Frida dynamic hooking, or debugger attachment)
+  /// Detects unauthorized APK repackaging or modding via invalid certificate digests
+  bool get isTamperedSignature {
+    if (kDebugMode || kIsWeb) return false;
+    return _signatureHash.isEmpty || _signatureHash == 'UNSIGNED' || _signatureHash.startsWith('ERROR_');
+  }
+
+  /// Critical tampering (root exploit detected, Frida dynamic hooking, debugger attachment, or APK modding)
   bool get isCriticalTamperDetected {
     if (kDebugMode || kIsWeb) return false;
-    return _isRooted || _isHooked || _isDebuggerAttached;
+    return _isRooted || _isHooked || _isDebuggerAttached || isTamperedSignature;
   }
 
   /// Evaluates device security posture against native sentinel
@@ -78,7 +84,9 @@ class DeviceSecurityService extends ChangeNotifier {
           _hasReportedViolation = true;
           final violationType = _isHooked
               ? 'FRIDA_HOOK_DETECTED'
-              : (_isDebuggerAttached ? 'DEBUGGER_ATTACHED' : 'ROOT_DETECTED');
+              : (_isDebuggerAttached
+                  ? 'DEBUGGER_ATTACHED'
+                  : (isTamperedSignature ? 'TAMPERED_APK_SIGNATURE' : 'ROOT_DETECTED'));
           await reportSecurityViolation(
             violationType: violationType,
             details: {
@@ -86,6 +94,7 @@ class DeviceSecurityService extends ChangeNotifier {
               'isHooked': _isHooked,
               'isDebuggerAttached': _isDebuggerAttached,
               'isEmulator': _isEmulator,
+              'isTamperedSignature': isTamperedSignature,
               'signatureHash': _signatureHash,
               'deviceId': _deviceId,
             },

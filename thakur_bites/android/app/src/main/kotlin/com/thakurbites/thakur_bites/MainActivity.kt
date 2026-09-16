@@ -109,12 +109,30 @@ class MainActivity : FlutterActivity() {
         }
 
         // 3. Which SU runtime check
-        return try {
+        val hasSuProcess = try {
             val process = Runtime.getRuntime().exec(arrayOf("/system/xbin/which", "su"))
             process.inputStream.bufferedReader().use { it.readLine() != null }
         } catch (_: Exception) {
             false
         }
+        if (hasSuProcess) return true
+
+        // 4. Mounts inspection for Magisk / KernelSU / Zygisk overlays
+        try {
+            val mounts = File("/proc/mounts")
+            if (mounts.exists()) {
+                mounts.bufferedReader().useLines { lines ->
+                    for (l in lines) {
+                        val low = l.lowercase()
+                        if (low.contains("magisk") || low.contains("core/mirror") || low.contains("core/img") || low.contains("ksu")) {
+                            return true
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        return false
     }
 
     private fun checkFridaAndHooking(): Boolean {
@@ -143,6 +161,30 @@ class MainActivity : FlutterActivity() {
         for (p in fridaPaths) {
             if (File(p).exists()) return true
         }
+
+        // 3. Socket connectivity probe to default Frida server port 27042
+        try {
+            val socket = java.net.Socket()
+            socket.connect(java.net.InetSocketAddress("127.0.0.1", 27042), 150)
+            socket.close()
+            return true
+        } catch (_: Exception) {}
+
+        // 4. Frida dynamic thread inspection
+        try {
+            val taskDir = File("/proc/self/task")
+            if (taskDir.exists() && taskDir.isDirectory) {
+                taskDir.listFiles()?.forEach { task ->
+                    val commFile = File(task, "comm")
+                    if (commFile.exists()) {
+                        val name = commFile.readText().trim().lowercase()
+                        if (name.contains("frida") || name.contains("gmain") || name.contains("gum-js-loop")) {
+                            return true
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
 
         return false
     }
