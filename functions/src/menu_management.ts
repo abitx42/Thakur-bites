@@ -188,14 +188,16 @@ export const updateMenuItemDetails = onCall<UpdateMenuItemDetailsRequest>(async 
   await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  if (!hasCapability(actorRole, 'manage_menu') && !isOperationalStaffRole(actorRole)) {
+  try {
+    assertCapability(actorRole, 'manage_menu');
+  } catch (_) {
     await logSecurityEvent({
       eventType: 'UNAUTHORIZED_MENU_MODIFICATION',
       severity: 'HIGH',
       actorUid: request.auth.uid,
       details: { role: actorRole, action: 'update_details' },
     });
-    throw new HttpsError('permission-denied', 'Staff authorization is required to modify menu items.');
+    throw new HttpsError('permission-denied', 'Only managers and administrators can modify menu item details and pricing.');
   }
 
   await enforceRateLimit(request.auth.uid, 'menu_management');
@@ -352,14 +354,16 @@ export const upsertMenuItem = onCall<UpsertMenuItemRequest>(async (request) => {
   await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
 
   const actorRole = (request.auth.token.role as UserRole) || 'student';
-  if (!hasCapability(actorRole, 'manage_menu') && !isOperationalStaffRole(actorRole)) {
+  try {
+    assertCapability(actorRole, 'manage_menu');
+  } catch (_) {
     await logSecurityEvent({
       eventType: 'UNAUTHORIZED_MENU_MODIFICATION',
       severity: 'HIGH',
       actorUid: request.auth.uid,
       details: { role: actorRole, action: 'upsert_item' },
     });
-    throw new HttpsError('permission-denied', 'Staff authorization is required to add or overwrite menu items.');
+    throw new HttpsError('permission-denied', 'Only managers and administrators can add or overwrite menu items.');
   }
 
   await enforceRateLimit(request.auth.uid, 'menu_management');
