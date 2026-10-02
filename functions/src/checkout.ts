@@ -179,7 +179,6 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
               replayedQrPayload = `${existingOrderId}.${studentId}.${secretData.qrNonce}.${secretData.qrExpiresAt}.${sig}`;
             }
 
-            const replayedPin = idempData.rawPin || '';
             const existingAmountPaise = Number(existingData.totalAmountPaise !== undefined
               ? existingData.totalAmountPaise
               : Math.round(Number(existingData.totalAmount || 0) * 100));
@@ -188,15 +187,17 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
               orderId: existingOrderId,
               order: {
                 ...existingData,
-                ...(replayedPin ? { pickupPin: replayedPin } : {}),
+                // F-002: PIN is NOT replayed — it was securely delivered once in the original response
+                pinAlreadyIssued: true,
                 ...(replayedQrPayload ? { signedQrPayload: replayedQrPayload } : {}),
               },
-              rawPin: replayedPin,
+              rawPin: '', // F-002: No longer stored or replayed
               signedQrPayload: replayedQrPayload,
               gatewayOrderId: existingData.gatewayOrderId || null,
               amountPaise: existingAmountPaise,
-              keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_TcNKt0X7OsnsXu',
+              keyId: getRequiredSecret('PAYMENT_GATEWAY_KEY_ID'),
               isReplay: true,
+              pinAlreadyIssued: true,
             };
           }
         }
@@ -439,6 +440,9 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         readyAt: Timestamp.fromDate(readyAtDate),
         reservationExpiresAt: Timestamp.fromDate(new Date(Date.now() + 15 * 60000)),
         deviceId: sanitizedDeviceId || null,
+        // F-003 Remediation: Raw PIN removed from order document.
+        // PIN hash is stored in orderSecrets collection (line ~481).
+        // Raw PIN is returned ONCE in the checkout response to the student.
       };
 
       // ═════════════════════════════════════════════════════════════
@@ -468,7 +472,8 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         orderId: newOrderRef.id,
         studentId,
         idempotencyKey,
-        rawPin,
+        // F-002 Remediation: Raw PIN no longer stored in idempotency lock.
+        // PIN was delivered once in the original response. Replay returns pinAlreadyIssued flag.
         createdAt: now,
       });
 
@@ -523,7 +528,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         signedQrPayload,
         gatewayOrderId,
         amountPaise: calculatedTotalPaise,
-        keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_TcNKt0X7OsnsXu',
+        keyId: getRequiredSecret('PAYMENT_GATEWAY_KEY_ID'),
       };
     });
 

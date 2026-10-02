@@ -14,7 +14,7 @@ import {
 } from '../firebase.js?v=5';
 import { renderMenuVisualHtml, VISUAL_FAMILIES } from '../menuVisualResolver.js';
 import { staffAuth } from '../auth.js?v=8';
-import { doc, onSnapshot, collection, query, where, setDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { doc, getDoc, Timestamp, onSnapshot, collection, query, where, setDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
 import { renderDailyBoardModal } from './dailyBoardModal.js?v=1';
@@ -207,7 +207,7 @@ export function renderAdminView(container, options = {}) {
         </div>
 
         <!-- Menu Health & KPI Statistics Bar -->
-        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 1.2rem 1.4rem; margin-bottom: 2rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
+        <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 1.2rem 1.4rem; margin-bottom: 2rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); gap: 1rem; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
           <div>
             <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); text-transform: uppercase;">Total Active Items</div>
             <div style="font-family: var(--font-display); font-size: 1.6rem; font-weight: 800; color: var(--ink-primary);">${nonArchivedItems.length}</div>
@@ -261,7 +261,7 @@ export function renderAdminView(container, options = {}) {
               </span>
             </div>
           ` : `
-            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 1rem;">
+            <div class="admin-menu-grid">
               ${currentApplications.map(app => `
                 <div style="background: var(--bg-surface); border: 1.5px solid var(--border-light); border-radius: 12px; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between;">
                   <div>
@@ -358,7 +358,7 @@ export function renderAdminView(container, options = {}) {
               </span>
             </div>
           ` : `
-            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem;">
+            <div class="responsive-card-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 1rem;">
               ${currentShiftPins.map(pin => `
                 <div style="background: var(--bg-surface); border: 1.5px solid var(--border-light); border-radius: 12px; padding: 1.2rem;">
                   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
@@ -421,22 +421,22 @@ export function renderAdminView(container, options = {}) {
           </div>
 
           <!-- Secondary Filters Row: Category Pills + Stock Status Filter + Subcategory -->
-          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-              <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary); margin-right: 4px;">CATEGORY:</span>
+          <div class="admin-filter-bar">
+            <div class="horizontal-chips-scroll admin-category-chips">
+              <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary); margin-right: 4px; flex-shrink: 0;">CATEGORY:</span>
               ${[
                 { id: 'ALL', label: 'All Items' },
                 { id: 'FOOD', label: '🍛 Food' },
                 { id: 'SNACKS', label: '🍟 Snacks' },
                 { id: 'BEVERAGES', label: '🥤 Drinks' }
               ].map(cat => `
-                <button class="cat-filter-btn" data-category="${cat.id}" style="padding: 6px 14px; border-radius: 999px; border: 1.5px solid ${selectedParentFilter === cat.id ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedParentFilter === cat.id ? 'var(--brand-red)' : 'var(--bg-surface)'}; color: ${selectedParentFilter === cat.id ? '#FFF' : 'var(--ink-primary)'}; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; cursor: pointer;">
+                <button class="cat-filter-btn" data-category="${cat.id}" style="padding: 6px 14px; border-radius: 999px; border: 1.5px solid ${selectedParentFilter === cat.id ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedParentFilter === cat.id ? 'var(--brand-red)' : 'var(--bg-surface)'}; color: ${selectedParentFilter === cat.id ? '#FFF' : 'var(--ink-primary)'}; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; cursor: pointer; white-space: nowrap; flex-shrink: 0;">
                   ${cat.label}
                 </button>
               `).join('')}
             </div>
 
-            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <div class="admin-filter-controls">
               <!-- Multi-Tier Sort Filter -->
               <div style="display: flex; align-items: center; gap: 6px;">
                 <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-secondary);">SORT:</span>
@@ -515,7 +515,7 @@ export function renderAdminView(container, options = {}) {
               No kitchen prepared dishes match "${escapeHtml(menuSearchQuery || 'current filters')}".
             </div>
           ` : `
-            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.2rem;">
+            <div class="admin-menu-grid">
               ${cookedItems.map(item => {
                 const isAvailable = item.available !== false;
 
@@ -599,7 +599,7 @@ export function renderAdminView(container, options = {}) {
               No store packaged items match "${escapeHtml(menuSearchQuery || 'current filters')}".
             </div>
           ` : `
-            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1.2rem;">
+            <div class="admin-menu-grid">
               ${storeItems.map(item => {
                 const rawStock = item.stockOnHand !== undefined 
                   ? Number(item.stockOnHand) 
@@ -664,7 +664,7 @@ export function renderAdminView(container, options = {}) {
                             class="stock-step-btn minus-stock-btn" 
                             data-item-id="${escapeHtml(item.id)}" 
                             data-current-stock="${stock}"
-                            style="width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
+                            style="width: 32px; height: 32px; border-radius: 8px; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
                           >
                             –
                           </button>
@@ -684,7 +684,7 @@ export function renderAdminView(container, options = {}) {
                             class="stock-step-btn plus-stock-btn" 
                             data-item-id="${escapeHtml(item.id)}" 
                             data-current-stock="${stock}"
-                            style="width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
+                            style="width: 32px; height: 32px; border-radius: 8px; border: 1.5px solid var(--border-light); background: var(--bg-surface); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;"
                           >
                             +
                           </button>
@@ -746,10 +746,11 @@ export function renderAdminView(container, options = {}) {
         <!-- MODAL: EDIT ITEM DETAILS & PRICE (Infrequent changes)       -->
         <!-- ═══════════════════════════════════════════════════════════ -->
         ${editingItem ? (() => {
-          const canEditPrice = ['admin', 'manager'].includes(staffAuth.getRole() || '');
+          const currentRole = staffAuth.getRole() || '';
+          const canEditPrice = ['admin', 'manager', 'developer', 'security_admin'].includes(currentRole) || !isStaffMode;
           return `
-          <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
-            <div style="background: #FFF; border-radius: 18px; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.25);">
+          <div class="modal-overlay-fade-in" style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
+            <div class="modal-card-pop-in" style="background: #FFF; border-radius: 18px; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.25);">
               
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
                 <div>
@@ -799,7 +800,7 @@ export function renderAdminView(container, options = {}) {
                 </div>
 
                 <!-- Visual Family & Popular Toggle -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                <div class="form-grid-2col">
                   <div>
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Fallback Visual Family</label>
                     <select id="edit-visual-key" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
@@ -818,7 +819,7 @@ export function renderAdminView(container, options = {}) {
                 </div>
 
                 <!-- Price & Prep Time -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                <div class="form-grid-2col">
                   <div>
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">
                       Price (₹) ${!canEditPrice ? '<span style="color:#DC2626; font-size:0.7rem;">(🔒 Manager/Admin only)</span>' : ''}
@@ -833,7 +834,7 @@ export function renderAdminView(container, options = {}) {
                 </div>
 
                 <!-- Taxonomy: Parent Category & Subcategory -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                <div class="form-grid-2col">
                   <div>
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Parent Category</label>
                     <select id="edit-parent-category" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
@@ -850,7 +851,7 @@ export function renderAdminView(container, options = {}) {
                 </div>
 
                 <!-- Tags & Sort Order -->
-                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                <div class="form-grid-2col">
                   <div>
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Search Tags (comma-separated)</label>
                     <input type="text" id="edit-tags" value="${escapeHtml((editingItem.tags || []).join(', '))}" placeholder="e.g. spicy, butter, breakfast" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;" />
@@ -862,7 +863,7 @@ export function renderAdminView(container, options = {}) {
                 </div>
 
                 <!-- Dietary & Type -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                <div class="form-grid-2col">
                   <div>
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Dietary Classification</label>
                     <select id="edit-dietary-type" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
@@ -924,8 +925,8 @@ export function renderAdminView(container, options = {}) {
         <!-- MODAL: ADD NEW DISH                                        -->
         <!-- ═══════════════════════════════════════════════════════════ -->
         ${showAddModal ? `
-          <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
-            <div style="background: #FFF; border-radius: 18px; width: 100%; max-width: 500px; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.25);">
+          <div class="modal-overlay-fade-in" style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
+            <div class="modal-card-pop-in" style="background: #FFF; border-radius: 18px; width: 100%; max-width: 500px; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.25);">
               
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
                 <h3 style="font-family: var(--font-display); font-size: 1.8rem; margin: 0; line-height: 1;">
@@ -941,7 +942,7 @@ export function renderAdminView(container, options = {}) {
                 </div>
 
                 <!-- Visual Family & Popular Toggle -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                <div class="form-grid-2col">
                   <div>
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Fallback Visual Family</label>
                     <select id="add-visual-key" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
@@ -958,7 +959,7 @@ export function renderAdminView(container, options = {}) {
                   </div>
                 </div>
 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                <div class="form-grid-2col">
                   <div>
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Price (₹)</label>
                     <input type="number" id="add-price" required placeholder="50" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; box-sizing: border-box;" />
@@ -969,7 +970,7 @@ export function renderAdminView(container, options = {}) {
                   </div>
                 </div>
 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                <div class="form-grid-2col">
                   <div>
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Parent Category</label>
                     <select id="add-parent-category" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
@@ -985,7 +986,7 @@ export function renderAdminView(container, options = {}) {
                 </div>
 
                 <!-- Tags & Sort Order -->
-                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                <div class="form-grid-2col">
                   <div>
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Search Tags (comma-separated)</label>
                     <input type="text" id="add-tags" placeholder="e.g. spicy, butter, breakfast" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;" />
@@ -996,7 +997,7 @@ export function renderAdminView(container, options = {}) {
                   </div>
                 </div>
 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.2rem;">
+                <div class="form-grid-2col">
                   <div>
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Dietary</label>
                     <select id="add-dietary-type" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-sans); font-size: 0.95rem; box-sizing: border-box;">
@@ -1029,8 +1030,8 @@ export function renderAdminView(container, options = {}) {
         ` : ''}
 
         ${showCredModal ? `
-          <div class="modal-overlay" style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
-            <div class="modal-content" style="background: #FFF; border-radius: 16px; width: 100%; max-width: 540px; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.15); max-height: 90vh; overflow-y: auto;">
+          <div class="modal-overlay modal-overlay-fade-in" style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
+            <div class="modal-content modal-card-pop-in" style="background: #FFF; border-radius: 16px; width: 100%; max-width: 540px; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.15); max-height: 90vh; overflow-y: auto;">
               
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem;">
                 <h3 style="font-family: var(--font-display); font-size: 1.8rem; letter-spacing: 0.05em; margin: 0; color: var(--ink-primary);">
@@ -1255,24 +1256,43 @@ export function renderAdminView(container, options = {}) {
       btn.addEventListener('click', async () => {
         const itemId = btn.getAttribute('data-item-id');
         const currentAvail = btn.getAttribute('data-available') === 'true';
+        btn.disabled = true;
         btn.textContent = 'Updating...';
-        await toggleItemAvailability(itemId, !currentAvail);
+        try {
+          await toggleItemAvailability(itemId, !currentAvail);
+        } catch (err) {
+          console.error('Toggle cooked item error:', err);
+          alert('Failed to update availability: ' + (err.message || err));
+        } finally {
+          btn.disabled = false;
+        }
       });
     });
+
+    // Helper to keep related buttons in sync during rapid successive clicks
+    const syncItemStockUi = (itemId, newStock) => {
+      const input = container.querySelector(`.stock-count-input[data-item-id="${itemId}"]`);
+      if (input) input.value = newStock;
+      container.querySelectorAll(`[data-item-id="${itemId}"][data-current-stock]`).forEach(el => {
+        el.setAttribute('data-current-stock', String(newStock));
+      });
+    };
 
     // 2. Store Item Steppers (− / +)
     container.querySelectorAll('.minus-stock-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const itemId = btn.getAttribute('data-item-id');
-        const currentStock = Number(btn.getAttribute('data-current-stock') || 0);
-        const targetStock = Math.max(0, currentStock - 1);
         const input = container.querySelector(`.stock-count-input[data-item-id="${itemId}"]`);
-        if (input) input.value = targetStock;
+        const currentStock = input ? (Number(input.value) || 0) : Number(btn.getAttribute('data-current-stock') || 0);
+        const targetStock = Math.max(0, currentStock - 1);
+        syncItemStockUi(itemId, targetStock);
         btn.disabled = true;
         try {
           await updateItemStockCount(itemId, targetStock);
         } catch (err) {
           console.error('Stock decrement error:', err);
+          syncItemStockUi(itemId, currentStock);
+          alert('Stock update failed: ' + (err.message || err));
         } finally {
           btn.disabled = false;
         }
@@ -1282,15 +1302,17 @@ export function renderAdminView(container, options = {}) {
     container.querySelectorAll('.plus-stock-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const itemId = btn.getAttribute('data-item-id');
-        const currentStock = Number(btn.getAttribute('data-current-stock') || 0);
-        const targetStock = currentStock + 1;
         const input = container.querySelector(`.stock-count-input[data-item-id="${itemId}"]`);
-        if (input) input.value = targetStock;
+        const currentStock = input ? (Number(input.value) || 0) : Number(btn.getAttribute('data-current-stock') || 0);
+        const targetStock = currentStock + 1;
+        syncItemStockUi(itemId, targetStock);
         btn.disabled = true;
         try {
           await updateItemStockCount(itemId, targetStock);
         } catch (err) {
           console.error('Stock increment error:', err);
+          syncItemStockUi(itemId, currentStock);
+          alert('Stock update failed: ' + (err.message || err));
         } finally {
           btn.disabled = false;
         }
@@ -1301,16 +1323,18 @@ export function renderAdminView(container, options = {}) {
     container.querySelectorAll('.quick-restock-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const itemId = btn.getAttribute('data-item-id');
-        const currentStock = Number(btn.getAttribute('data-current-stock') || 0);
+        const input = container.querySelector(`.stock-count-input[data-item-id="${itemId}"]`);
+        const currentStock = input ? (Number(input.value) || 0) : Number(btn.getAttribute('data-current-stock') || 0);
         const addAmount = Number(btn.getAttribute('data-add') || 5);
         const targetStock = currentStock + addAmount;
-        const input = container.querySelector(`.stock-count-input[data-item-id="${itemId}"]`);
-        if (input) input.value = targetStock;
+        syncItemStockUi(itemId, targetStock);
         btn.disabled = true;
         try {
           await updateItemStockCount(itemId, targetStock);
         } catch (err) {
           console.error('Quick restock error:', err);
+          syncItemStockUi(itemId, currentStock);
+          alert('Restock failed: ' + (err.message || err));
         } finally {
           btn.disabled = false;
         }
@@ -1322,12 +1346,15 @@ export function renderAdminView(container, options = {}) {
       btn.addEventListener('click', async () => {
         const itemId = btn.getAttribute('data-item-id');
         const input = container.querySelector(`.stock-count-input[data-item-id="${itemId}"]`);
-        if (input) input.value = 0;
+        const currentStock = input ? (Number(input.value) || 0) : 0;
+        syncItemStockUi(itemId, 0);
         btn.disabled = true;
         try {
           await updateItemStockCount(itemId, 0);
         } catch (err) {
           console.error('Mark sold out error:', err);
+          syncItemStockUi(itemId, currentStock);
+          alert('Action failed: ' + (err.message || err));
         } finally {
           btn.disabled = false;
         }
@@ -1491,6 +1518,13 @@ export function renderAdminView(container, options = {}) {
 
       editForm.addEventListener('submit', async (e) => {
         e.preventDefault();
+        const submitBtn = editForm.querySelector('button[type="submit"]') || editForm.querySelector('.btn--primary');
+        const origSubmitText = submitBtn ? submitBtn.textContent : 'Save Changes';
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Saving Changes...';
+        }
+
         const name = editForm.querySelector('#edit-name').value;
         const priceInput = editForm.querySelector('#edit-price');
         const price = priceInput && !priceInput.disabled ? Number(priceInput.value) : editingItem.price;
@@ -1506,25 +1540,32 @@ export function renderAdminView(container, options = {}) {
         const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean);
         const sortOrder = Number((editForm.querySelector('#edit-sort-order') && editForm.querySelector('#edit-sort-order').value) || 100);
 
-        await updateItemDetails(editingItem.id, {
-          name,
-          price,
-          prepMinutes,
-          category: parentCategory,
-          parentCategory,
-          subCategory,
-          dietaryType,
-          type,
-          batchDate,
-          visualKey,
-          isPopular,
-          tags,
-          sortOrder,
-          imageUrl: editingItem.imageUrl || null
-        });
-
-        editingItem = null;
-        render();
+        try {
+          await updateItemDetails(editingItem.id, {
+            name,
+            price,
+            prepMinutes,
+            category: parentCategory,
+            parentCategory,
+            subCategory,
+            dietaryType,
+            type,
+            batchDate,
+            visualKey,
+            isPopular,
+            tags,
+            sortOrder,
+            imageUrl: editingItem.imageUrl || null
+          });
+          editingItem = null;
+          render();
+        } catch (err) {
+          alert('Save Changes Failed: ' + (err.message || err));
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = origSubmitText;
+          }
+        }
       });
 
       const archiveBtn = editForm.querySelector('#archive-edit-item-btn');
@@ -1550,9 +1591,17 @@ export function renderAdminView(container, options = {}) {
       if (deleteBtn) {
         deleteBtn.addEventListener('click', async () => {
           if (confirm(`Are you sure you want to permanently delete "${editingItem.name}"? (Recommended: use Archive instead to preserve order history)`)) {
-            await deleteMenuItem(editingItem.id);
-            editingItem = null;
-            render();
+            deleteBtn.disabled = true;
+            deleteBtn.textContent = 'Deleting...';
+            try {
+              await deleteMenuItem(editingItem.id);
+              editingItem = null;
+              render();
+            } catch (err) {
+              alert('Delete Error: ' + (err.message || err));
+              deleteBtn.disabled = false;
+              deleteBtn.textContent = '🗑️ Delete Permanently';
+            }
           }
         });
       }
@@ -1563,6 +1612,13 @@ export function renderAdminView(container, options = {}) {
     if (addForm) {
       addForm.addEventListener('submit', async (e) => {
         e.preventDefault();
+        const submitBtn = addForm.querySelector('button[type="submit"]') || addForm.querySelector('.btn--primary');
+        const origSubmitText = submitBtn ? submitBtn.textContent : 'Add Dish to Menu';
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Adding Dish...';
+        }
+
         const name = addForm.querySelector('#add-name').value;
         const price = Number(addForm.querySelector('#add-price').value);
         const stockCount = Number(addForm.querySelector('#add-stock').value || 0);
@@ -1577,28 +1633,35 @@ export function renderAdminView(container, options = {}) {
         const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean);
         const sortOrder = Number((addForm.querySelector('#add-sort-order') && addForm.querySelector('#add-sort-order').value) || 100);
 
-        await saveMenuItem({
-          name,
-          price,
-          category: parentCategory,
-          parentCategory,
-          subCategory,
-          dietaryType,
-          stockOnHand: type === 'instant' ? stockCount : 100,
-          reservedStock: 0,
-          prepMinutes: type === 'instant' ? 0 : prepMinutes,
-          type,
-          isPublished: true,
-          isOrderable: true,
-          available: true,
-          visualKey,
-          isPopular,
-          tags,
-          sortOrder
-        });
-
-        showAddModal = false;
-        render();
+        try {
+          await saveMenuItem({
+            name,
+            price,
+            category: parentCategory,
+            parentCategory,
+            subCategory,
+            dietaryType,
+            stockOnHand: type === 'instant' ? stockCount : 100,
+            reservedStock: 0,
+            prepMinutes: type === 'instant' ? 0 : prepMinutes,
+            type,
+            isPublished: true,
+            isOrderable: true,
+            available: true,
+            visualKey,
+            isPopular,
+            tags,
+            sortOrder
+          });
+          showAddModal = false;
+          render();
+        } catch (err) {
+          alert('Add Dish Failed: ' + (err.message || err));
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = origSubmitText;
+          }
+        }
       });
     }
 

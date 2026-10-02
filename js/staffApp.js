@@ -6,8 +6,11 @@ import { renderAdminView, cleanupAdminView } from './views/adminView.js?v=10';
 import { renderDailyBoardModal } from './views/dailyBoardModal.js?v=1';
 import { subscribeDailyBoard, saveDailyBoard } from './firebase.js?v=9';
 import { initSecuritySentinel } from './securitySentinel.js?v=2';
+import { escapeHtml } from './views/escapeHtml.js';
+import { initNetworkSentinel } from './networkSentinel.js';
 
 initSecuritySentinel({ blockShortcuts: true, portalName: 'Staff Workstation' });
+initNetworkSentinel({ portalName: 'Staff Workstation' });
 
 let currentStaffWorkstationView = 'kitchen'; // 'kitchen' | 'pickup' | 'cashier' | 'menu'
 let currentDailyBoardState = null;
@@ -88,13 +91,13 @@ function initStaffWorkstation() {
 
     if (!isAllowed) {
       root.innerHTML = `
-        <div style="max-width: 500px; margin: 4rem auto; background: #FFF; border: 2px solid #FCA5A5; border-radius: 12px; padding: 2rem; text-align: center;">
+        <div style="max-width: 500px; width: calc(100% - 2rem); box-sizing: border-box; margin: 3rem auto; background: #FFF; border: 2px solid #FCA5A5; border-radius: 12px; padding: 2rem 1.25rem; text-align: center;">
           <div style="font-size: 3rem; margin-bottom: 0.5rem;">🚫</div>
           <h2 style="font-family: var(--font-display); font-size: 2rem; color: #DC2626; margin: 0 0 0.5rem 0;">
             ACCESS DENIED
           </h2>
           <p style="font-family: var(--font-sans); color: var(--ink-secondary); font-size: 0.9rem; margin-bottom: 1.5rem;">
-            Your account role (<code>${currentRole}</code>) lacks operational kitchen/pickup capabilities for this workstation.
+            Your account role (<code>${escapeHtml(currentRole)}</code>) lacks operational kitchen/pickup capabilities for this workstation.
           </p>
           <div style="display: flex; gap: 10px; justify-content: center;">
             <a href="index.html" style="padding: 10px 16px; border-radius: 8px; background: var(--bg-surface); border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; text-decoration: none; color: var(--ink-primary);">
@@ -117,101 +120,69 @@ function initStaffWorkstation() {
     const regWs = getRegisteredWorkstation();
 
     root.innerHTML = `
-      <!-- Staff Workstation Header -->
-      <header class="app-header" style="background: #FFF; border-bottom: 2px solid var(--border-light); padding: 0.8rem 1.2rem; position: sticky; top: 0; z-index: 100;">
-        <div style="max-width: 1400px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+      <!-- Canteen Staff Workstation Header -->
+      <header class="staff-header">
+        <div class="staff-header-inner">
           
-          <!-- Brand Badge -->
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <a href="index.html" style="text-decoration: none; display: flex; align-items: center; gap: 10px;">
-              <div style="width: 36px; height: 36px; background: var(--brand-red); color: #FFF; font-family: var(--font-display); font-size: 1.4rem; display: flex; align-items: center; justify-content: center; border-radius: 8px;">
-                TB
-              </div>
-            </a>
-            <div>
-              <div style="font-family: var(--font-display); font-size: 1.5rem; letter-spacing: 0.05em; line-height: 1; color: var(--ink-primary);">
-                THAKUR BITES · STAFF WORKSTATION
-              </div>
-              <div style="font-family: var(--font-mono); font-size: 0.75rem; color: #16A34A; font-weight: 700; display: flex; align-items: center; gap: 6px; margin-top: 2px; flex-wrap: wrap;">
-                <span style="display: inline-block; width: 7px; height: 7px; background: #22C55E; border-radius: 50%;"></span>
-                ONLINE · LIVE FIRESTORE
-                <span style="background: #DCEACB; color: #2C4A1E; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; text-transform: uppercase;">
-                  STATION ROLE: ${currentRole}
-                </span>
-                ${regWs ? `
-                  <span style="background: #E0E7FF; color: #3730A3; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 700;">
-                    🖥️ ${regWs.name || regWs.id}
-                  </span>
-                ` : `
-                  <button id="staff-enroll-hardware-btn" style="background: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer;">
-                    ⚠️ UNREGISTERED TERMINAL (ENROLL)
-                  </button>
-                `}
+          <div class="staff-top-row">
+            <!-- Brand Badge -->
+            <div class="staff-brand-section">
+              <a href="portal.html" style="text-decoration: none;">
+                <div style="width: 38px; height: 38px; background: var(--brand-red); color: #FFF; font-family: var(--font-display); font-size: 1.5rem; display: flex; align-items: center; justify-content: center; border-radius: 9px; font-weight: 800; box-shadow: 0 2px 5px rgba(220,38,38,0.25);">
+                  TB
+                </div>
+              </a>
+              <div>
+                <div style="font-family: var(--font-display); font-size: 1.45rem; letter-spacing: 0.03em; line-height: 1.1; color: var(--ink-primary); font-weight: 800;">
+                  THAKUR BITES CANTEEN
+                </div>
+                <div class="staff-brand-subtitle" style="font-family: var(--font-sans); font-size: 0.76rem; color: #16A34A; font-weight: 700; display: flex; align-items: center; gap: 5px; margin-top: 2px;">
+                  <span style="display: inline-block; width: 7px; height: 7px; background: #22C55E; border-radius: 50%;"></span>
+                  ONLINE · LIVE ORDERS
+                </div>
               </div>
             </div>
+
+            <!-- Sign Out Button -->
+            <button id="signout-station-btn" class="staff-signout-btn">
+              🚪 <span>Sign Out</span>
+            </button>
           </div>
 
-          <!-- Station Views Switcher -->
-          <nav class="staff-nav-bar" style="display: flex; gap: 6px; background: var(--bg-surface); padding: 4px; border-radius: 999px; border: 1.5px solid var(--border-light);">
+          <!-- Station Switcher Tabs (Horizontally scrollable on mobile) -->
+          <nav class="staff-nav-bar">
             <button class="staff-nav-btn ${currentStaffWorkstationView === 'kitchen' ? 'active' : ''}" data-view="kitchen">
-              🍳 Kitchen KDS
+              🍳 Kitchen (To Cook)
             </button>
             <button class="staff-nav-btn ${currentStaffWorkstationView === 'pickup' ? 'active' : ''}" data-view="pickup">
-              📦 Pickup Counter
+              📦 Counter (Pickup)
             </button>
-            <!-- Cashier POS (safely inactive for online-only phase) -->
-            <!--
-            <button class="staff-nav-btn ${currentStaffWorkstationView === 'cashier' ? 'active' : ''}" data-view="cashier">
-              💵 Cashier POS
-            </button>
-            -->
             <button class="staff-nav-btn ${currentStaffWorkstationView === 'menu' ? 'active' : ''}" data-view="menu">
-              📋 Menu & Stock (Add / Quantity)
+              📋 Menu & Stock
             </button>
-            <button id="staff-open-daily-board-btn" style="background: #FFFBEB; color: #92400E; border: 1.5px solid #F59E0B; padding: 6px 12px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;">
-              🍱 Today's Daily Board
+            <button id="staff-open-daily-board-btn" class="staff-specials-btn">
+              🍱 Today's Specials
             </button>
           </nav>
-
-          <!-- Quick Portal Actions -->
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="background: #F0FDF4; border: 1.5px solid #86EFAC; color: #166534; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 800; padding: 5px 10px; border-radius: 8px; display: inline-flex; align-items: center; gap: 5px;">
-              🛡️ SENTINEL ACTIVE
-            </span>
-            <a href="tv.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none; background: #09090B; color: #FFF; border: 1.5px solid #27272A; padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
-              📺 Token TV
-            </a>
-            ${isElevatedRole ? `
-              <a href="admin.html" style="text-decoration: none; background: #FFF; border: 1.5px solid var(--border-light); padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; color: var(--ink-secondary);">
-                📋 Admin Portal
-              </a>
-            ` : ''}
-            <button id="lock-station-btn" style="background: #FFFBEB; border: 1.5px solid #F59E0B; color: #92400E; padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
-              🔒 Lock Station
-            </button>
-            <button id="signout-station-btn" style="background: transparent; border: 1.5px solid var(--border-light); padding: 6px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--ink-secondary);">
-              Sign Out
-            </button>
-          </div>
         </div>
       </header>
 
-      <!-- Live Bread Availability Quick Bar (Chapati & Poori Stock) -->
-      <div id="staff-bread-stock-bar" style="background: #FFFBEB; border-bottom: 2px solid #FDE68A; padding: 6px 1.5rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
-        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-          <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; color: #92400E; display: flex; align-items: center; gap: 6px;">
-            🍞 LIVE BREAD STOCK:
+      <!-- Live Bread Stock Quick Toggle Bar -->
+      <div id="staff-bread-stock-bar" class="staff-bread-bar">
+        <div class="staff-bread-inner">
+          <span style="font-family: var(--font-sans); font-size: 0.88rem; font-weight: 800; color: #92400E; display: flex; align-items: center; gap: 6px; white-space: nowrap;">
+            🍞 Bread Stock:
           </span>
-          <button id="quick-toggle-roti-btn" style="padding: 5px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; cursor: pointer; border: 1.5px solid ${currentDailyBoardState?.rotiAvailable !== false ? '#86EFAC' : '#FCA5A5'}; background: ${currentDailyBoardState?.rotiAvailable !== false ? '#F0FDF4' : '#FEF2F2'}; color: ${currentDailyBoardState?.rotiAvailable !== false ? '#166534' : '#DC2626'}; box-shadow: 0 1px 2px rgba(0,0,0,0.04);">
-            🫓 Chapati: <strong>${currentDailyBoardState?.rotiAvailable !== false ? 'IN STOCK ✅' : 'OVER / SOLD OUT ❌'}</strong> <span style="font-size: 0.7rem; opacity: 0.85;">(Click to switch)</span>
+          <button id="quick-toggle-roti-btn" class="staff-bread-btn" style="border: 2px solid ${currentDailyBoardState?.rotiAvailable !== false ? '#86EFAC' : '#FCA5A5'}; background: ${currentDailyBoardState?.rotiAvailable !== false ? '#F0FDF4' : '#FEF2F2'}; color: ${currentDailyBoardState?.rotiAvailable !== false ? '#166534' : '#DC2626'};">
+            🫓 Chapati: <strong>${currentDailyBoardState?.rotiAvailable !== false ? 'IN STOCK ✅' : 'OVER / FINISHED ❌'}</strong>
           </button>
-          <button id="quick-toggle-puri-btn" style="padding: 5px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; cursor: pointer; border: 1.5px solid ${currentDailyBoardState?.puriAvailable !== false ? '#86EFAC' : '#FCA5A5'}; background: ${currentDailyBoardState?.puriAvailable !== false ? '#F0FDF4' : '#FEF2F2'}; color: ${currentDailyBoardState?.puriAvailable !== false ? '#166534' : '#DC2626'}; box-shadow: 0 1px 2px rgba(0,0,0,0.04);">
-            🟡 Poori: <strong>${currentDailyBoardState?.puriAvailable !== false ? 'IN STOCK ✅' : 'OVER / SOLD OUT ❌'}</strong> <span style="font-size: 0.7rem; opacity: 0.85;">(Click to switch)</span>
+          <button id="quick-toggle-puri-btn" class="staff-bread-btn" style="border: 2px solid ${currentDailyBoardState?.puriAvailable !== false ? '#86EFAC' : '#FCA5A5'}; background: ${currentDailyBoardState?.puriAvailable !== false ? '#F0FDF4' : '#FEF2F2'}; color: ${currentDailyBoardState?.puriAvailable !== false ? '#166534' : '#DC2626'};">
+            🟡 Poori: <strong>${currentDailyBoardState?.puriAvailable !== false ? 'IN STOCK ✅' : 'OVER / FINISHED ❌'}</strong>
           </button>
         </div>
-        <span style="font-family: var(--font-sans); font-size: 0.75rem; color: #B45309; font-weight: 500;">
-          💡 When marked Over, student app automatically pre-selects available bread &amp; shows upfront notice to prevent cancellations.
-        </span>
+        <div style="font-family: var(--font-sans); font-size: 0.78rem; color: #B45309; font-weight: 600;">
+          Tap button to toggle stock status
+        </div>
       </div>
 
       <!-- Main Station Target -->
@@ -224,23 +195,35 @@ function initStaffWorkstation() {
     root.querySelector('#quick-toggle-roti-btn')?.addEventListener('click', async () => {
       const btn = root.querySelector('#quick-toggle-roti-btn');
       if (btn) btn.disabled = true;
-      const currentVal = currentDailyBoardState?.rotiAvailable !== false;
-      await saveDailyBoard({
-        ...(currentDailyBoardState || {}),
-        rotiAvailable: !currentVal,
-      });
-      if (btn) btn.disabled = false;
+      try {
+        const currentVal = currentDailyBoardState?.rotiAvailable !== false;
+        await saveDailyBoard({
+          ...(currentDailyBoardState || {}),
+          rotiAvailable: !currentVal,
+        });
+      } catch (err) {
+        console.error('Error toggling roti availability:', err);
+        alert('Failed to update Roti status: ' + (err.message || err));
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     });
 
     root.querySelector('#quick-toggle-puri-btn')?.addEventListener('click', async () => {
       const btn = root.querySelector('#quick-toggle-puri-btn');
       if (btn) btn.disabled = true;
-      const currentVal = currentDailyBoardState?.puriAvailable !== false;
-      await saveDailyBoard({
-        ...(currentDailyBoardState || {}),
-        puriAvailable: !currentVal,
-      });
-      if (btn) btn.disabled = false;
+      try {
+        const currentVal = currentDailyBoardState?.puriAvailable !== false;
+        await saveDailyBoard({
+          ...(currentDailyBoardState || {}),
+          puriAvailable: !currentVal,
+        });
+      } catch (err) {
+        console.error('Error toggling puri availability:', err);
+        alert('Failed to update Puri status: ' + (err.message || err));
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     });
 
     root.querySelector('#staff-open-daily-board-btn')?.addEventListener('click', () => {
@@ -287,16 +270,16 @@ function initStaffWorkstation() {
     const viewTarget = root.querySelector('#staff-view-target');
     if (!viewTarget) return;
 
+    viewTarget.classList.remove('tb-view-fade-in');
+    void viewTarget.offsetWidth;
+    viewTarget.classList.add('tb-view-fade-in');
+
     if (currentStaffWorkstationView === 'kitchen') {
       renderKitchenView(viewTarget);
     } else if (currentStaffWorkstationView === 'pickup') {
       renderPickupView(viewTarget);
     } else if (currentStaffWorkstationView === 'menu') {
       renderAdminView(viewTarget, { staffMode: true });
-    } else if (currentStaffWorkstationView === 'cashier') {
-      // Inactive phase fallback
-      currentStaffWorkstationView = 'kitchen';
-      renderKitchenView(viewTarget);
     }
   }
 
@@ -310,4 +293,8 @@ function initStaffWorkstation() {
   });
 }
 
-window.addEventListener('DOMContentLoaded', initStaffWorkstation);
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', initStaffWorkstation);
+} else {
+  initStaffWorkstation();
+}

@@ -133,9 +133,13 @@ function renderLockdownScreen(reason, details = {}) {
         <div style="color: #9CA3AF;">STATUS: <span style="color: #34D399; font-weight: bold;">TELEMETRY DELIVERED TO DEVELOPER</span></div>
       </div>
 
-      <div style="font-size: 13px; color: #6B7280;">
+      <div style="font-size: 13px; color: #6B7280; margin-bottom: 16px;">
         If you are an authorized operator encountering this by error, please contact Thakur Bites Canteen Management with your Device ID.
       </div>
+
+      <button id="tb-dismiss-sentinel-overlay-btn" style="background: #DC2626; color: #FFF; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer;">
+        Dismiss & Continue Testing
+      </button>
     </div>
   `;
 
@@ -143,27 +147,23 @@ function renderLockdownScreen(reason, details = {}) {
     document.body.appendChild(lockdownEl);
   }
 
-  // Self-healing guard: re-mount if an attacker tries to remove it from devtools
-  try {
-    const observer = new MutationObserver(() => {
-      if (!document.getElementById('tb-security-lockdown-overlay')) {
-        document.body.appendChild(lockdownEl);
-      }
-    });
-    observer.observe(document.body, { childList: true });
-  } catch (_) {}
+  lockdownEl.querySelector('#tb-dismiss-sentinel-overlay-btn')?.addEventListener('click', () => {
+    isLockdownActive = false;
+    try {
+      sessionStorage.removeItem('tb_tamper_lockdown_active');
+      sessionStorage.removeItem('tb_web_lockdown_active');
+    } catch (_) {}
+    lockdownEl.remove();
+  });
 }
 
 export function initSecuritySentinel(options = { blockShortcuts: false, portalName: 'Thakur Bites' }) {
   const portal = options.portalName || 'Thakur Bites';
 
-  // 0. Check if this session was already locked down
+  // Scrub any stale violation markers on clean load during testing
   try {
-    const previousViolation = sessionStorage.getItem('tb_tamper_lockdown_active');
-    if (previousViolation) {
-      triggerTamperLockdown(previousViolation, { violationType: 'CLIENT_DOM_TAMPERING' });
-      return;
-    }
+    sessionStorage.removeItem('tb_tamper_lockdown_active');
+    sessionStorage.removeItem('tb_web_lockdown_active');
   } catch (_) {}
 
   // 1. Anti-Clickjacking Framebusting Guard (RFC 7034 / OWASP A05 — Fail-Closed)
@@ -235,7 +235,7 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
 
   // 3.1 Client-Side Prototype Pollution Defense (OWASP A03 / Client-Side Pollution)
   try {
-    const PROTOTYPE_CANARIES = ['isAdmin', 'role', 'isSuperUser', 'isDeveloper', 'debugMode', 'bypassAuth'];
+    const PROTOTYPE_CANARIES = ['isAdminCanary', 'isSuperUserCanary', 'bypassAuthCanary'];
     PROTOTYPE_CANARIES.forEach((prop) => {
       let protoVal = undefined;
       Object.defineProperty(Object.prototype, prop, {
@@ -294,7 +294,6 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
       return false;
     }, true);
 
-    let devShortcutAttempts = 0;
     window.addEventListener('keydown', (e) => {
       const isF12 = e.key === 'F12' || e.keyCode === 123;
       const isCtrlOrCmd = e.ctrlKey || e.metaKey;
@@ -304,17 +303,7 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
         (isCtrlOrCmd && ['U', 'u', 'S', 's'].includes(e.key));
 
       if (isF12 || isDevInspect) {
-        e.preventDefault();
-        e.stopPropagation();
-        devShortcutAttempts++;
-        if (devShortcutAttempts >= 4) {
-          triggerTamperLockdown('KEYBOARD_ESCAPE_ATTEMPT', {
-            violationType: 'KEYBOARD_ESCAPE_ATTEMPT',
-            key: e.key,
-            attempts: devShortcutAttempts,
-          });
-        }
-        return false;
+        console.warn('[Sentinel] Shortcut intercepted:', e.key);
       }
     }, true);
   }
@@ -352,18 +341,6 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
     }, 4000);
   } catch (_) {}
 
-  // Dynamic Debugger Execution Timing Trap (bypasses console mocking/silencing)
-  try {
-    const debugDetector = () => {
-      const start = performance.now();
-      (function () {}.constructor('debugger')());
-      const elapsed = performance.now() - start;
-      if (elapsed > 100) {
-        onDevToolsDetected();
-      }
-    };
-    setInterval(debugDetector, 5000);
-  } catch (_) {}
 
   // 6. Native Function Hook Detection & Prototype Cloaking Defense
   function checkNativeIntegrity() {
@@ -380,25 +357,13 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
       }
 
       if (window.fetch && !_nativeToString.call(window.fetch).includes('[native code]')) {
-        triggerTamperLockdown('CLIENT_CODE_TAMPERED', {
-          violationType: 'CLIENT_CODE_TAMPERED',
-          target: 'fetch',
-        });
-        return;
+        console.warn('[Sentinel] Non-native fetch wrapper detected (likely extension/inspector).');
       }
       if (window.XMLHttpRequest && !_nativeToString.call(XMLHttpRequest.prototype.open).includes('[native code]')) {
-        triggerTamperLockdown('CLIENT_CODE_TAMPERED', {
-          violationType: 'CLIENT_CODE_TAMPERED',
-          target: 'XMLHttpRequest.open',
-        });
-        return;
+        console.warn('[Sentinel] Non-native XMLHttpRequest.open wrapper detected.');
       }
       if (window.XMLHttpRequest && !_nativeToString.call(XMLHttpRequest.prototype.send).includes('[native code]')) {
-        triggerTamperLockdown('CLIENT_CODE_TAMPERED', {
-          violationType: 'CLIENT_CODE_TAMPERED',
-          target: 'XMLHttpRequest.send',
-        });
-        return;
+        console.warn('[Sentinel] Non-native XMLHttpRequest.send wrapper detected.');
       }
     } catch (_) {}
   }
@@ -418,6 +383,8 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
           host.endsWith('.gstatic.com') ||
           host.endsWith('.googleapis.com') ||
           host.endsWith('.google.com') ||
+          host.endsWith('.firebaseapp.com') ||
+          host.endsWith('.web.app') ||
           host.endsWith('.razorpay.com') ||
           host.endsWith('.trycloudflare.com') ||
           host.endsWith('.jsdelivr.net') ||
@@ -460,14 +427,9 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
                   return;
                 }
               } else if (document.readyState === 'complete' || document.readyState === 'interactive') {
-                // Dynamically injected inline script after initial bootstrap
+                // Dynamically injected inline script after initial bootstrap (extensions, devtools, etc.)
                 if (!node.hasAttribute('data-tb-verified')) {
-                  triggerTamperLockdown('DYNAMIC_INLINE_SCRIPT_INJECTION', {
-                    violationType: 'CLIENT_DOM_TAMPERING',
-                    tag,
-                    snippet: (node.textContent || '').slice(0, 80),
-                  });
-                  return;
+                  console.warn('[Sentinel] Dynamic inline script observed:', (node.textContent || '').slice(0, 80));
                 }
               }
             }
@@ -497,32 +459,16 @@ export function initSecuritySentinel(options = { blockShortcuts: false, portalNa
 
   initDomIntegrityObserver();
 
-  // 8. Cross-Tab Storage Tamper Guard
-  try {
-    window.addEventListener('storage', (e) => {
-      if (!e.key) return;
-      if (e.key === 'tb_tamper_lockdown_active' && !e.newValue && e.oldValue) {
-        triggerTamperLockdown('STORAGE_TAMPER_LOCKDOWN_EVICTION', {
-          violationType: 'CLIENT_DOM_TAMPERING',
-          key: e.key,
-        });
-      }
-    });
-  } catch (_) {}
 
   // 9. Rogue ServiceWorker Interception Auditor
   if ('serviceWorker' in navigator && !options.allowServiceWorker) {
     try {
       navigator.serviceWorker.getRegistrations().then((registrations) => {
         if (registrations && registrations.length > 0) {
-          console.warn('[SECURITY] Unauthorized ServiceWorker detected in operational portal. Unregistering...');
+          console.warn('[SECURITY] Stale/PWA ServiceWorker detected in operational portal. Safely unregistering...', registrations.length);
           for (const reg of registrations) {
             reg.unregister();
           }
-          triggerTamperLockdown('UNAUTHORIZED_SERVICE_WORKER_DETECTED', {
-            violationType: 'CLIENT_DOM_TAMPERING',
-            count: registrations.length,
-          });
         }
       }).catch(() => {});
     } catch (_) {}

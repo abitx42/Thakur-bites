@@ -61,14 +61,6 @@ try {
     console.debug?.(probe);
   }, 4000);
 
-  setInterval(() => {
-    const start = performance.now();
-    (function () {}.constructor('debugger')());
-    const elapsed = performance.now() - start;
-    if (elapsed > 100) {
-      console.warn('[SECURITY] TV Display interactive debugger detected.');
-    }
-  }, 5000);
 } catch (_) {}
 
 const app = initializeApp(firebaseConfig, 'TB_TV_DISPLAY');
@@ -434,7 +426,10 @@ function startTVStream() {
         // State 2: Reconnecting / Stale Data State
         console.warn("TV Stream connection interrupted:", error);
         statusPill.className = 'status-pill reconnecting';
-        statusText.textContent = 'RECONNECTING';
+        statusText.textContent = navigator.onLine ? 'RECONNECTING' : 'OFFLINE';
+        reconnectBanner.textContent = navigator.onLine 
+          ? '⚡️ Reconnecting to canteen server... Showing cached queue.' 
+          : '⚠️ No Internet Connection — TV Display is offline. Please check canteen Wi-Fi/network.';
         reconnectBanner.classList.remove('hidden');
 
         // Exponential backoff
@@ -446,7 +441,10 @@ function startTVStream() {
   } catch (e) {
     console.warn("TV Init error:", e);
     statusPill.className = 'status-pill reconnecting';
-    statusText.textContent = 'RECONNECTING';
+    statusText.textContent = navigator.onLine ? 'RECONNECTING' : 'OFFLINE';
+    reconnectBanner.textContent = navigator.onLine
+      ? '⚡️ Reconnecting to canteen server... Showing cached queue.'
+      : '⚠️ No Internet Connection — TV Display is offline. Please check canteen Wi-Fi/network.';
     reconnectBanner.classList.remove('hidden');
     
     const nextDelay = reconnectDelayMs;
@@ -455,5 +453,24 @@ function startTVStream() {
   }
 }
 
+// Real-time network connectivity listeners
+window.addEventListener('offline', () => {
+  statusPill.className = 'status-pill reconnecting';
+  statusText.textContent = 'OFFLINE';
+  reconnectBanner.textContent = '⚠️ No Internet Connection — TV Display is offline. Please check canteen Wi-Fi/network.';
+  reconnectBanner.classList.remove('hidden');
+});
+
+window.addEventListener('online', () => {
+  statusText.textContent = 'CONNECTING...';
+  reconnectBanner.textContent = '⚡️ Internet Restored! Reconnecting live queue...';
+  reconnectDelayMs = 1000;
+  startTVStream();
+});
+
 // Start Stream
-startTVStream();
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', startTVStream);
+} else {
+  startTVStream();
+}

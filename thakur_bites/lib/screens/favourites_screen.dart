@@ -8,6 +8,7 @@ import '../services/preferences_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bouncy_tap.dart';
 import '../widgets/menu_item_card.dart';
+import 'login_sheet.dart';
 
 /// Platform 2.0 — Customer Favourite Dishes Screen with subtle entrance and idle animations
 class FavouritesScreen extends StatelessWidget {
@@ -20,11 +21,52 @@ class FavouritesScreen extends StatelessWidget {
     final prefsService = PreferencesService();
     final firestore = FirestoreService();
 
-    if (user == null) {
+    if (user == null || auth.isGuest) {
       return Scaffold(
         backgroundColor: AppColors.surface,
-        appBar: AppBar(title: const Text('Saved Favourites')),
-        body: const Center(child: Text('Please sign in to view your saved dishes.')),
+        appBar: AppBar(
+          title: Text('Saved Favourites ❤️', style: AppFonts.display(fontSize: 20)),
+          backgroundColor: AppColors.surface,
+          elevation: 0,
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.favorite_border_rounded, size: 56, color: AppColors.inkSecondary),
+                const SizedBox(height: 16),
+                Text(
+                  'Sign in to view your saved dishes',
+                  style: AppFonts.display(fontSize: 18),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Your favourite snacks and quick re-orders will appear here.',
+                  style: AppFonts.body(fontSize: 14, color: AppColors.inkSecondary),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                BouncyTap(
+                  onTap: () => LoginSheet.show(context),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: AppColors.red,
+                      borderRadius: AppRadius.radiusMd,
+                    ),
+                    child: Text(
+                      'Sign In to Thakur Bites',
+                      style: AppFonts.body(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
 

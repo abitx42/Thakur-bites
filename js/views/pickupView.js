@@ -1,9 +1,11 @@
 // Phase 10 & Platform 2.0 — Counter Pickup & Dispatch View with Hardware Barcode/QR Scanner Engine
-import { db, fetchPickupOrders, updateOrderStatus, unlockOrder, functions } from '../firebase.js?v=5';
-import { collection, query, where, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { db, fetchPickupOrders, updateOrderStatus, unlockOrder, functions, cancelStaffOrder, processStaffRefund } from '../firebase.js?v=5';
+import { collection, query, where, onSnapshot, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
+import { getFriendlyErrorMessage } from '../networkSentinel.js';
 
+const inFlightOrderIds = new Set();
 let pollInterval = null;
 let unsubscribePickup = null;
 let currentOrders = [];
@@ -136,7 +138,7 @@ export function renderPickupView(container) {
           }
         }
         playScanSound(false);
-        scannerFeedbackMessage = `❌ Verification Failed: ${err.message || 'Invalid PIN or unready order'}`;
+        scannerFeedbackMessage = `❌ Verification Failed: ${getFriendlyErrorMessage(err, 'Invalid PIN or unready order')}`;
         scannerFeedbackType = 'error';
         render();
 
@@ -187,7 +189,7 @@ export function renderPickupView(container) {
         if (isReplay) {
           scannerFeedbackMessage = `🚨 REPLAY DETECTED: Order already collected! Do not hand over meal.`;
         } else {
-          scannerFeedbackMessage = `❌ Scan Error: ${err.message || 'Invalid or already consumed QR Token'}`;
+          scannerFeedbackMessage = `❌ Scan Error: ${getFriendlyErrorMessage(err, 'Invalid or already consumed QR Token')}`;
         }
         scannerFeedbackType = 'error';
         render();
@@ -235,28 +237,454 @@ export function renderPickupView(container) {
 
   window.addEventListener('keydown', keydownListener);
 
-  function render() {
-    const cleanSearch = searchFilter.trim().toLowerCase().replace('#', '');
+  function openRefundModal(orderId, tokenNumber, maxAmount) {
+    const existing = document.getElementById('tb-refund-modal');
+    if (existing) existing.remove();
 
-    // Filter active orders
-    const activeOrders = currentOrders.filter(o => o.status !== 'collected');
-    const collectedOrders = currentOrders.filter(o => o.status === 'collected');
+    const modal = document.createElement('div');
+    modal.id = 'tb-refund-modal';
+    modal.className = 'modal-overlay-fade-in';
+    modal.style.cssText = `
+      position: fixed; inset: 0; background: rgba(15, 23, 42, 0.65);
+      display: flex; align-items: center; justify-content: center; z-index: 9999;
+      padding: 1rem; backdrop-filter: blur(4px);
+    `;
+    const defaultAmount = maxAmount > 0 ? maxAmount : '';
+    modal.innerHTML = `
+      <div class="modal-card-pop-in" style="background: #FFF; border-radius: 16px; padding: 1.5rem; max-width: 440px; width: 100%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2); font-family: var(--font-sans);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h3 style="margin: 0; font-family: var(--font-display); font-size: 1.3rem; color: #DC2626; display: flex; align-items: center; gap: 8px;">
+            <span>💸</span> Issue Refund (${escapeHtml(tokenNumber)})
+          </h3>
+          <button id="close-refund-modal-btn" style="background: none; border: none; font-size: 1.4rem; cursor: pointer; color: var(--ink-secondary);">&times;</button>
+        </div>
+        
+        <p style="font-size: 0.85rem; color: var(--ink-secondary); margin-bottom: 1.2rem; line-height: 1.4;">
+          Authoritatively issue a refund for order <strong>${escapeHtml(tokenNumber)}</strong> via Cloud Function ledger.
+        </p>
 
-    // Split active into Ready (top priority, including ready-made) and In-Kitchen/Placed
-    const readyOrders = activeOrders.filter(o => o.status === 'ready' || o.isOnlyReadyMade);
-    const kitchenOrders = activeOrders.filter(o => !o.isOnlyReadyMade && (o.status === 'preparing' || o.status === 'placed' || o.status === 'confirmed' || o.status === 'paid'));
+        <div style="margin-bottom: 1rem;">
+          <label style="display: block; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-primary); margin-bottom: 4px;">
+            REFUND AMOUNT (₹):
+          </label>
+          <input 
+            type="number" 
+            id="refund-amount-input" 
+            step="1" 
+            min="1" 
+            max="${maxAmount > 0 ? maxAmount : 9999}" 
+            value="${defaultAmount}" 
+            placeholder="e.g. 50" 
+            style="width: 100%; padding: 8px 12px; border: 1.5px solid var(--border-light); border-radius: 8px; font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; box-sizing: border-box;"
+          />
+          <div style="font-size: 0.75rem; color: var(--ink-secondary); margin-top: 3px;">
+            ${maxAmount > 0 ? `Max order value: ₹${Number(maxAmount).toFixed(2)}` : 'Specify refund amount'}
+          </div>
+        </div>
 
+        <div style="margin-bottom: 1.5rem;">
+          <label style="display: block; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--ink-primary); margin-bottom: 4px;">
+            REASON:
+          </label>
+          <input 
+            type="text" 
+            id="refund-reason-input" 
+            value="Customer requested refund at counter" 
+            placeholder="e.g. Item unavailable, wrong order, quality issue" 
+            style="width: 100%; padding: 8px 12px; border: 1.5px solid var(--border-light); border-radius: 8px; font-family: var(--font-sans); font-size: 0.9rem; box-sizing: border-box;"
+          />
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+          <button id="cancel-refund-modal-btn" class="btn btn--secondary" style="flex: 1;">Cancel</button>
+          <button id="confirm-refund-modal-btn" class="btn btn--danger" style="flex: 1.5;">Confirm Refund</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const close = () => {
+      const card = modal.querySelector('.modal-card-pop-in');
+      if (card) {
+        card.classList.add('modal-card-exit');
+        setTimeout(() => modal.remove(), 120);
+      } else {
+        modal.remove();
+      }
+    };
+    modal.querySelector('#close-refund-modal-btn')?.addEventListener('click', close);
+    modal.querySelector('#cancel-refund-modal-btn')?.addEventListener('click', close);
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+    modal.querySelector('#confirm-refund-modal-btn')?.addEventListener('click', async () => {
+      const confirmBtn = modal.querySelector('#confirm-refund-modal-btn');
+      const amtStr = modal.querySelector('#refund-amount-input').value.trim();
+      const reason = modal.querySelector('#refund-reason-input').value.trim() || 'Counter refund';
+      const amt = parseFloat(amtStr);
+
+      if (isNaN(amt) || amt <= 0) {
+        alert('Please enter a valid refund amount in ₹');
+        return;
+      }
+
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Processing...';
+
+      try {
+        inFlightOrderIds.add(orderId);
+        const amountPaise = Math.round(amt * 100);
+        await processStaffRefund({ orderId, reason, amountPaise });
+        playScanSound(true);
+        close();
+        scannerFeedbackMessage = `💸 Refund of ₹${amt.toFixed(2)} processed for ${tokenNumber}!`;
+        scannerFeedbackType = 'success';
+        await loadPickupData();
+        setTimeout(() => {
+          if (scannerFeedbackMessage && scannerFeedbackMessage.includes(tokenNumber)) {
+            scannerFeedbackMessage = null;
+            render();
+          }
+        }, 5000);
+      } catch (err) {
+        console.error('Refund processing error:', err);
+        playScanSound(false);
+        alert('Refund Failed: ' + (err.message || err));
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Confirm Refund';
+      } finally {
+        inFlightOrderIds.delete(orderId);
+      }
+    });
+  }
+
+  function buildOrdersSectionsHtml(readyOrders, kitchenOrders, collectedOrders, cleanSearch) {
     const filterFn = (order) => {
       if (!cleanSearch) return true;
       const tokenMatch = order.tokenNumber && order.tokenNumber.toString().toLowerCase().replace('#', '').includes(cleanSearch);
       const nameMatch = order.studentName && order.studentName.toLowerCase().includes(cleanSearch);
       const rollMatch = order.studentRoll && order.studentRoll.toLowerCase().includes(cleanSearch);
-      return tokenMatch || nameMatch || rollMatch;
+      const pinMatch = order.pinCode && order.pinCode.toString().includes(cleanSearch);
+      return tokenMatch || nameMatch || rollMatch || pinMatch;
     };
 
     const displayReady = readyOrders.filter(filterFn);
     const displayKitchen = kitchenOrders.filter(filterFn);
     const displayCollected = collectedOrders.filter(filterFn);
+
+    return `
+      <!-- SECTION 1: READY FOR PICKUP (PRIMARY QUEUE) -->
+      <div style="margin-bottom: 2rem;">
+        <h3 style="font-family: var(--font-display); font-size: 1.4rem; letter-spacing: 0.03em; margin: 0 0 1rem 0; display: flex; align-items: center; gap: 8px;">
+          <span>READY FOR COLLECTION</span>
+          <span style="background: #DCFCE7; color: #166534; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; padding: 2px 8px; border-radius: 6px;">
+            ${displayReady.length} Orders
+          </span>
+        </h3>
+
+        ${displayReady.length === 0 ? `
+          <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 3rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 0.9rem;">
+            No orders ready for collection right now.
+          </div>
+        ` : `
+          <div class="pickup-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 1rem;">
+            ${displayReady.map(order => renderOrderCard(order, true)).join('')}
+          </div>
+        `}
+      </div>
+
+      <!-- SECTION 2: IN KITCHEN / PLACED -->
+      <div style="margin-bottom: 2rem;">
+        <h3 style="font-family: var(--font-display); font-size: 1.3rem; letter-spacing: 0.03em; margin: 0 0 1rem 0; color: var(--ink-secondary); display: flex; align-items: center; gap: 8px;">
+          <span>IN KITCHEN / PREPARING</span>
+          <span style="background: var(--bg-surface); color: var(--ink-secondary); font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 6px;">
+            ${displayKitchen.length} Orders
+          </span>
+        </h3>
+
+        ${displayKitchen.length === 0 ? `
+          <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 2rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 0.85rem;">
+            No pending kitchen orders matching filter.
+          </div>
+        ` : `
+          <div class="pickup-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 0.8rem;">
+            ${displayKitchen.map(order => renderOrderCard(order, false)).join('')}
+          </div>
+        `}
+      </div>
+
+      <!-- SECTION 3: COLLECTED HISTORY -->
+      <div>
+        <button id="toggle-history-btn" class="btn btn--secondary btn--sm" style="margin-bottom: 1rem;">
+          ${showCollectedHistory ? '▼ Hide Collected History' : '▶ Show Recently Collected History (' + displayCollected.length + ')'}
+        </button>
+
+        ${showCollectedHistory ? `
+          <div class="pickup-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 0.8rem;">
+            ${displayCollected.map(order => renderCollectedCard(order)).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  function attachOrderListeners(scopeEl) {
+    const historyToggle = scopeEl.querySelector('#toggle-history-btn');
+    if (historyToggle) {
+      historyToggle.addEventListener('click', () => {
+        showCollectedHistory = !showCollectedHistory;
+        updateOrdersSection();
+      });
+    }
+
+    scopeEl.querySelectorAll('.collect-action-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const orderId = btn.getAttribute('data-order-id');
+        const tokenNumber = btn.getAttribute('data-token') || 'Order';
+        const orderPin = btn.getAttribute('data-pin') || '';
+        if (inFlightOrderIds.has(orderId)) return;
+        inFlightOrderIds.add(orderId);
+
+        const origContent = btn.innerHTML;
+        btn.textContent = 'Handing over...';
+        btn.disabled = true;
+
+        const cardEl = btn.closest('.pickup-order-card');
+
+        try {
+          try {
+            const verifyFn = httpsCallable(functions, 'verifyPickup');
+            await verifyFn({ orderId, pinCode: orderPin || undefined, staffVerified: true });
+          } catch (fnErr) {
+            const errMsg = String(fnErr.message || fnErr).toLowerCase();
+            if (errMsg.includes('already_collected') || errMsg.includes('already collected')) {
+              alert(`Notice: Order ${tokenNumber} was already collected on another workstation.`);
+              await loadPickupData();
+              return;
+            }
+            console.warn("verifyPickup Cloud Function notice (falling back to direct Firestore update):", fnErr);
+            await updateOrderStatus(orderId, 'collected');
+          }
+
+          playScanSound(true);
+          scannerFeedbackMessage = `✅ ${tokenNumber} Handed Over & Collected!`;
+          scannerFeedbackType = 'success';
+          if (cardEl) {
+            cardEl.classList.add('card-collected');
+            await new Promise(r => setTimeout(r, 120));
+          }
+          await loadPickupData();
+          render();
+          setTimeout(() => {
+            if (scannerFeedbackMessage && scannerFeedbackMessage.includes(tokenNumber)) {
+              scannerFeedbackMessage = null;
+              render();
+            }
+          }, 4000);
+        } catch (err) {
+          console.error("Pickup collect error:", err);
+          playScanSound(false);
+          const isReplay = String(err.message || '').includes('ALREADY_COLLECTED');
+          const alertMsg = isReplay 
+            ? "🚨 REPLAY DETECTED: Order already collected! Do not hand over duplicate meal."
+            : ("Handover Error: " + getFriendlyErrorMessage(err, 'Unable to complete handover.'));
+          scannerFeedbackMessage = `❌ ${alertMsg}`;
+          scannerFeedbackType = 'error';
+          render();
+          alert(alertMsg);
+          btn.disabled = false;
+          btn.innerHTML = origContent;
+        } finally {
+          inFlightOrderIds.delete(orderId);
+        }
+      });
+    });
+
+    scopeEl.querySelectorAll('.verify-pin-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const orderId = btn.getAttribute('data-order-id');
+        const tokenNumber = btn.getAttribute('data-token') || 'Order';
+        if (inFlightOrderIds.has(orderId)) return;
+
+        const enteredPin = prompt(`Enter 4-digit Student Pickup PIN for ${tokenNumber}:`);
+        if (!enteredPin) return;
+
+        const cleanPin = enteredPin.trim();
+        if (!/^\d{4,8}$/.test(cleanPin)) {
+          alert('Invalid PIN format: PIN must be 4 to 8 numeric digits.');
+          return;
+        }
+
+        inFlightOrderIds.add(orderId);
+        const origContent = btn.innerHTML;
+        btn.textContent = 'Verifying...';
+        btn.disabled = true;
+
+        try {
+          try {
+            const verifyFn = httpsCallable(functions, 'verifyPickup');
+            await verifyFn({ orderId, pinCode: cleanPin });
+          } catch (fnErr) {
+            console.warn("verifyPickup PIN notice (falling back to direct verification):", fnErr);
+            const matchingOrder = currentOrders.find(o => (o.id || o.orderId) === orderId);
+            if (matchingOrder && matchingOrder.pinCode && String(matchingOrder.pinCode).trim() !== cleanPin) {
+              playScanSound(false);
+              alert("PIN Verification Failed: Incorrect PIN entered.");
+              btn.disabled = false;
+              btn.innerHTML = origContent;
+              return;
+            }
+            await updateOrderStatus(orderId, 'collected');
+          }
+
+          playScanSound(true);
+          scannerFeedbackMessage = `✅ ${tokenNumber} Verified with PIN & Collected!`;
+          scannerFeedbackType = 'success';
+          await loadPickupData();
+          render();
+          setTimeout(() => {
+            if (scannerFeedbackMessage && scannerFeedbackMessage.includes(tokenNumber)) {
+              scannerFeedbackMessage = null;
+              render();
+            }
+          }, 4000);
+        } catch (err) {
+          console.error("PIN verification error:", err);
+          playScanSound(false);
+          const isReplay = String(err.message || '').includes('ALREADY_COLLECTED');
+          const alertMsg = isReplay 
+            ? "🚨 REPLAY REJECTED: This order was ALREADY collected! Do not hand over meal."
+            : ("PIN Verification Failed: " + getFriendlyErrorMessage(err, 'Incorrect PIN or unready order.'));
+          scannerFeedbackMessage = `❌ ${alertMsg}`;
+          scannerFeedbackType = 'error';
+          render();
+          alert(alertMsg);
+          btn.disabled = false;
+          btn.innerHTML = origContent;
+        } finally {
+          inFlightOrderIds.delete(orderId);
+        }
+      });
+    });
+
+    scopeEl.querySelectorAll('.unlock-action-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const orderId = btn.getAttribute('data-order-id');
+        const reason = prompt('Enter manager verification note for unlocking order:', 'Student verified with physical College ID');
+        if (reason) {
+          btn.textContent = 'Unlocking...';
+          btn.disabled = true;
+          try {
+            await unlockOrder(orderId, reason);
+            await loadPickupData();
+          } catch (e) {
+            console.error("Unlock order error:", e);
+            btn.disabled = false;
+            btn.textContent = 'Retry Unlock';
+          }
+        }
+      });
+    });
+
+    scopeEl.querySelectorAll('.pickup-cancel-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const orderId = btn.getAttribute('data-order-id');
+        const tokenNumber = btn.getAttribute('data-token') || 'Order';
+        if (inFlightOrderIds.has(orderId)) return;
+
+        const reason = prompt(`Enter cancellation reason for ${tokenNumber}:`, 'Customer requested cancellation at counter');
+        if (!reason) return;
+
+        const confirmed = confirm(`Are you sure you want to CANCEL ${tokenNumber}?\nThis will release reserved stock and notify the customer.`);
+        if (!confirmed) return;
+
+        inFlightOrderIds.add(orderId);
+        const origContent = btn.innerHTML;
+        btn.textContent = 'Cancelling...';
+        btn.disabled = true;
+
+        try {
+          await cancelStaffOrder(orderId, reason);
+          playScanSound(true);
+          scannerFeedbackMessage = `🚫 Order ${tokenNumber} has been Cancelled.`;
+          scannerFeedbackType = 'success';
+          await loadPickupData();
+          setTimeout(() => {
+            if (scannerFeedbackMessage && scannerFeedbackMessage.includes(tokenNumber)) {
+              scannerFeedbackMessage = null;
+              render();
+            }
+          }, 4000);
+        } catch (err) {
+          console.error("Staff cancellation error:", err);
+          playScanSound(false);
+          alert("Cancellation Failed: " + (err.message || err));
+          btn.disabled = false;
+          btn.innerHTML = origContent;
+        } finally {
+          inFlightOrderIds.delete(orderId);
+        }
+      });
+    });
+
+    scopeEl.querySelectorAll('.pickup-refund-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const orderId = btn.getAttribute('data-order-id');
+        const tokenNumber = btn.getAttribute('data-token') || 'Order';
+        const rawAmt = btn.getAttribute('data-amount');
+        const maxAmount = rawAmt ? parseFloat(rawAmt) : 0;
+        openRefundModal(orderId, tokenNumber, maxAmount);
+      });
+    });
+  }
+
+  function updateOrdersSection() {
+    const ordersContainer = container.querySelector('#pickup-orders-container');
+    if (!ordersContainer) {
+      render();
+      return;
+    }
+    const cleanSearch = searchFilter.trim().toLowerCase().replace('#', '');
+    const activeOrders = currentOrders.filter(o => o.status !== 'collected' && o.status !== 'cancelled');
+    const collectedOrders = currentOrders.filter(o => o.status === 'collected');
+    const readyOrders = activeOrders.filter(o => o.status === 'ready' || (o.isOnlyReadyMade && (o.status === 'confirmed' || o.status === 'placed' || o.status === 'paid')));
+    const kitchenOrders = activeOrders.filter(o => !o.isOnlyReadyMade && (o.status === 'preparing' || o.status === 'placed' || o.status === 'confirmed' || o.status === 'paid'));
+
+    ordersContainer.innerHTML = buildOrdersSectionsHtml(readyOrders, kitchenOrders, collectedOrders, cleanSearch);
+    attachOrderListeners(ordersContainer);
+
+    // Update clear button visibility
+    const clearBtnWrapper = container.querySelector('#filter-clear-wrapper');
+    if (clearBtnWrapper) {
+      clearBtnWrapper.innerHTML = searchFilter ? `
+        <button id="clear-filter-btn" class="btn btn--secondary btn--sm">
+          Clear
+        </button>
+      ` : '';
+      const newClearBtn = container.querySelector('#clear-filter-btn');
+      if (newClearBtn) {
+        newClearBtn.addEventListener('click', () => {
+          searchFilter = '';
+          const filterInput = container.querySelector('#pickup-filter-input');
+          if (filterInput) filterInput.value = '';
+          updateOrdersSection();
+        });
+      }
+    }
+  }
+
+  function render() {
+    const filterInputNow = container.querySelector('#pickup-filter-input');
+    if (filterInputNow && document.activeElement === filterInputNow) {
+      updateOrdersSection();
+      return;
+    }
+
+    const cleanSearch = searchFilter.trim().toLowerCase().replace('#', '');
+    const activeOrders = currentOrders.filter(o => o.status !== 'collected' && o.status !== 'cancelled');
+    const collectedOrders = currentOrders.filter(o => o.status === 'collected');
+    const readyOrders = activeOrders.filter(o => o.status === 'ready' || (o.isOnlyReadyMade && (o.status === 'confirmed' || o.status === 'placed' || o.status === 'paid')));
+    const kitchenOrders = activeOrders.filter(o => !o.isOnlyReadyMade && (o.status === 'preparing' || o.status === 'placed' || o.status === 'confirmed' || o.status === 'paid'));
 
     container.innerHTML = `
       <div class="main-wrapper" style="max-width: 1200px; margin: 0 auto; padding: 1.5rem 1rem;">
@@ -265,19 +693,12 @@ export function renderPickupView(container) {
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
           <div>
             <div style="display: flex; align-items: center; gap: 10px;">
-              <h2 style="font-family: var(--font-display); font-size: 2.2rem; letter-spacing: 0.05em; margin: 0; line-height: 1;">
-                COUNTER PICKUP & DISPATCH
+              <h2 style="font-family: var(--font-display); font-size: 2.2rem; letter-spacing: 0.04em; margin: 0; line-height: 1;">
+                FOOD PICKUP COUNTER
               </h2>
-              <span style="background: #22C55E; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; display: flex; align-items: center; gap: 4px;">
-                <span style="width: 6px; height: 6px; background: #FFF; border-radius: 50%;"></span>
-                LIVE STREAM
-              </span>
-              <span style="background: #0284C7; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; display: flex; align-items: center; gap: 4px;">
-                📟 2D SCANNER ACTIVE
-              </span>
             </div>
-            <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px;">
-              Scan customer QR code or enter PIN to mark collected. Hardware USB/Bluetooth barcode scanner supported.
+            <p style="font-family: var(--font-sans); font-size: 0.9rem; color: var(--ink-secondary); margin-top: 4px; font-weight: 500;">
+              Click <strong>✓ Handover & Collect</strong> when giving food to the student.
             </p>
           </div>
 
@@ -314,7 +735,7 @@ export function renderPickupView(container) {
           </div>
         ` : ''}
 
-        <!-- Quick Filter Input -->
+        <!-- Quick Filter Input (Isolated from re-render thrash) -->
         <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 12px; padding: 0.7rem 1.2rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
           <span style="font-size: 1.2rem;">🔍</span>
           <input 
@@ -324,80 +745,33 @@ export function renderPickupView(container) {
             value="${escapeHtml(searchFilter)}"
             style="flex: 1; border: none; outline: none; font-family: var(--font-mono); font-size: 1rem; font-weight: 600; color: var(--ink-primary); background: transparent;"
           />
-          ${searchFilter ? `
-            <button id="clear-filter-btn" class="btn btn--secondary btn--sm">
-              Clear
-            </button>
-          ` : ''}
+          <div id="filter-clear-wrapper">
+            ${searchFilter ? `
+              <button id="clear-filter-btn" class="btn btn--secondary btn--sm">
+                Clear
+              </button>
+            ` : ''}
+          </div>
         </div>
 
-        <!-- SECTION 1: READY FOR PICKUP (PRIMARY QUEUE) -->
-        <div style="margin-bottom: 2rem;">
-          <h3 style="font-family: var(--font-display); font-size: 1.4rem; letter-spacing: 0.03em; margin: 0 0 1rem 0; display: flex; align-items: center; gap: 8px;">
-            <span>READY FOR COLLECTION</span>
-            <span style="background: #DCFCE7; color: #166534; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; padding: 2px 8px; border-radius: 6px;">
-              ${displayReady.length} Orders
-            </span>
-          </h3>
-
-          ${displayReady.length === 0 ? `
-            <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 3rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 0.9rem;">
-              No orders ready for collection right now.
-            </div>
-          ` : `
-            <div class="pickup-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 1rem;">
-              ${displayReady.map(order => renderOrderCard(order, true)).join('')}
-            </div>
-          `}
-        </div>
-
-        <!-- SECTION 2: IN KITCHEN / PLACED -->
-        <div style="margin-bottom: 2rem;">
-          <h3 style="font-family: var(--font-display); font-size: 1.3rem; letter-spacing: 0.03em; margin: 0 0 1rem 0; color: var(--ink-secondary); display: flex; align-items: center; gap: 8px;">
-            <span>IN KITCHEN / PREPARING</span>
-            <span style="background: var(--bg-surface); color: var(--ink-secondary); font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 6px;">
-              ${displayKitchen.length} Orders
-            </span>
-          </h3>
-
-          ${displayKitchen.length === 0 ? `
-            <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 2rem; text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 0.85rem;">
-              No pending kitchen orders matching filter.
-            </div>
-          ` : `
-            <div class="pickup-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 0.8rem;">
-              ${displayKitchen.map(order => renderOrderCard(order, false)).join('')}
-            </div>
-          `}
-        </div>
-
-        <!-- SECTION 3: COLLECTED HISTORY -->
-        <div>
-          <button id="toggle-history-btn" class="btn btn--secondary btn--sm" style="margin-bottom: 1rem;">
-            ${showCollectedHistory ? '▼ Hide Collected History' : '▶ Show Recently Collected History (' + displayCollected.length + ')'}
-          </button>
-
-          ${showCollectedHistory ? `
-            <div class="pickup-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 0.8rem;">
-              ${displayCollected.map(order => renderCollectedCard(order)).join('')}
-            </div>
-          ` : ''}
+        <!-- Orders Container (Updated seamlessly on filter typing) -->
+        <div id="pickup-orders-container">
+          ${buildOrdersSectionsHtml(readyOrders, kitchenOrders, collectedOrders, cleanSearch)}
         </div>
 
       </div>
     `;
 
-    // Event Listeners
+    // Attach search filter listener (debounced for high volume performance)
     const filterInput = container.querySelector('#pickup-filter-input');
+    let filterDebounceTimer = null;
     if (filterInput) {
       filterInput.addEventListener('input', (e) => {
-        searchFilter = e.target.value;
-        render();
-        const newInput = container.querySelector('#pickup-filter-input');
-        if (newInput) {
-          newInput.focus();
-          newInput.setSelectionRange(newInput.value.length, newInput.value.length);
-        }
+        if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+        filterDebounceTimer = setTimeout(() => {
+          searchFilter = e.target.value;
+          updateOrdersSection();
+        }, 180);
       });
     }
 
@@ -405,140 +779,16 @@ export function renderPickupView(container) {
     if (clearBtn) {
       clearBtn.addEventListener('click', () => {
         searchFilter = '';
-        render();
+        const input = container.querySelector('#pickup-filter-input');
+        if (input) input.value = '';
+        updateOrdersSection();
       });
     }
 
-    const historyToggle = container.querySelector('#toggle-history-btn');
-    if (historyToggle) {
-      historyToggle.addEventListener('click', () => {
-        showCollectedHistory = !showCollectedHistory;
-        render();
-      });
+    const ordersContainer = container.querySelector('#pickup-orders-container');
+    if (ordersContainer) {
+      attachOrderListeners(ordersContainer);
     }
-
-    container.querySelectorAll('.collect-action-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const orderId = btn.getAttribute('data-order-id');
-        const tokenNumber = btn.getAttribute('data-token') || 'Order';
-        const origContent = btn.innerHTML;
-        btn.textContent = 'Updating...';
-        btn.disabled = true;
-
-        try {
-          await updateOrderStatus(orderId, 'collected');
-          playScanSound(true);
-          scannerFeedbackMessage = `✅ ${tokenNumber} Marked as Collected!`;
-          scannerFeedbackType = 'success';
-          await loadPickupData();
-          setTimeout(() => {
-            if (scannerFeedbackMessage && scannerFeedbackMessage.includes(tokenNumber)) {
-              scannerFeedbackMessage = null;
-              render();
-            }
-          }, 4000);
-        } catch (err) {
-          console.error("Pickup collect error:", err);
-          playScanSound(false);
-          alert("Handover Error: " + (err.message || err));
-          btn.disabled = false;
-          btn.innerHTML = origContent;
-        }
-      });
-    });
-
-    container.querySelectorAll('.verify-pin-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const orderId = btn.getAttribute('data-order-id');
-        const tokenNumber = btn.getAttribute('data-token') || 'Order';
-        const enteredPin = prompt(`Enter 4-digit Student Pickup PIN for ${tokenNumber}:`);
-        if (!enteredPin) return;
-
-        const cleanPin = enteredPin.trim();
-        if (!/^\d{4,8}$/.test(cleanPin)) {
-          alert('Invalid PIN format: PIN must be 4 to 8 numeric digits.');
-          return;
-        }
-
-        const origContent = btn.innerHTML;
-        btn.textContent = 'Verifying...';
-        btn.disabled = true;
-
-        try {
-          const verifyFn = httpsCallable(functions, 'verifyPickup');
-          await verifyFn({ orderId, pinCode: cleanPin });
-          playScanSound(true);
-          scannerFeedbackMessage = `✅ ${tokenNumber} Verified with PIN & Collected!`;
-          scannerFeedbackType = 'success';
-          await loadPickupData();
-          setTimeout(() => {
-            if (scannerFeedbackMessage && scannerFeedbackMessage.includes(tokenNumber)) {
-              scannerFeedbackMessage = null;
-              render();
-            }
-          }, 4000);
-        } catch (err) {
-          if (err.code === 'not-found' || err.code === 'unavailable' || String(err.message || '').includes('not found') || String(err.message || '').includes('unavailable') || String(err.message || '').includes('internal')) {
-            // Spark plan fallback: check if PIN matches locally or fallback directly
-            const matchingOrder = currentOrders.find(o => (o.id || o.orderId) === orderId);
-            if (matchingOrder && matchingOrder.pinCode && String(matchingOrder.pinCode).trim() !== cleanPin) {
-              playScanSound(false);
-              alert("PIN Verification Failed: Incorrect PIN entered.");
-              btn.disabled = false;
-              btn.innerHTML = origContent;
-              return;
-            }
-            try {
-              await updateOrderStatus(orderId, 'collected');
-              playScanSound(true);
-              scannerFeedbackMessage = `✅ ${tokenNumber} Verified with PIN & Handed Over!`;
-              scannerFeedbackType = 'success';
-              render();
-              setTimeout(() => {
-                if (scannerFeedbackMessage && scannerFeedbackMessage.includes(tokenNumber)) {
-                  scannerFeedbackMessage = null;
-                  render();
-                }
-              }, 4000);
-              return;
-            } catch (fallbackErr) {
-              console.error("PIN fallback error:", fallbackErr);
-            }
-          }
-          console.error("PIN verification error:", err);
-          playScanSound(false);
-          const isReplay = String(err.message || '').includes('ALREADY_COLLECTED');
-          const alertMsg = isReplay 
-            ? "🚨 REPLAY REJECTED: This order was ALREADY collected! Do not hand over meal."
-            : ("PIN Verification Failed: " + (err.message || err));
-          scannerFeedbackMessage = `❌ ${alertMsg}`;
-          scannerFeedbackType = 'error';
-          render();
-          alert(alertMsg);
-          btn.disabled = false;
-          btn.innerHTML = origContent;
-        }
-      });
-    });
-
-    container.querySelectorAll('.unlock-action-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const orderId = btn.getAttribute('data-order-id');
-        const reason = prompt('Enter manager verification note for unlocking order:', 'Student verified with physical College ID');
-        if (reason) {
-          btn.textContent = 'Unlocking...';
-          btn.disabled = true;
-          try {
-            await unlockOrder(orderId, reason);
-            await loadPickupData();
-          } catch (e) {
-            console.error("Unlock order error:", e);
-            btn.disabled = false;
-            btn.textContent = 'Retry Unlock';
-          }
-        }
-      });
-    });
   }
 
   async function loadPickupData() {
@@ -557,7 +807,7 @@ export function renderPickupView(container) {
   // Connect real-time Firestore stream (sub-50ms) matching KDS
   try {
     const ordersCol = collection(db, 'orders');
-    const q = query(ordersCol, where('status', 'in', ['placed', 'confirmed', 'preparing', 'ready', 'collected']));
+    const q = query(ordersCol, where('status', 'in', ['placed', 'confirmed', 'preparing', 'ready', 'collected']), limit(100));
 
     unsubscribePickup = onSnapshot(q, (snapshot) => {
       // Clear fallback poll interval when snapshot is streaming healthily
@@ -612,15 +862,23 @@ function renderOrderCard(order, isReady) {
   const totalQty = items.reduce((s, i) => s + (i.quantity || 1), 0);
 
   return `
-    <div style="background: #FFF; border: 1.5px solid ${isReady ? '#86EFAC' : 'var(--border-light)'}; border-radius: 14px; padding: 1.2rem; box-shadow: 0 2px 6px rgba(0,0,0,0.03); display: flex; flex-direction: column; justify-content: space-between;">
+    <div class="pickup-order-card" style="background: #FFF; border: 1.5px solid ${isReady ? '#86EFAC' : 'var(--border-light)'}; border-radius: 14px; padding: 1.2rem; box-shadow: 0 2px 6px rgba(0,0,0,0.03); display: flex; flex-direction: column; justify-content: space-between;">
       <div>
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.8rem;">
           <div>
             <div style="font-family: var(--font-mono); font-size: 1.4rem; font-weight: 800; color: var(--ink-primary);">
               ${escapeHtml(order.tokenNumber || 'TB-???')}
             </div>
-            <div style="font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; color: var(--ink-secondary); margin-top: 2px;">
-              ${escapeHtml(order.studentName || 'Student')}
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px; flex-wrap: wrap;">
+              <span style="font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; color: var(--ink-secondary);">
+                ${escapeHtml(order.studentName || 'Student')}
+              </span>
+              ${order.pinCode ? `
+                <span style="display: inline-flex; align-items: center; gap: 4px; background: #EEF2FF; border: 1.5px solid #C7D2FE; border-radius: 6px; padding: 1px 7px; font-family: var(--font-mono); font-size: 0.82rem; font-weight: 800; color: #4338CA;" title="Student Pickup PIN for quick counter glance">
+                  <span style="font-size: 0.7rem; color: #6366F1; font-weight: 700;">PIN</span>
+                  <span>${escapeHtml(order.pinCode)}</span>
+                </span>
+              ` : ''}
             </div>
             ${order.createdAt ? `
               <div style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-secondary); margin-top: 2px;">
@@ -651,11 +909,15 @@ function renderOrderCard(order, isReady) {
           <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-bottom: 4px;">
             ITEMS (${totalQty}):
           </div>
-          ${items.map(item => `
-            <div style="display: flex; justify-content: space-between; font-family: var(--font-sans); font-size: 0.85rem; margin-bottom: 2px;">
-              <span>${item.quantity}x ${escapeHtml(item.name || item.itemId)}${item.customization ? ` <span style="font-size: 0.75rem; font-weight: 700; color: #D97706;">(${escapeHtml(item.customization)})</span>` : ''}</span>
+          ${items.map(item => {
+            const isInstant = item.type === 'instant' || (!item.type && ((item.category || '').toLowerCase().includes('drink') || (item.category || '').toLowerCase().includes('bottle')));
+            return `
+            <div style="display: flex; justify-content: space-between; align-items: center; font-family: var(--font-sans); font-size: 0.85rem; margin-bottom: 3px;">
+              <span><strong>${item.quantity}x</strong> ${escapeHtml(item.name || item.itemId)}${item.customization ? ` <span style="font-size: 0.75rem; font-weight: 700; color: #D97706;">(${escapeHtml(item.customization)})</span>` : ''}</span>
+              ${isInstant ? `<span style="font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700; color: #0284C7; background: #E0F2FE; padding: 1px 6px; border-radius: 4px;">📦 Packaged</span>` : ''}
             </div>
-          `).join('')}
+          `;
+          }).join('')}
         </div>
       </div>
 
@@ -669,11 +931,11 @@ function renderOrderCard(order, isReady) {
           </button>
         ` : ((isReady || order.isOnlyReadyMade) ? `
           <div style="display: flex; gap: 8px;">
-            <button class="btn btn--info verify-pin-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" style="flex: 1;">
-              <span>🔑 PIN</span>
+            <button class="btn btn--success collect-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" data-pin="${escapeHtml(order.pinCode || '')}" style="flex: 2; font-weight: 800; font-size: 0.95rem; padding: 10px 14px; border-radius: 8px; box-shadow: 0 2px 4px rgba(22,101,52,0.15);">
+              <span>✓ Handover & Collect</span>
             </button>
-            <button class="btn btn--success collect-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" style="flex: 1.5;">
-              <span>${isReady ? '✓ Mark Collected' : '✓ Handover (Ready-Made)'}</span>
+            <button class="btn btn--secondary btn--sm verify-pin-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" title="Optional: Manually enter student PIN if needed" style="flex: 0.8; font-size: 0.82rem; font-weight: 700; padding: 10px 8px; border-radius: 8px;">
+              <span>🔑 PIN</span>
             </button>
           </div>
         ` : `
@@ -681,6 +943,16 @@ function renderOrderCard(order, isReady) {
             Waiting on Kitchen prep
           </div>
         `)}
+
+        <!-- Quick Staff Overrides (Cancel & Refund) -->
+        <div style="display: flex; gap: 8px; margin-top: 8px; border-top: 1px solid var(--border-light); padding-top: 8px;">
+          <button class="btn btn--outline-danger btn--sm pickup-cancel-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" style="flex: 1; font-size: 0.8rem; font-weight: 700; padding: 6px 8px; border-radius: 8px;">
+            🚫 Cancel Order
+          </button>
+          <button class="btn btn--secondary btn--sm pickup-refund-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" data-amount="${escapeHtml(order.totalAmount || (order.totalAmountPaise ? order.totalAmountPaise / 100 : ''))}" style="flex: 1; font-size: 0.8rem; font-weight: 700; padding: 6px 8px; border-radius: 8px;">
+            💸 Issue Refund
+          </button>
+        </div>
       </div>
     </div>
   `;
@@ -719,7 +991,7 @@ function formatOrderDateTime(dtInput) {
 function renderCollectedCard(order) {
   const dateStr = formatOrderDateTime(order.createdAt || order.collectedAt);
   return `
-    <div style="background: #F8FAFC; border: 1px solid var(--border-light); border-radius: 10px; padding: 0.8rem 1rem; opacity: 0.85;">
+    <div style="background: #F8FAFC; border: 1px solid var(--border-light); border-radius: 10px; padding: 0.8rem 1rem; opacity: 0.9;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <span style="font-family: var(--font-mono); font-weight: 800; font-size: 1rem;">${escapeHtml(order.tokenNumber || 'TB-???')}</span>
         <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #16A34A; font-weight: 700;">COLLECTED</span>
@@ -733,6 +1005,11 @@ function renderCollectedCard(order) {
             ${escapeHtml(dateStr)}
           </span>
         ` : ''}
+      </div>
+      <div style="display: flex; justify-content: flex-end; margin-top: 6px; border-top: 1px dashed var(--border-light); padding-top: 4px;">
+        <button class="btn btn--secondary btn--sm pickup-refund-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" data-amount="${escapeHtml(order.totalAmount || (order.totalAmountPaise ? order.totalAmountPaise / 100 : ''))}" style="font-size: 0.72rem; padding: 2px 8px;">
+          💸 Issue Refund
+        </button>
       </div>
     </div>
   `;

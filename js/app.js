@@ -18,7 +18,7 @@ function initPortalGateway() {
     const isDevAllowed = ['developer', 'security_admin', 'system', 'admin'].includes(currentRole);
 
     root.innerHTML = `
-      <div style="min-height: 100vh; background: var(--bg-primary); display: flex; flex-direction: column;">
+      <div class="tb-view-fade-in" style="min-height: 100vh; background: var(--bg-primary); display: flex; flex-direction: column;">
         
         <!-- Gateway Header -->
         <header class="app-header" style="background: #FFF; border-bottom: 2px solid var(--border-light); padding: 0.8rem 1rem;">
@@ -33,7 +33,7 @@ function initPortalGateway() {
                   THAKUR BITES · PORTAL GATEWAY
                 </div>
                 <div style="font-family: var(--font-mono); font-size: clamp(0.65rem, 2.5vw, 0.75rem); color: #16A34A; font-weight: 700; display: flex; align-items: center; gap: 5px; margin-top: 2px;">
-                  <span style="display: inline-block; width: 6px; height: 6px; background: #22C55E; border-radius: 50%; flex-shrink: 0;"></span>
+                  <span class="tb-ambient-pulse" style="display: inline-block; width: 6px; height: 6px; background: #22C55E; border-radius: 50%; flex-shrink: 0;"></span>
                   CAMPUS DINING PLATFORM 2.0
                 </div>
               </div>
@@ -189,7 +189,42 @@ function initPortalGateway() {
               </a>
             </div>
 
+            <!-- PORTAL 5: 🤖 AI BUSINESS COPILOT -->
+            <div class="portal-card" style="background: linear-gradient(135deg, #18181B 0%, #09090B 100%); border: 2px solid #DC2626; border-radius: 16px; padding: 1.8rem; display: flex; flex-direction: column; justify-content: space-between; color: #FFF; box-shadow: 0 8px 24px rgba(220,38,38,0.15); transition: transform 0.15s ease, box-shadow 0.15s ease;">
+              <div>
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+                  <div style="width: 52px; height: 52px; background: rgba(220,38,38,0.2); border: 1.5px solid #DC2626; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.8rem;">
+                    🤖
+                  </div>
+                  <span style="font-family: var(--font-mono); font-size: 0.7rem; font-weight: 800; padding: 3px 8px; border-radius: 6px; background: #DC2626; color: #FFF; letter-spacing: 0.05em;">
+                    ● LIVE COPILOT
+                  </span>
+                </div>
+                <h3 style="font-family: var(--font-display); font-size: 1.6rem; margin: 0 0 0.5rem 0; color: #FFF;">
+                  AI BUSINESS COPILOT
+                </h3>
+                <p style="font-family: var(--font-sans); font-size: 0.88rem; color: #D4D4D8; line-height: 1.5; margin-bottom: 1.2rem;">
+                  Read-only conversational intelligence grounded in real-time orders, stockout velocity, top sellers, and double-entry financial truth.
+                </p>
+                <div style="font-family: var(--font-mono); font-size: 0.72rem; color: #A1A1AA; margin-bottom: 1.5rem;">
+                  • Google Gemini & Truth Layer<br>
+                  • Zero-PII & Anti-Hallucination Safe<br>
+                  • Real-Time Operational Attention Board
+                </div>
+              </div>
+              <a href="admin.html?view=analytics#copilot" class="btn btn--primary btn--lg" style="width: 100%; text-decoration: none; background: #DC2626; color: #FFF; font-weight: 700; box-shadow: 0 2px 8px rgba(220,38,38,0.3);">
+                Launch AI Copilot Chat 🤖 →
+              </a>
+            </div>
+
           </div>
+
+          <!-- Floating AI Copilot Launcher Bubble -->
+          <a href="admin.html?view=analytics#copilot" style="position: fixed; bottom: 24px; right: 24px; z-index: 999; background: #18181B; color: #FFF; border: 2px solid #DC2626; border-radius: 999px; padding: 12px 20px; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; text-decoration: none; display: flex; align-items: center; gap: 8px; box-shadow: 0 8px 25px rgba(0,0,0,0.35); transition: transform 0.2s ease;">
+            <span style="font-size: 1.2rem;">🤖</span>
+            <span>Thakur Bites AI</span>
+            <span style="background: #22C55E; width: 8px; height: 8px; border-radius: 50%; display: inline-block;"></span>
+          </a>
 
           <!-- Hardware Binding & System Diagnostic Footer -->
           <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 12px; padding: 1.2rem 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
@@ -224,4 +259,8 @@ function initPortalGateway() {
   render();
 }
 
-window.addEventListener('DOMContentLoaded', initPortalGateway);
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', initPortalGateway);
+} else {
+  initPortalGateway();
+}

@@ -97,13 +97,13 @@ class MenuItemCard extends StatelessWidget {
         borderRadius: AppRadius.radiusLg,
         border: inStock ? null : Border.all(color: AppColors.line, width: 1),
       ),
+      clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 13, 12, 48),
+            padding: const EdgeInsets.all(10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
               children: [
                 // Badges row: Availability + Popular tag with guaranteed clearance for favourite button
                 Row(
@@ -171,9 +171,9 @@ class MenuItemCard extends StatelessWidget {
                               child: Text(
                                 item.todaySpecialBadge!,
                                 style: const TextStyle(
-                                  fontSize: 9.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.danger,
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.danger,
                                 ),
                               ),
                             )
@@ -197,19 +197,19 @@ class MenuItemCard extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const SizedBox(width: 30), // Clearance for Positioned favourite button
+                    const SizedBox(width: 32), // Clearance for Positioned favourite button
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
 
-                MenuVisualWidget(item: item, width: 88, height: 68),
-                const SizedBox(height: 10),
+                MenuVisualWidget(item: item, width: 84, height: 62),
+                const SizedBox(height: 8),
 
                 // Item name
                 Text(
                   item.name,
                   style: AppFonts.body(
-                    fontSize: 13.5,
+                    fontSize: 13,
                     fontWeight: FontWeight.w600,
                     color: accentInk,
                   ),
@@ -217,13 +217,13 @@ class MenuItemCard extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
 
                 // Price
                 Text(
                   '₹${item.price.toInt()}',
                   style: AppFonts.mono(
-                    fontSize: 13,
+                    fontSize: 12.5,
                     color: accentInk.withAlpha(217),
                   ),
                 ),
@@ -232,63 +232,58 @@ class MenuItemCard extends StatelessWidget {
                   Text(
                     _dynamicDailySubtitle(dailyBoard)!,
                     style: AppFonts.body(
-                      fontSize: 10,
+                      fontSize: 9.5,
                       fontWeight: FontWeight.w600,
                       color: (dailyBoard != null && !dailyBoard!.hasAnyBread)
                           ? AppColors.danger
-                          : (dailyBoard != null && !dailyBoard!.bothBreadsAvailable)
-                              ? AppColors.mustardInk
-                              : AppColors.mustardInk,
+                          : AppColors.mustardInk,
                     ),
                     textAlign: TextAlign.center,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
+
+                const Spacer(),
+
+                // Add control — cart is a wishlist, no stock limits here
+                SizedBox(
+                  height: 34,
+                  child: Consumer<CartProvider>(
+                    builder: (context, cart, _) {
+                      final qty = cart.getQty(item.id);
+
+                      if (!inStock) {
+                        return Align(
+                          alignment: Alignment.centerRight,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.dangerBg,
+                              borderRadius: AppRadius.radiusSm,
+                            ),
+                            child: Text(
+                              'Sold out',
+                              style: AppFonts.mono(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.danger,
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+
+                      return qty == 0
+                          ? _buildAddButton(context)
+                          : _buildStepper(context, qty);
+                    },
+                  ),
+                ),
               ],
-            ),
-          ),
-
-          // Add control — cart is a wishlist, no stock limits here
-          Positioned(
-            bottom: 11,
-            left: 12,
-            right: 12,
-            child: Consumer<CartProvider>(
-              builder: (context, cart, _) {
-                final qty = cart.getQty(item.id);
-
-                if (!inStock) {
-                  return Align(
-                    alignment: Alignment.centerRight,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.dangerBg,
-                        borderRadius: AppRadius.radiusSm,
-                      ),
-                      child: Text(
-                        'Sold out',
-                        style: AppFonts.mono(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.danger,
-                        ),
-                      ),
-                    ),
-                  );
-                }
-
-                return SizedBox(
-                  height: 30,
-                  child: qty == 0
-                      ? _buildAddButton(context)
-                      : _buildStepper(context, qty),
-                );
-              },
             ),
           ),
 
@@ -306,7 +301,7 @@ class MenuItemCard extends StatelessWidget {
                   accentInk: accentInk,
                   itemName: item.name,
                   onTap: () async {
-                    if (user == null) {
+                    if (user == null || auth.isGuest) {
                       LoginSheet.show(context);
                       return;
                     }
@@ -337,11 +332,12 @@ class MenuItemCard extends StatelessWidget {
       builder: (context, scale, child) =>
           Transform.scale(scale: scale, child: child),
       child: Container(
+        height: 34,
         decoration: BoxDecoration(
           color: AppColors.ink,
           borderRadius: BorderRadius.circular(999),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 3),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -361,36 +357,36 @@ class MenuItemCard extends StatelessWidget {
                   }
                 },
                 child: const SizedBox(
-                  width: 44,
-                  height: 44,
+                  width: 32,
+                  height: 34,
                   child: Center(
-                    child: Text(
-                      '–',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                      ),
+                    child: Icon(
+                      Icons.remove,
+                      color: Colors.white,
+                      size: 16,
                     ),
                   ),
                 ),
               ),
             ),
             // Qty
-            Semantics(
-              label: '$qty of ${item.name} in cart',
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 160),
-                transitionBuilder: (child, animation) {
-                  return ScaleTransition(
-                    scale: animation,
-                    child: FadeTransition(opacity: animation, child: child),
-                  );
-                },
-                child: Text(
-                  '$qty',
-                  key: ValueKey<int>(qty),
-                  style: AppFonts.mono(fontSize: 12.5, color: Colors.white),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Semantics(
+                label: '$qty of ${item.name} in cart',
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 160),
+                  transitionBuilder: (child, animation) {
+                    return ScaleTransition(
+                      scale: animation,
+                      child: FadeTransition(opacity: animation, child: child),
+                    );
+                  },
+                  child: Text(
+                    '$qty',
+                    key: ValueKey<int>(qty),
+                    style: AppFonts.mono(fontSize: 13, color: Colors.white),
+                  ),
                 ),
               ),
             ),
@@ -401,6 +397,12 @@ class MenuItemCard extends StatelessWidget {
               child: BouncyTap(
                 scaleFactor: 0.84,
                 onTap: () {
+                  final cart = context.read<CartProvider>();
+                  final currentQty = cart.getQty(item.id);
+                  if (currentQty >= item.availableStock) {
+                    _showStockLimitNotice(context, item);
+                    return;
+                  }
                   if (_isCustomizableMeal) {
                     MealCustomizerSheet.show(
                       context,
@@ -408,20 +410,20 @@ class MenuItemCard extends StatelessWidget {
                       dailyBoard: dailyBoard ?? DailyBoard.defaultForDay(DateTime.now()),
                     );
                   } else {
-                    context.read<CartProvider>().addItem(item);
+                    final added = cart.addItem(item);
+                    if (!added) {
+                      _showStockLimitNotice(context, item);
+                    }
                   }
                 },
-                child: const SizedBox(
-                  width: 44,
-                  height: 44,
+                child: SizedBox(
+                  width: 32,
+                  height: 34,
                   child: Center(
-                    child: Text(
-                      '+',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                      ),
+                    child: Icon(
+                      Icons.add,
+                      color: (qty >= item.availableStock) ? Colors.white38 : Colors.white,
+                      size: 16,
                     ),
                   ),
                 ),
@@ -537,8 +539,18 @@ class MenuItemCard extends StatelessWidget {
                           GestureDetector(
                             onTap: () {
                               HapticFeedback.selectionClick();
-                              ctx.read<CartProvider>().addItem(e.item, customization: e.customization);
+                              final cart = ctx.read<CartProvider>();
+                              final currentQty = cart.getQty(e.item.id);
+                              if (currentQty >= e.item.availableStock) {
+                                Navigator.of(ctx).pop();
+                                _showStockLimitNotice(context, e.item);
+                                return;
+                              }
+                              final added = cart.addItem(e.item, customization: e.customization);
                               Navigator.of(ctx).pop();
+                              if (!added) {
+                                _showStockLimitNotice(context, e.item);
+                              }
                             },
                             child: Container(
                               width: 32,
@@ -598,6 +610,12 @@ class _AddButtonWithBounceState extends State<_AddButtonWithBounce> {
           onTapCancel: () => setState(() => _pressed = false),
           onTap: () {
             HapticFeedback.selectionClick();
+            final cart = context.read<CartProvider>();
+            final currentQty = cart.getQty(widget.item.id);
+            if (currentQty >= widget.item.availableStock || !widget.item.isInStock) {
+              _showStockLimitNotice(context, widget.item);
+              return;
+            }
             if (widget.isCustomizableMeal) {
               MealCustomizerSheet.show(
                 context,
@@ -605,26 +623,43 @@ class _AddButtonWithBounceState extends State<_AddButtonWithBounce> {
                 dailyBoard: widget.dailyBoard ?? DailyBoard.defaultForDay(DateTime.now()),
               );
             } else {
-              context.read<CartProvider>().addItem(widget.item);
+              final added = cart.addItem(widget.item);
+              if (!added) {
+                _showStockLimitNotice(context, widget.item);
+              }
             }
           },
           child: Container(
-            width: 44,
-            height: 44,
-            alignment: Alignment.center,
+            height: 34,
+            alignment: Alignment.centerRight,
             color: Colors.transparent,
             child: AnimatedScale(
-              scale: _pressed ? 0.86 : 1.0,
+              scale: _pressed ? 0.90 : 1.0,
               duration: const Duration(milliseconds: 100),
               curve: Curves.easeOut,
               child: Container(
-                width: 30,
-                height: 30,
-                decoration: const BoxDecoration(
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
                   color: AppColors.ink,
-                  shape: BoxShape.circle,
+                  borderRadius: BorderRadius.circular(999),
                 ),
-                child: const Icon(Icons.add, color: Colors.white, size: 17),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Text(
+                      'ADD',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    SizedBox(width: 4),
+                    Icon(Icons.add, color: Colors.white, size: 15),
+                  ],
+                ),
               ),
             ),
           ),
@@ -731,4 +766,50 @@ class _HeartButtonState extends State<_HeartButton>
   }
 }
 
+/// Displays an informative floating snackbar on the home screen when an item's stock is low or capped.
+void _showStockLimitNotice(BuildContext context, MenuItem item) {
+  HapticFeedback.lightImpact();
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  if (messenger == null) return;
+
+  messenger.hideCurrentSnackBar();
+
+  final cart = context.read<CartProvider>();
+  final currentQty = cart.getQty(item.id);
+
+  String message;
+  if (!item.isInStock || item.availableStock <= 0) {
+    message = '${item.name} is currently sold out.';
+  } else if (currentQty >= item.availableStock) {
+    message = item.availableStock == 1
+        ? 'Only 1 ${item.name} available in stock right now.'
+        : 'Only ${item.availableStock} ${item.name} available in stock right now.';
+  } else if (currentQty >= CartProvider.maxQuantityPerItem) {
+    message = 'Maximum limit of ${CartProvider.maxQuantityPerItem} reached for ${item.name}.';
+  } else {
+    message = 'Cannot add more ${item.name} (stock limit reached).';
+  }
+
+  messenger.showSnackBar(
+    SnackBar(
+      content: Row(
+        children: [
+          const Icon(Icons.info_outline_rounded, color: Colors.white, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: AppFonts.body(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+      duration: const Duration(milliseconds: 2200),
+      backgroundColor: AppColors.ink,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+    ),
+  );
+}
 

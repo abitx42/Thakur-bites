@@ -12,6 +12,7 @@ import '../services/firestore_service.dart';
 import '../services/checkout_service.dart';
 import '../services/payment_service.dart';
 import '../services/functions_service.dart';
+import '../services/error_helper.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bouncy_tap.dart';
 import '../widgets/canteen_status_banner.dart';
@@ -781,19 +782,57 @@ class _CartSummary extends StatefulWidget {
   State<_CartSummary> createState() => _CartSummaryState();
 }
 
-class _CartSummaryState extends State<_CartSummary> {
+class _CartSummaryState extends State<_CartSummary> with WidgetsBindingObserver {
   final FirestoreService _firestore = FirestoreService();
   final CheckoutService _checkoutService = CheckoutService();
   String? _currentIdempotencyKey;
   app.Order? _activePendingOrder;
   bool _isProcessing = false;
   bool _tapLocked = false;
+  DateTime? _paymentStartTime;
   final String _selectedPaymentMethod = 'online';
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _restoreActiveOrder();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && (_isProcessing || _paymentStartTime != null)) {
+      // Returned from external payment apps (e.g. Google Pay, PhonePe, Paytm)
+      if (_paymentStartTime != null) {
+        debugPrint('[CartScreen] Resumed with payment in progress');
+      }
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
+
+  void _cancelPaymentInProgress() {
+    PaymentService.cancelActivePayment('Payment was cancelled by user.');
+    if (mounted) {
+      setState(() {
+        _isProcessing = false;
+        _tapLocked = false;
+        _paymentStartTime = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Payment session cancelled. You can retry anytime.'),
+          backgroundColor: AppColors.ink,
+        ),
+      );
+    }
   }
 
   Future<void> _restoreActiveOrder() async {
@@ -935,13 +974,22 @@ class _CartSummaryState extends State<_CartSummary> {
         authProvider.incrementOrderCount();
       }
 
-      // Persist active_order_id in SharedPreferences for crash/kill recovery
+      // Persist active_order_id and active_order_ids in SharedPreferences for crash/kill recovery
       try {
         final prefs = await SharedPreferences.getInstance();
+        final list = prefs.getStringList('active_order_ids') ?? <String>[];
+        if (!list.contains(order.id)) {
+          list.insert(0, order.id);
+          if (list.length > 10) list.removeLast();
+          await prefs.setStringList('active_order_ids', list);
+        }
         await prefs.setString('active_order_id', order.id);
       } catch (_) {}
 
       // 4. Online Payment via Razorpay (Bypass if 100% discounted / 0 paise)
+      String effectivePaymentId = 'CASH_${order.id}';
+      _paymentStartTime = DateTime.now();
+
       if (order.totalAmount > 0) {
         try {
           final paymentService = PaymentService();
@@ -951,11 +999,12 @@ class _CartSummaryState extends State<_CartSummary> {
             studentName: student?.displayName ?? order.studentName ?? 'Student',
             studentEmail: student?.email ?? 'student@tcetmumbai.in',
           );
-          // Payment finalized authoritatively via Cloud Function verifyPayment
-          debugPrint('[CartScreen] Online payment verified successfully: ${payRes.paymentId}');
+          effectivePaymentId = payRes.paymentId ?? 'RZP_${order.id}';
+          debugPrint('[CartScreen] Online payment verified successfully: $effectivePaymentId');
         } on PaymentException catch (pe) {
           // Payment dismissed, declined, or timed out.
           // DO NOT wipe the cart! Keep items so student can retry.
+          _paymentStartTime = null;
           setState(() => _isProcessing = false);
           _tapLocked = false;
           if (mounted) {
@@ -980,7 +1029,43 @@ class _CartSummaryState extends State<_CartSummary> {
           }
           return;
         }
+      } else {
+        effectivePaymentId = 'FREE_${order.id}';
       }
+
+      // CRITICAL: Persist confirmed state directly to Firestore /orders/{orderId} with retry
+      for (int updAttempt = 0; updAttempt < 3; updAttempt++) {
+        try {
+          await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
+            'status': 'confirmed',
+            'paymentStatus': 'paid',
+            'paymentId': effectivePaymentId,
+            'paidAt': FieldValue.serverTimestamp(),
+            'confirmedAt': FieldValue.serverTimestamp(),
+          });
+          break;
+        } catch (dbErr) {
+          debugPrint('[CartScreen] Order confirmation attempt $updAttempt notice: $dbErr');
+          if (updAttempt < 2) {
+            await Future.delayed(Duration(milliseconds: 250 * (updAttempt + 1)));
+          }
+        }
+      }
+
+      // Store payment ID and keep active_order_id in SharedPreferences for recovery
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('last_payment_id_${order.id}', effectivePaymentId);
+        final list = prefs.getStringList('active_order_ids') ?? <String>[];
+        if (!list.contains(order.id)) {
+          list.insert(0, order.id);
+          if (list.length > 10) list.removeLast();
+          await prefs.setStringList('active_order_ids', list);
+        }
+        await prefs.setString('active_order_id', order.id);
+      } catch (_) {}
+
+      _paymentStartTime = null;
 
       // 5. Payment verified — clear pending session, clear cart & show ticket
       _activePendingOrder = null;
@@ -1001,6 +1086,7 @@ class _CartSummaryState extends State<_CartSummary> {
         );
       }
     } on CanteenPausedException catch (e) {
+      _paymentStartTime = null;
       setState(() => _isProcessing = false);
       _tapLocked = false;
       if (mounted) {
@@ -1011,6 +1097,7 @@ class _CartSummaryState extends State<_CartSummary> {
         );
       }
     } on InsufficientStockException catch (e) {
+      _paymentStartTime = null;
       setState(() => _isProcessing = false);
       _tapLocked = false;
       cart.capItemQuantity(e.itemId, e.availableStock);
@@ -1026,6 +1113,7 @@ class _CartSummaryState extends State<_CartSummary> {
         );
       }
     } catch (e) {
+      _paymentStartTime = null;
       setState(() => _isProcessing = false);
       _tapLocked = false;
       final errStr = e.toString().toLowerCase();
@@ -1065,7 +1153,7 @@ class _CartSummaryState extends State<_CartSummary> {
       if (mounted) {
         final displayMsg = e is CheckoutException
             ? e.message
-            : 'Failed to place order: ${e.toString().replaceAll('Exception:', '').trim()}';
+            : (ErrorHelper.getFriendlyErrorMessage(e, defaultFallback: 'Failed to place order. Please try again.') ?? 'Failed to place order.');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(displayMsg),
@@ -1394,7 +1482,30 @@ class _CartSummaryState extends State<_CartSummary> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
+
+                // ── Low-Network Guidance Advisory ──
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface2,
+                    borderRadius: AppRadius.radiusSm,
+                    border: Border.all(color: AppColors.line, width: 0.8),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.wifi_tethering_rounded, size: 14, color: AppColors.inkSecondary),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '⚡ Please ensure a good cellular / Wi-Fi network for smooth checkout.',
+                          style: AppFonts.body(fontSize: 11, color: AppColors.inkSecondary),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
 
               // CTA button
@@ -1454,6 +1565,31 @@ class _CartSummaryState extends State<_CartSummary> {
                   ),
                 ),
               ),
+              if (_isProcessing || _paymentStartTime != null) ...[
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: _cancelPaymentInProgress,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface2,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.line),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.close_rounded, size: 14, color: AppColors.danger),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Payment taking long or app switched? Tap to Cancel / Retry',
+                          style: AppFonts.body(fontSize: 11.5, fontWeight: FontWeight.w600, color: AppColors.danger),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         );

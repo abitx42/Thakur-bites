@@ -11,4 +11,8 @@ function initTvApp() {
   renderTvDisplayView(root);
 }
 
-window.addEventListener('DOMContentLoaded', initTvApp);
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', initTvApp);
+} else {
+  initTvApp();
+}

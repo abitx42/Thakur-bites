@@ -18,6 +18,7 @@ import '../widgets/live_security_qr_badge.dart';
 import '../services/clipboard_security_service.dart';
 import 'cart_screen.dart';
 import 'ticket_screen.dart';
+import '../services/error_helper.dart';
 
 /// Phase 4 & Phase 8 — Advanced Real-time order status screen with dynamic ETA,
 /// 5-stage tracker, reservation countdown, payment reconciliation, atomic cancellation,
@@ -118,6 +119,23 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     super.dispose();
   }
 
+  void _cleanOrderFromActiveStorage(String orderId) {
+    SharedPreferences.getInstance().then((prefs) {
+      final list = prefs.getStringList('active_order_ids') ?? <String>[];
+      if (list.contains(orderId)) {
+        list.remove(orderId);
+        prefs.setStringList('active_order_ids', list);
+      }
+      if (prefs.getString('active_order_id') == orderId) {
+        if (list.isNotEmpty) {
+          prefs.setString('active_order_id', list.first);
+        } else {
+          prefs.remove('active_order_id');
+        }
+      }
+    }).catchError((_) {});
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -166,7 +184,46 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                     );
                   }
 
-                  if (snapshot.connectionState != ConnectionState.waiting && snapshot.data == null && widget.initialOrder == null) {
+                  // If stream encountered an error and no cached/initial order is available
+                  if (snapshot.hasError && snapshot.data == null && widget.initialOrder == null) {
+                    final isNetwork = ErrorHelper.isNetworkError(snapshot.error);
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(isNetwork ? Icons.wifi_off_rounded : Icons.error_outline_rounded, size: 48, color: AppColors.red),
+                            const SizedBox(height: 12),
+                            Text(
+                              isNetwork ? 'No Internet Connection' : 'Unable to load order status',
+                              style: AppFonts.display(fontSize: 18),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              isNetwork 
+                                  ? 'Please check your Wi-Fi or mobile data connection and tap Retry.'
+                                  : (ErrorHelper.getFriendlyErrorMessage(snapshot.error) ?? 'Please retry shortly.'),
+                              style: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 16),
+                            ElevatedButton.icon(
+                              onPressed: () => setState(() {}),
+                              icon: const Icon(Icons.refresh_rounded, size: 18),
+                              label: const Text('Retry Connection'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.ink,
+                                foregroundColor: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+
+                  if (snapshot.connectionState != ConnectionState.waiting && !snapshot.hasError && snapshot.data == null && widget.initialOrder == null) {
                     return Center(
                       child: Padding(
                         padding: const EdgeInsets.all(24),
@@ -199,6 +256,11 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                     );
                   }
 
+                  // Automatically remove collected or cancelled orders from active recovery storage
+                  if (order.isCollected || order.status == 'cancelled') {
+                    _cleanOrderFromActiveStorage(order.id);
+                  }
+
                   if (order.isReady && _previousKnownStatus != null && _previousKnownStatus != 'ready') {
                     HapticFeedback.heavyImpact();
                   }
@@ -209,6 +271,29 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        if (snapshot.hasError) ...[
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: AppColors.warningBg,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: AppColors.warning.withAlpha(120), width: 1.2),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.wifi_off_rounded, size: 18, color: AppColors.warning),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Offline: Showing cached order status. Reconnecting...',
+                                    style: AppFonts.body(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.mustardInk),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                         _buildTokenCard(order),
                         if (order.isCancelled) ...[
                           const SizedBox(height: 14),
@@ -719,13 +804,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
       } catch (e) {
         debugPrint('[OrderStatusScreen] Error auto-cancelling expired reservation via functions: $e');
         try {
-          await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
-            'status': 'cancelled',
-            'paymentStatus': 'cancelled',
-            'cancellationReason': 'RESERVATION_EXPIRED',
-            'cancelledAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
+          // Direct fallback with inventory stock restoration
+          await _executeDirectCancellation(order, 'RESERVATION_EXPIRED');
         } catch (fsErr) {
           debugPrint('[OrderStatusScreen] Error auto-cancelling expired order in Firestore: $fsErr');
         }
@@ -1492,20 +1572,39 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
           (e.message ?? '').toLowerCase().contains('internal');
 
       if (isUndeployedOrUnavailable) {
-        await _executeDirectCancellation(order, reason);
+        if (order.status == 'payment_pending' || order.status == 'placed') {
+          await _executeDirectCancellation(order, reason);
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Confirmed orders cannot be cancelled directly. Please contact staff at the counter.'),
+              backgroundColor: AppColors.danger,
+            ),
+          );
+        }
         return;
       }
 
       if (mounted) {
+        final friendly = ErrorHelper.getFriendlyErrorMessage(e, defaultFallback: 'Order cancellation failed. Please retry or contact counter.');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(e.message ?? 'Order cancellation failed. Please retry or contact counter.'),
+            content: Text(friendly ?? 'Order cancellation failed.'),
             backgroundColor: AppColors.danger,
           ),
         );
       }
     } catch (e) {
-      await _executeDirectCancellation(order, reason);
+      if (order.status == 'payment_pending' || order.status == 'placed') {
+        await _executeDirectCancellation(order, reason);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Confirmed orders cannot be cancelled directly. Please contact staff at the counter.'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isCancelling = false);
     }
@@ -1514,10 +1613,6 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   Future<void> _executeDirectCancellation(app.Order order, String reason) async {
     try {
       final isPaid = order.isPaid || order.isOnlinePayment;
-      final int totalPaise = order.totalAmountPaise ?? (order.totalAmount * 100).round();
-      final String refundId = isPaid
-          ? 'rfnd_${order.gatewayPaymentId ?? DateTime.now().millisecondsSinceEpoch.toString().substring(4)}'
-          : '';
 
       final updateData = <String, dynamic>{
         'status': 'cancelled',
@@ -1526,55 +1621,29 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
-      if (isPaid && order.totalAmount > 0) {
-        updateData['paymentStatus'] = 'refunded';
-        updateData['refundId'] = refundId;
-        updateData['refundLifecycleStatus'] = 'REFUND_PROCESSED';
-        updateData['refundedAmountPaise'] = totalPaise;
-        updateData['amountRefundedPaise'] = totalPaise;
-        updateData['refundReason'] = reason;
-        updateData['refundedAt'] = FieldValue.serverTimestamp();
-      } else {
-        updateData['paymentStatus'] = 'cancelled';
-      }
-
-      await FirebaseFirestore.instance.collection('orders').doc(order.id).update(updateData);
-
-      // Audit trail in refundReservations
-      if (isPaid && order.totalAmount > 0) {
-        try {
-          await FirebaseFirestore.instance.collection('refundReservations').doc(order.id).set({
-            'reservationId': 'res_${order.id}',
-            'orderId': order.id,
-            'gatewayPaymentId': order.gatewayPaymentId,
-            'amountRefundedPaise': totalPaise,
-            'amountRefundedRs': order.totalAmount,
-            'status': 'GATEWAY_SUCCEEDED',
-            'refundId': refundId,
-            'reason': reason,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        } catch (_) {}
-      }
-
-      // Restore inventory stock in catalog
+      // Restore inventory stock for instant/packaged items
       for (final item in order.items) {
-        if (item.menuItemId.isNotEmpty) {
+        if (item.isInstant && item.menuItemId.isNotEmpty) {
           try {
-            await FirebaseFirestore.instance.collection('menuItems').doc(item.menuItemId).update({
-              'stockCount': FieldValue.increment(item.quantity),
+            final itemRef = FirebaseFirestore.instance.collection('menuItems').doc(item.menuItemId);
+            await itemRef.update({
               'stockOnHand': FieldValue.increment(item.quantity),
+              'stockCount': FieldValue.increment(item.quantity),
               'availableStock': FieldValue.increment(item.quantity),
+              'isOrderable': true,
               'available': true,
+              'availabilityStatus': 'AVAILABLE',
               'updatedAt': FieldValue.serverTimestamp(),
             });
           } catch (_) {}
         }
       }
 
+      await FirebaseFirestore.instance.collection('orders').doc(order.id).update(updateData);
+
       if (mounted) {
         final msg = isPaid && order.totalAmount > 0
-            ? '✅ Order cancelled! Full refund of ₹${order.totalAmount.toStringAsFixed(0)} initiated (Ref: $refundId).'
+            ? '✅ Order marked cancelled. Please verify refund with counter staff if not received shortly.'
             : '✅ Order cancelled successfully.';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1586,9 +1655,10 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final friendly = ErrorHelper.getFriendlyErrorMessage(e, defaultFallback: 'Please try again or contact counter.');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Cannot cancel order: ${e.toString().replaceAll('Exception:', '').trim()}'),
+            content: Text('Cannot cancel order: $friendly'),
             backgroundColor: AppColors.danger,
           ),
         );
@@ -1611,15 +1681,27 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
       );
       if (mounted) {
         if (result.isSuccess) {
+          final effectivePaymentId = result.paymentId ?? 'RZP_${order.id}';
+          // Direct authoritative update to Firestore /orders/{orderId}
           try {
             await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
               'status': 'confirmed',
               'paymentStatus': 'paid',
+              'paymentId': effectivePaymentId,
               'paidAt': FieldValue.serverTimestamp(),
-              'updatedAt': FieldValue.serverTimestamp(),
-              if (result.paymentId != null) 'gatewayPaymentId': result.paymentId,
+              'confirmedAt': FieldValue.serverTimestamp(),
             });
-          } catch (_) {}
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('last_payment_id_${order.id}', effectivePaymentId);
+          } catch (dbErr) {
+            debugPrint('Direct Firestore order confirmation notice: $dbErr');
+          }
+
+          try {
+            await _functions.reconcileOrderPayment(orderId: order.id);
+          } catch (recErr) {
+            debugPrint('Payment reconciliation error: $recErr');
+          }
           if (!mounted) return;
           setState(() {});
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1700,6 +1782,33 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               return;
             }
 
+            // Check if there is a saved gateway payment ID from SharedPreferences
+            final prefs = await SharedPreferences.getInstance();
+            final savedPaymentId = prefs.getString('last_payment_id_${order.id}');
+            if (savedPaymentId != null && savedPaymentId.isNotEmpty) {
+              try {
+                await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
+                  'status': 'confirmed',
+                  'paymentStatus': 'paid',
+                  'paymentId': savedPaymentId,
+                  'paidAt': FieldValue.serverTimestamp(),
+                  'confirmedAt': FieldValue.serverTimestamp(),
+                });
+                if (!mounted) return;
+                setState(() {});
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ Payment reconciled from gateway record! Order is confirmed.'),
+                    backgroundColor: AppColors.green,
+                  ),
+                );
+                return;
+              } catch (recErr) {
+                debugPrint('Reconcile write error: $recErr');
+              }
+            }
+
+            if (!mounted) return;
             // Strictly inform user without allowing unverified manual self-confirmation
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(

@@ -30,6 +30,7 @@ export type SystemCapability =
   | 'manage_staff_roles'
   | 'manage_platform_flags'
   | 'view_business_analytics'
+  | 'view_ai_business_insights'
   // Developer & Engineering Operations
   | 'manage_version_policy'
   | 'manage_kill_switch'
@@ -61,6 +62,7 @@ const MANAGER_CAPABILITIES: SystemCapability[] = [
   'manage_staff_roles',
   'manage_platform_flags',
   'view_business_analytics',
+  'view_ai_business_insights',
 ];
 
 /**
@@ -92,9 +94,9 @@ export const ROLE_CAPABILITY_MATRIX: Record<string, Set<SystemCapability>> = {
   college_staff: new Set(['create_checkout']),
   visitor: new Set(['create_checkout']),
   guest: new Set(['create_checkout']),
-  kitchen: new Set(['view_kitchen_orders', 'update_kitchen_status']),
-  pickup: new Set(['view_pickup_orders', 'verify_pickup', 'unlock_pickup']),
-  cashier: new Set(['view_cashier_orders', 'record_cash_payment']),
+  kitchen: new Set(['view_kitchen_orders', 'update_kitchen_status', 'cancel_staff_order']),
+  pickup: new Set(['view_pickup_orders', 'verify_pickup', 'unlock_pickup', 'cancel_staff_order', 'process_refund']),
+  cashier: new Set(['view_cashier_orders', 'record_cash_payment', 'cancel_staff_order', 'process_refund']),
   manager: new Set(MANAGER_CAPABILITIES),
   admin: new Set(ADMIN_CAPABILITIES),
   developer: new Set(DEVELOPER_CAPABILITIES),

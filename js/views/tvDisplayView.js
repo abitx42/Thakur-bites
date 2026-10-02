@@ -114,7 +114,7 @@ export function renderTvDisplayView(container) {
 
             <div class="tv-header-status-clock" style="display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap;">
               <div style="background: rgba(34, 197, 94, 0.12); border: 1.5px solid #22C55E; color: #4ADE80; font-family: var(--font-mono, monospace); font-size: 0.82rem; font-weight: 700; padding: 6px 14px; border-radius: 999px; display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
-                <span style="width: 8px; height: 8px; border-radius: 50%; background: #22C55E; box-shadow: 0 0 8px #22C55E;"></span>
+                <span class="tb-ambient-pulse" style="width: 8px; height: 8px; border-radius: 50%; background: #22C55E; box-shadow: 0 0 8px #22C55E;"></span>
                 <span>LIVE DISPATCH</span>
               </div>
               <div style="text-align: right;">
@@ -233,7 +233,7 @@ export function renderTvDisplayView(container) {
                       Preparing next batch of tokens...
                     </div>
                   ` : visibleReady.map(o => `
-                    <div style="background: #14532D; border: 2.5px solid #22C55E; border-radius: 12px; padding: 1.1rem 0.6rem; text-align: center; box-shadow: 0 0 20px rgba(34,197,94,0.35);">
+                    <div class="tb-ambient-pulse" style="background: #14532D; border: 2.5px solid #22C55E; border-radius: 12px; padding: 1.1rem 0.6rem; text-align: center; box-shadow: 0 0 20px rgba(34,197,94,0.35);">
                       <div style="font-family: var(--font-mono, monospace); font-size: 2.2rem; font-weight: 900; color: #4ADE80; line-height: 1; white-space: nowrap;">
                         ${escapeHtml(o.token || o.tokenNumber)}
                       </div>
@@ -270,6 +270,9 @@ export function renderTvDisplayView(container) {
       </div>
     `;
   }
+
+  // Initial synchronous render
+  render();
 
   // Independent 1-second clock updater
   clockInterval = setInterval(() => {

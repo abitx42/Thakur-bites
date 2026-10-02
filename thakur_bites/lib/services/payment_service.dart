@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
@@ -54,6 +53,9 @@ class PaymentService {
     final now = DateTime.now();
     final amountPaise = (totalAmountRs * 100).round();
 
+    // F-016 Remediation: The key ID SHOULD always come from the server (createPaymentSession).
+    // The compile-time default is a test key — acceptable only for development builds.
+    // In release builds, the server MUST provide the key via sessionData['keyId'].
     String razorpayOrderId = '';
     String keyId = const String.fromEnvironment(
       'RAZORPAY_KEY_ID',
@@ -82,6 +84,11 @@ class PaymentService {
     } catch (e) {
       if (e is PaymentException) rethrow;
       debugPrint('[PaymentService] Backend function error ($e). Launching direct gateway.');
+    }
+
+    // F-016 Release guard: Warn if test key is being used (server should have overwritten it)
+    if (kReleaseMode && keyId.startsWith('rzp_test_')) {
+      debugPrint('[PaymentService] ⚠️ WARNING: Using test Razorpay key in release build. Server did not provide live key.');
     }
 
     // Step 2: Launch Razorpay SDK and collect payment confirmation
@@ -163,68 +170,49 @@ class PaymentService {
         timestamp: now,
       );
     } on FirebaseFunctionsException catch (e) {
-      final isUndeployedOrUnavailable = e.code == 'not-found' ||
-          e.code == 'internal' ||
-          e.code == 'unavailable' ||
-          (e.message ?? '').toLowerCase().contains('internal');
-
-      if (isUndeployedOrUnavailable) {
-        debugPrint('[PaymentService] recordCashPayment callable notice: ${e.message}. Performing direct Firestore update fallback.');
-        try {
-          await FirebaseFirestore.instance.collection('orders').doc(orderId).update({
-            'status': 'confirmed',
-            'paymentStatus': 'paid',
-            'paidAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-          return PaymentResult(
-            isSuccess: true,
-            orderId: orderId,
-            amount: totalAmountRs,
-            method: PaymentMethod.cashAtCounter,
-            paymentId: 'CASH_$orderId',
-            timestamp: now,
-          );
-        } catch (fsErr) {
-          debugPrint('[PaymentService] Direct Firestore recordCashPayment fallback failed: $fsErr');
-        }
-      }
+      // F-017 Remediation: Never fall back to direct Firestore writes for cash payments.
+      // The Cloud Function is the ONLY authoritative path — it handles:
+      //   • Payment verification & financial ledger posting
+      //   • Inventory reservation commitment
+      //   • Audit trail (orderEvents) creation
+      debugPrint('[PaymentService] recordCashPayment failed: ${e.code} — ${e.message}');
       return PaymentResult(
         isSuccess: false,
         orderId: orderId,
         amount: totalAmountRs,
         method: PaymentMethod.cashAtCounter,
-        errorMessage: e.message,
+        errorMessage: e.code == 'unavailable'
+            ? 'Server is temporarily unavailable. Please retry in a moment.'
+            : (e.message ?? 'Cash payment recording failed. Please retry.'),
         timestamp: now,
       );
     } catch (e) {
-      debugPrint('[PaymentService] recordCashPayment unexpected error: $e. Performing direct Firestore update fallback.');
-      try {
-        await FirebaseFirestore.instance.collection('orders').doc(orderId).update({
-          'status': 'confirmed',
-          'paymentStatus': 'paid',
-          'paidAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        return PaymentResult(
-          isSuccess: true,
-          orderId: orderId,
-          amount: totalAmountRs,
-          method: PaymentMethod.cashAtCounter,
-          paymentId: 'CASH_$orderId',
-          timestamp: now,
-        );
-      } catch (fsErr) {
-        return PaymentResult(
-          isSuccess: false,
-          orderId: orderId,
-          amount: totalAmountRs,
-          method: PaymentMethod.cashAtCounter,
-          errorMessage: e.toString(),
-          timestamp: now,
-        );
-      }
+      // F-017 Remediation: Generic errors also must NOT bypass server authority.
+      debugPrint('[PaymentService] recordCashPayment unexpected error: $e');
+      return PaymentResult(
+        isSuccess: false,
+        orderId: orderId,
+        amount: totalAmountRs,
+        method: PaymentMethod.cashAtCounter,
+        errorMessage: 'Cash payment recording failed. Please retry or contact a manager.',
+        timestamp: now,
+      );
     }
+  }
+
+  static _PaymentCompleter? _activeCompleter;
+  static Razorpay? _activeRazorpay;
+
+  /// Cancels any currently pending in-app payment session (e.g. if user returned from external UPI app and wishes to cancel or retry)
+  static void cancelActivePayment([String reason = 'Payment session was cancelled.']) {
+    try {
+      _activeRazorpay?.clear();
+    } catch (_) {}
+    if (_activeCompleter != null && !_activeCompleter!.isCompleted) {
+      _activeCompleter!.completeError(PaymentException(reason));
+    }
+    _activeCompleter = null;
+    _activeRazorpay = null;
   }
 
   // ─── Private: Razorpay SDK Launch ────────────────────────────────────────
@@ -264,7 +252,9 @@ class PaymentService {
 
     // On native mobile (Android / iOS), invoke native Razorpay Flutter plugin
     final completer = _PaymentCompleter();
+    _activeCompleter = completer;
     final razorpay = Razorpay();
+    _activeRazorpay = razorpay;
 
     razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, (PaymentSuccessResponse response) {
       completer.complete({
@@ -290,16 +280,25 @@ class PaymentService {
 
     razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, (ExternalWalletResponse response) {
       completer.completeError(
-        PaymentException('External wallets are not supported. Please use UPI or card.'),
+        const PaymentException('External wallets are not supported. Please use UPI or card.'),
       );
     });
 
     razorpay.open(options);
 
     try {
-      return await completer.future;
+      return await completer.future.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () => throw const PaymentException('Payment session timed out. Please retry.'),
+      );
     } finally {
       razorpay.clear();
+      if (_activeCompleter == completer) {
+        _activeCompleter = null;
+      }
+      if (_activeRazorpay == razorpay) {
+        _activeRazorpay = null;
+      }
     }
   }
 }
@@ -309,6 +308,7 @@ class _PaymentCompleter {
   final _inner = Completer<Map<String, dynamic>>();
 
   Future<Map<String, dynamic>> get future => _inner.future;
+  bool get isCompleted => _inner.isCompleted;
 
   void complete(Map<String, dynamic> value) {
     if (!_inner.isCompleted) _inner.complete(value);

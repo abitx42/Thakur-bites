@@ -3,9 +3,6 @@
     "rules": "firestore/firestore.rules",
     "indexes": "firestore/firestore.indexes.json"
   },
-  "storage": {
-    "rules": "storage.rules"
-  },
   "functions": [
     {
       "source": "functions",
@@ -46,7 +43,7 @@
             { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains; preload" },
             {
               "key": "Content-Security-Policy",
-              "value": "default-src 'self' https://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: https: blob:; script-src 'self' 'unsafe-eval' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://www.gstatic.com https://*.firebaseapp.com https://accounts.google.com https://apis.google.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' data: blob: https://*.googleapis.com https://*.cloudfunctions.net https://*.firebaseio.com https://www.gstatic.com https://fonts.gstatic.com https://fonts.googleapis.com https://accounts.google.com https://api.razorpay.com wss://*.firebaseio.com; worker-src 'self' blob:; child-src 'self' blob:; frame-src 'self' https://accounts.google.com https://*.firebaseapp.com https://api.razorpay.com https://checkout.razorpay.com;"
+              "value": "default-src 'self' https://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: https: blob:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://www.gstatic.com https://*.firebaseapp.com https://accounts.google.com https://apis.google.com https://*.razorpay.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' data: blob: https://*.googleapis.com https://*.cloudfunctions.net https://*.firebaseio.com https://www.gstatic.com https://fonts.gstatic.com https://fonts.googleapis.com https://accounts.google.com https://*.razorpay.com https://cloudflareinsights.com https://*.cloudflareinsights.com wss://*.firebaseio.com wss://*.googleapis.com; worker-src 'self' blob:; child-src 'self' blob:; frame-src 'self' https://accounts.google.com https://*.firebaseapp.com https://*.razorpay.com;"
             }
           ]
         }
@@ -111,7 +108,7 @@
             { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains; preload" },
             {
               "key": "Content-Security-Policy",
-              "value": "default-src 'self' https://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://*.firebaseapp.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.googleapis.com https://*.cloudfunctions.net https://*.firebaseio.com wss://*.firebaseio.com;"
+              "value": "default-src 'self' https://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: https: blob:; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://*.firebaseapp.com https://apis.google.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.googleapis.com https://*.cloudfunctions.net https://*.firebaseio.com https://*.firebaseapp.com https://cloudflareinsights.com https://*.cloudflareinsights.com wss://*.firebaseio.com wss://*.googleapis.com;"
             }
           ]
         }
@@ -125,6 +122,13 @@
         { "source": "/developer/**", "destination": "/developer.html" },
         { "source": "/tv", "destination": "/tv.html" },
         { "source": "/tv/**", "destination": "/tv.html" },
+        { "source": "/copilot", "destination": "/copilot.html" },
+        { "source": "/copilot/**", "destination": "/copilot.html" },
+        { "source": "/ai", "destination": "/copilot.html" },
+        { "source": "/ai/**", "destination": "/copilot.html" },
+        { "source": "/portal", "destination": "/portal.html" },
+        { "source": "/gateway", "destination": "/portal.html" },
+        { "source": "/privacy", "destination": "/privacy.html" },
         { "source": "**", "destination": "/index.html" }
       ]
     }

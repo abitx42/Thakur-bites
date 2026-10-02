@@ -499,50 +499,52 @@ export const getAdminOperationsDashboard = onCall<void, Promise<AdminOperationsD
   const totalOrdersCount = todayOrdersSnap.size;
   const avgCompletionMins = completionCount > 0
     ? Number((totalCompletionMinutesSum / completionCount).toFixed(1))
-    : 12.5;
+    : null;
   const avgPrepMins = prepCount > 0
     ? Number((totalOrderPrepMinutesSum / prepCount).toFixed(1))
-    : 8.2;
+    : null;
   const avgPickupWaitMins = pickupWaitCount > 0
     ? Number((totalPickupWaitMinutesSum / pickupWaitCount).toFixed(1))
-    : 4.3;
+    : null;
   const cancelRate = totalOrdersCount > 0
     ? Number((cancelledCount / totalOrdersCount).toFixed(3))
-    : 0.012;
+    : 0;
 
-  const ordersPer15Min = Number(((totalOrdersCount / hoursElapsed) / 4).toFixed(1));
-  const handoverThroughput = Number((readyForPickup > 0 ? (totalOrdersCount / hoursElapsed) : 18.5).toFixed(1));
+  const ordersPer15Min = hoursElapsed > 0
+    ? Number(((totalOrdersCount / hoursElapsed) / 4).toFixed(1))
+    : 0;
+  const handoverThroughput = hoursElapsed > 0
+    ? Number((readyForPickup > 0 ? (totalOrdersCount / hoursElapsed) : 0).toFixed(1))
+    : 0;
 
   const productionKpis = {
+    dataStatus: (totalOrdersCount > 0 ? 'ACTUAL' : 'INSUFFICIENT_DATA') as 'ACTUAL' | 'INSUFFICIENT_DATA',
     studentExperience: {
       averageOrderCompletionMinutes: avgCompletionMins,
-      paymentSuccessRate: 0.994,
+      paymentSuccessRate: totalOrdersCount > 0 ? Number(((totalOrdersCount - cancelledCount) / totalOrdersCount).toFixed(3)) : null,
       averagePreparationMinutes: avgPrepMins,
       pickupWaitMinutes: avgPickupWaitMins,
       cancellationRate: cancelRate,
-      averageRatingStars: 4.85,
+      averageRatingStars: null, // Telemetry unavailable until ratings collected
+      dataStatus: (totalOrdersCount > 0 ? 'ACTUAL' : 'INSUFFICIENT_DATA') as 'ACTUAL' | 'INSUFFICIENT_DATA',
     },
     canteenOperations: {
-      ordersPer15Min: Math.max(1.0, ordersPer15Min),
+      ordersPer15Min,
       kitchenBacklog: kitchenLoad,
-      topOrderedDishes: topOrderedDishes.length > 0 ? topOrderedDishes : [
-        { name: 'Special Masala Dosa', quantity: 48 },
-        { name: 'Mumbai Vada Pav', quantity: 42 },
-        { name: 'Veg Cheese Grilled Sandwich', quantity: 35 },
-        { name: 'Filter Coffee', quantity: 29 },
-        { name: 'Masala Chai', quantity: 26 },
-      ],
+      topOrderedDishes,
+      topDishesStatus: (topOrderedDishes.length > 0 ? 'ACTUAL' : 'INSUFFICIENT_DATA') as 'ACTUAL' | 'INSUFFICIENT_DATA',
       stockoutFrequencyCount: stockoutWarningCount,
-      staffHandoverThroughputPerHour: Math.max(5.0, handoverThroughput),
+      staffHandoverThroughputPerHour: handoverThroughput,
     },
     systemReliability: {
-      functionLatencyP50Ms: 474.3,
-      functionLatencyP95Ms: 548.8,
+      functionLatencyP50Ms: null, // Zero fabricated telemetry
+      functionLatencyP95Ms: null,
       firestoreContentionRetries: 0,
       webhookFailures: 0,
-      paymentReconciliationDelaySeconds: 18.4,
-      errorRate: 0.001,
-      crashRate: 0.000,
+      paymentReconciliationDelaySeconds: null,
+      errorRate: 0,
+      crashRate: 0,
+      status: 'UNAVAILABLE' as const,
     },
   };
 

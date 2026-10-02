@@ -4,10 +4,12 @@
 // Auto-Progression ("as one completes other gets up next"), Smart Cooking Batches,
 // Station-Filtered Views, Dynamic Priority Aging, and Web Audio Alerts.
 
-import { db, functions, fetchKitchenOrders, updateOrderStatus, syncPublicLiveQueue } from '../firebase.js?v=6';
-import { collection, onSnapshot, query, where } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { db, functions, fetchKitchenOrders, updateOrderStatus, syncPublicLiveQueue, cancelStaffOrder } from '../firebase.js?v=6';
+import { collection, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { escapeHtml } from './escapeHtml.js';
+import { getFriendlyErrorMessage } from '../networkSentinel.js';
 
+const inFlightOrderIds = new Set();
 let pollInterval = null;
 let unsubscribeOrders = null;
 let currentOrders = [];
@@ -157,16 +159,12 @@ export function renderKitchenView(container) {
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.2rem;">
           <div>
             <div style="display: flex; align-items: center; gap: 10px;">
-              <h2 style="font-family: var(--font-display); font-size: 2.2rem; letter-spacing: 0.05em; line-height: 1; margin: 0; color: var(--ink-primary);">
-                KITCHEN DISPLAY SYSTEM (KDS)
+              <h2 style="font-family: var(--font-display); font-size: 2.2rem; letter-spacing: 0.04em; line-height: 1; margin: 0; color: var(--ink-primary);">
+                KITCHEN ORDERS (TO COOK)
               </h2>
-              <span class="live-badge" style="background: ${isInitialSyncDone ? '#22C55E' : '#F59E0B'}; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 5px;">
-                <span style="display: inline-block; width: 6px; height: 6px; background: #FFF; border-radius: 50%;"></span>
-                ${isInitialSyncDone ? 'LIVE REAL-TIME STREAM' : 'SYNCHRONIZING...'}
-              </span>
             </div>
-            <p style="font-family: var(--font-sans); font-size: 0.85rem; color: var(--ink-secondary); margin-top: 4px; margin-bottom: 0;">
-              Sequential prep pipeline: orders piled in priority order — as one completes, the next immediately slides up!
+            <p style="font-family: var(--font-sans); font-size: 0.9rem; color: var(--ink-secondary); margin-top: 4px; margin-bottom: 0; font-weight: 500;">
+              Orders waiting to be cooked. Click <strong>Ready</strong> as soon as food is cooked!
             </p>
           </div>
 
@@ -186,6 +184,12 @@ export function renderKitchenView(container) {
             <button id="toggle-kds-audio-btn" class="btn btn--sm ${audioAlertsEnabled ? 'btn--info' : 'btn--secondary'}">
               <span>${audioAlertsEnabled ? '🔔 Sound: ON' : '🔕 Sound: MUTED'}</span>
             </button>
+
+            ${focusedOrderId ? `
+              <button id="clear-kds-focus-btn" class="btn btn--danger btn--sm tb-ambient-pulse" style="font-weight: 800; display: inline-flex; align-items: center; gap: 5px;">
+                <span>✕</span> Show All (Reset Queue)
+              </button>
+            ` : ''}
 
             <button id="refresh-kds-manual-btn" class="btn btn--secondary btn--sm">
               🔄 Refresh
@@ -358,6 +362,15 @@ export function renderKitchenView(container) {
                       >
                         <span>✅ Mark Ready & Next ⏭️</span>
                       </button>
+
+                      <button 
+                        class="btn btn--outline-danger btn--xl kds-cancel-btn" 
+                        data-order-id="${escapeHtml(orderId)}" 
+                        data-token="${escapeHtml(heroOrder.tokenNumber || 'TB-???')}"
+                        title="Cancel order due to out-of-stock dish or customer request"
+                      >
+                        <span>🚫 Out of Stock / Cancel</span>
+                      </button>
                     </div>
                   </div>
 
@@ -366,8 +379,10 @@ export function renderKitchenView(container) {
                     <div style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; color: var(--ink-secondary); text-transform: uppercase; margin-bottom: 10px; letter-spacing: 0.05em;">
                       Dish Preparation List (${(heroOrder.items || []).length} items):
                     </div>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px;">
-                      ${(heroOrder.items || []).map(item => `
+                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 10px;">
+                      ${(heroOrder.items || []).map(item => {
+                        const isInstant = item.type === 'instant' || (!item.type && ((item.category || '').toLowerCase().includes('drink') || (item.category || '').toLowerCase().includes('bottle')));
+                        return `
                         <div style="display: flex; justify-content: space-between; align-items: center; background: #F8FAFC; border: 1px solid #E2E8F0; padding: 10px 14px; border-radius: 10px; font-family: var(--font-mono);">
                           <div style="display: flex; align-items: center; gap: 10px;">
                             <span style="background: var(--brand-red); color: #FFF; font-size: 1.1rem; font-weight: 800; padding: 3px 9px; border-radius: 6px;">
@@ -380,9 +395,21 @@ export function renderKitchenView(container) {
                               ${item.customization ? `<div style="font-size: 0.8rem; font-weight: 700; color: #D97706; margin-top: 2px;">⚡ ${escapeHtml(item.customization)}</div>` : ''}
                             </div>
                           </div>
-                          ${item.station ? `<span style="font-size: 0.72rem; font-weight: 700; color: #64748B; text-transform: uppercase; background: #FFF; padding: 3px 8px; border-radius: 6px; border: 1px solid #CBD5E1;">${escapeHtml(item.station)}</span>` : ''}
+                          <div style="display: flex; gap: 6px; align-items: center;">
+                            ${isInstant ? `
+                              <span style="font-size: 0.72rem; font-weight: 700; color: #0284C7; text-transform: uppercase; background: #E0F2FE; padding: 3px 8px; border-radius: 6px; border: 1px solid #BAE6FD;">
+                                📦 Grab & Pack
+                              </span>
+                            ` : `
+                              <span style="font-size: 0.72rem; font-weight: 700; color: #D97706; text-transform: uppercase; background: #FEF3C7; padding: 3px 8px; border-radius: 6px; border: 1px solid #FDE68A;">
+                                🍳 Cook
+                              </span>
+                            `}
+                            ${item.station ? `<span style="font-size: 0.72rem; font-weight: 700; color: #64748B; text-transform: uppercase; background: #FFF; padding: 3px 8px; border-radius: 6px; border: 1px solid #CBD5E1;">${escapeHtml(item.station)}</span>` : ''}
+                          </div>
                         </div>
-                      `).join('')}
+                      `;
+                      }).join('')}
                     </div>
                   </div>
 
@@ -413,7 +440,7 @@ export function renderKitchenView(container) {
                   <div style="font-family: var(--font-sans); font-size: 0.82rem; margin-top: 4px;">Incoming student orders will automatically pile up here in real-time.</div>
                 </div>
               ` : `
-                <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="max-height: 68vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 6px;">
                   ${waitingPile.map((order, idx) => {
                     const queueRank = idx + 2;
                     const isCooking = order.status === 'preparing';
@@ -465,7 +492,7 @@ export function renderKitchenView(container) {
                         <div style="display: flex; gap: 8px; align-items: center;">
                           <button 
                             class="btn btn--secondary btn--sm focus-order-btn" 
-                            data-order-id="${escapeHtml(orderId)}"
+                            data-order-id="${escapeHtml(orderId)}" 
                             title="Bring this order to Queue #1 spotlight"
                           >
                             ⬆️ Move to Top
@@ -488,6 +515,15 @@ export function renderKitchenView(container) {
                           >
                             Ready 🔔
                           </button>
+
+                          <button 
+                            class="btn btn--outline-danger btn--sm kds-cancel-btn" 
+                            data-order-id="${escapeHtml(orderId)}" 
+                            data-token="${escapeHtml(order.tokenNumber || 'TB-???')}"
+                            title="Cancel order due to out-of-stock dish"
+                          >
+                            🚫
+                          </button>
                         </div>
 
                       </div>
@@ -502,7 +538,7 @@ export function renderKitchenView(container) {
           <!-- ═════════════════════════════════════════════════════════════ -->
           <!-- MULTI-TICKET GRID VIEW                                        -->
           <!-- ═════════════════════════════════════════════════════════════ -->
-          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.2rem;">
+          <div class="kds-grid-view" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 1rem;">
             ${cookOrders.map((order, idx) => {
               const queueRank = idx + 1;
               const isCooking = order.status === 'preparing';
@@ -555,7 +591,9 @@ export function renderKitchenView(container) {
 
                     <!-- Order Items Checklist -->
                     <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 1.2rem;">
-                      ${(order.items || []).map(item => `
+                      ${(order.items || []).map(item => {
+                        const isInstant = item.type === 'instant' || (!item.type && ((item.category || '').toLowerCase().includes('drink') || (item.category || '').toLowerCase().includes('bottle')));
+                        return `
                         <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-surface); padding: 8px 12px; border-radius: 8px; font-family: var(--font-mono);">
                           <div>
                             <span style="font-size: 1rem; font-weight: 700; color: var(--ink-primary);">
@@ -563,14 +601,26 @@ export function renderKitchenView(container) {
                             </span>
                             ${item.customization ? `<div style="font-size: 0.75rem; font-weight: 700; color: #D97706; margin-top: 1px;">⚡ ${escapeHtml(item.customization)}</div>` : ''}
                           </div>
-                          ${item.station ? `<span style="font-size: 0.72rem; font-weight: 700; color: var(--ink-secondary); text-transform: uppercase; background: #FFF; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-light);">${escapeHtml(item.station)}</span>` : ''}
+                          <div style="display: flex; gap: 6px; align-items: center;">
+                            ${isInstant ? `
+                              <span style="font-size: 0.72rem; font-weight: 700; color: #0284C7; text-transform: uppercase; background: #E0F2FE; padding: 2px 6px; border-radius: 4px; border: 1px solid #BAE6FD;">
+                                📦 Grab & Pack
+                              </span>
+                            ` : `
+                              <span style="font-size: 0.72rem; font-weight: 700; color: #D97706; text-transform: uppercase; background: #FEF3C7; padding: 2px 6px; border-radius: 4px; border: 1px solid #FDE68A;">
+                                🍳 Cook
+                              </span>
+                            `}
+                            ${item.station ? `<span style="font-size: 0.72rem; font-weight: 700; color: var(--ink-secondary); text-transform: uppercase; background: #FFF; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-light);">${escapeHtml(item.station)}</span>` : ''}
+                          </div>
                         </div>
-                      `).join('')}
+                      `;
+                      }).join('')}
                     </div>
                   </div>
 
                   <!-- Action Buttons -->
-                  <div style="display: grid; grid-template-columns: ${isCooking ? '1fr' : '1fr 1fr'}; gap: 8px;">
+                  <div style="display: grid; grid-template-columns: ${isCooking ? '1fr 40px' : '1fr 1fr 40px'}; gap: 8px;">
                     ${!isCooking ? `
                       <button 
                         class="btn btn--outline-warning btn--md kds-action-btn start-cook-btn" 
@@ -587,6 +637,15 @@ export function renderKitchenView(container) {
                       data-target-status="ready"
                     >
                       Mark Ready 🔔
+                    </button>
+
+                    <button 
+                      class="btn btn--outline-danger btn--md kds-cancel-btn" 
+                      data-order-id="${escapeHtml(orderId)}" 
+                      data-token="${escapeHtml(order.tokenNumber || 'TB-???')}"
+                      title="Cancel order due to out-of-stock dish"
+                    >
+                      🚫
                     </button>
                   </div>
 
@@ -638,6 +697,12 @@ export function renderKitchenView(container) {
       });
     });
 
+    // Attach Clear Focus Order Listener
+    container.querySelector('#clear-kds-focus-btn')?.addEventListener('click', () => {
+      focusedOrderId = null;
+      renderKDS();
+    });
+
     // Attach Audio Toggle Listener
     container.querySelector('#toggle-kds-audio-btn')?.addEventListener('click', () => {
       audioAlertsEnabled = !audioAlertsEnabled;
@@ -666,6 +731,9 @@ export function renderKitchenView(container) {
       btn.addEventListener('click', async () => {
         const orderId = btn.getAttribute('data-order-id');
         const targetStatus = btn.getAttribute('data-target-status');
+        if (inFlightOrderIds.has(orderId)) return;
+        inFlightOrderIds.add(orderId);
+
         btn.textContent = 'Updating...';
         btn.disabled = true;
 
@@ -675,6 +743,12 @@ export function renderKitchenView(container) {
         }
 
         // Optimistic UI update locally so the queue advances immediately!
+        const cardEl = btn.closest('.kds-card, .kds-pile-card, .kds-ticket-card');
+        if (cardEl && targetStatus === 'ready') {
+          cardEl.classList.add('kds-card-leaving');
+          await new Promise(r => setTimeout(r, 120));
+        }
+
         const targetIdx = currentOrders.findIndex(o => (o.orderId || o.id) === orderId);
         let previousStatus = null;
         if (targetIdx !== -1) {
@@ -692,7 +766,42 @@ export function renderKitchenView(container) {
             currentOrders[targetIdx].status = previousStatus;
             renderKDS();
           }
-          alert("Status Update Failed: " + (e.message || e));
+          alert("Status Update Failed: " + getFriendlyErrorMessage(e, 'Unable to update status.'));
+        } finally {
+          inFlightOrderIds.delete(orderId);
+        }
+      });
+    });
+
+    // Attach Cancel Order Listeners
+    container.querySelectorAll('.kds-cancel-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const orderId = btn.getAttribute('data-order-id');
+        const tokenNumber = btn.getAttribute('data-token') || 'Order';
+        if (inFlightOrderIds.has(orderId)) return;
+
+        const reason = prompt(`Reason for cancelling order ${tokenNumber}?`, 'Out of ingredients / Kitchen unable to prepare');
+        if (!reason) return;
+
+        const confirmed = confirm(`Are you sure you want to CANCEL order ${tokenNumber}?\nThis will update the live queue and notify the customer.`);
+        if (!confirmed) return;
+
+        inFlightOrderIds.add(orderId);
+        const origContent = btn.innerHTML;
+        btn.textContent = 'Cancelling...';
+        btn.disabled = true;
+
+        try {
+          await cancelStaffOrder(orderId, reason);
+          if (focusedOrderId === orderId) focusedOrderId = null;
+          await loadKitchenDataAuthoritative();
+        } catch (err) {
+          console.error("Kitchen cancellation error:", err);
+          alert("Cancellation Failed: " + getFriendlyErrorMessage(err, 'Unable to cancel order.'));
+          btn.innerHTML = origContent;
+          btn.disabled = false;
+        } finally {
+          inFlightOrderIds.delete(orderId);
         }
       });
     });
@@ -726,7 +835,7 @@ export function renderKitchenView(container) {
   // 3. Connect real-time Firestore stream (sub-50ms)
   try {
     const ordersCol = collection(db, 'orders');
-    const q = query(ordersCol, where('status', 'in', ['placed', 'confirmed', 'preparing', 'payment_pending', 'ready']));
+    const q = query(ordersCol, where('status', 'in', ['placed', 'confirmed', 'preparing', 'payment_pending', 'ready']), limit(100));
     
     unsubscribeOrders = onSnapshot(q, (snapshot) => {
       const liveOrders = snapshot.docs.map(d => {

@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -72,14 +73,20 @@ class CheckoutService {
       }
       return order;
     } on FirebaseFunctionsException catch (e) {
-      if (e.code == 'not-found' ||
-          e.code == 'internal' ||
-          (e.code == 'unavailable' &&
-              !(e.message ?? '').toLowerCase().contains('degraded') &&
-              !(e.message ?? '').toLowerCase().contains('halt') &&
-              !(e.message ?? '').toLowerCase().contains('paused'))) {
-        throw const CheckoutException(
-          'Canteen checkout service is currently unavailable. Please verify your connection and try again.',
+      // Spark plan / undeployed functions / network disconnect fallback:
+      if (e.code == 'not-found' || e.code == 'internal' || e.code == 'unavailable') {
+        final rawMsg = e.message ?? '';
+        final lower = rawMsg.toLowerCase();
+        if (lower.contains('degraded') || lower.contains('halt') || lower.contains('paused') || lower.contains('freeze')) {
+          throw CanteenPausedException(rawMsg);
+        }
+        // Resilient Spark plan direct Firestore order creation
+        return await _createDirectFirestoreOnlineOrder(
+          user: user,
+          entries: entries,
+          paymentMethod: paymentMethod,
+          readyMadePreference: readyMadePreference,
+          student: student,
         );
       }
 
@@ -129,7 +136,22 @@ class CheckoutService {
       if (e is CheckoutException || e is InsufficientStockException || e is CanteenPausedException) {
         rethrow;
       }
-      throw CheckoutException('Checkout encountered an issue: $e. Please retry.');
+      // Resilient fallback on network timeout or socket errors
+      try {
+        return await _createDirectFirestoreOnlineOrder(
+          user: user,
+          entries: entries,
+          paymentMethod: paymentMethod,
+          readyMadePreference: readyMadePreference,
+          student: student,
+        );
+      } catch (innerErr) {
+        // Don't wrap stock exceptions — the UI needs them typed
+        if (innerErr is InsufficientStockException || innerErr is CanteenPausedException) {
+          rethrow;
+        }
+        throw CheckoutException('Checkout encountered an issue: $innerErr. Please retry.');
+      }
     }
   }
 
@@ -201,6 +223,189 @@ class CheckoutService {
       isOnlyReadyMade: isOnlyReadyMade,
       readyMadePreference: readyMadePref,
     );
+  }
+
+  /// Directly creates an authoritative online order in Firestore
+  /// when Cloud Functions are not deployed (Spark plan) or temporarily unreachable.
+  Future<Order> _createDirectFirestoreOnlineOrder({
+    required User user,
+    required List<CartEntry> entries,
+    required String paymentMethod,
+    String? readyMadePreference,
+    dynamic student,
+  }) async {
+    final now = DateTime.now();
+    final secureRng = Random.secure();
+    final randomHex = List<int>.generate(8, (_) => secureRng.nextInt(256))
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    final orderId = 'ord_${now.millisecondsSinceEpoch}_$randomHex';
+
+    // Atomic Daily Sequential Token Generation (TB-100 to TB-999) with contention retries
+    int tokenSeq = 100;
+    final counterRef = _db.collection('counters').doc('dailyTokenCounter');
+    for (int tokenAttempt = 0; tokenAttempt < 5; tokenAttempt++) {
+      try {
+        tokenSeq = await _db.runTransaction((tx) async {
+          final snap = await tx.get(counterRef);
+          final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+          int next = 100;
+          if (snap.exists && snap.data()?['date'] == todayStr) {
+            next = ((snap.data()?['lastToken'] as num?)?.toInt() ?? 99) + 1;
+            if (next > 999) next = 100;
+          }
+          tx.set(counterRef, {
+            'lastToken': next,
+            'date': todayStr,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          return next;
+        });
+        break; // Successfully got sequential token
+      } catch (_) {
+        if (tokenAttempt < 4) {
+          await Future.delayed(Duration(milliseconds: 40 * (tokenAttempt + 1) + secureRng.nextInt(80)));
+        } else {
+          // High-concurrency fallback: millisecond-seeded collision-resistant token TB-100 to TB-999
+          tokenSeq = 100 + ((now.millisecondsSinceEpoch + secureRng.nextInt(899)) % 899);
+        }
+      }
+    }
+    final tokenNumber = 'TB-${tokenSeq.toString().padLeft(3, '0')}';
+    final pinCode = '${1000 + secureRng.nextInt(9000)}';
+
+    double totalAmount = 0.0;
+    final orderItems = entries.map((e) {
+      final itemTotal = e.item.price * e.qty;
+      totalAmount += itemTotal;
+      return OrderItem(
+        menuItemId: e.item.id,
+        name: e.item.name,
+        quantity: e.qty,
+        price: e.item.price,
+        type: e.item.type,
+        customization: e.customization,
+      );
+    }).toList();
+
+    final bool isOnlyReadyMade = entries.isNotEmpty && entries.every((e) => e.item.isInstant);
+    final String studentName = (student != null && student.displayName != null && student.displayName.toString().isNotEmpty)
+        ? student.displayName.toString()
+        : (user.displayName ?? 'Student');
+    final String studentRoll = (student != null && student.rollNo != null)
+        ? student.rollNo.toString()
+        : '';
+
+    final reservationExpiresAt = now.add(const Duration(minutes: 15));
+    final isCounterCash = paymentMethod == 'counter_cash';
+
+    final order = Order(
+      id: orderId,
+      tokenNumber: tokenNumber,
+      pinCode: pinCode,
+      studentId: user.uid,
+      studentName: studentName,
+      studentRoll: studentRoll,
+      status: isCounterCash ? 'confirmed' : 'payment_pending',
+      paymentStatus: isCounterCash ? 'unpaid' : 'pending',
+      paymentMethod: paymentMethod,
+      createdAt: now,
+      readyAt: now.add(Duration(minutes: isOnlyReadyMade ? 2 : 12)),
+      reservationExpiresAt: reservationExpiresAt,
+      estimatedMinutes: isOnlyReadyMade ? 2 : 12,
+      totalAmount: totalAmount,
+      totalAmountPaise: (totalAmount * 100).round(),
+      items: orderItems,
+      isOnlyReadyMade: isOnlyReadyMade,
+      readyMadePreference: readyMadePreference,
+    );
+
+    // Save order document directly to Firestore /orders/{orderId} with atomic inventory decrement
+    // Under peak rush (10-50 concurrent checkouts), retries handle document contention safely
+    final bool hasInstantItems = entries.any((e) => e.item.type == 'instant' || e.item.inventoryMode == 'STOCK_TRACKED');
+    final orderRef = _db.collection('orders').doc(orderId);
+
+    if (!hasInstantItems) {
+      // 100% Cooked items (made to order): zero inventory locks needed, write directly (100% contention-free)
+      await orderRef.set(order.toFirestore());
+      debugPrint('[Checkout] Direct cooked order committed: $orderId');
+    } else {
+      // Contains instant/packaged items: atomic transaction with contention retry
+      bool committed = false;
+      Exception? lastException;
+
+      for (int txAttempt = 0; txAttempt < 5; txAttempt++) {
+        try {
+          await _db.runTransaction((tx) async {
+            final Map<DocumentReference<Map<String, dynamic>>, Map<String, dynamic>> stockUpdates = {};
+
+            for (final entry in entries) {
+              if (entry.item.type == 'instant' || entry.item.inventoryMode == 'STOCK_TRACKED') {
+                final itemRef = _db.collection('menuItems').doc(entry.item.id);
+                final snap = await tx.get(itemRef);
+                if (!snap.exists) {
+                  throw InsufficientStockException(entry.item.id, entry.item.name, 0);
+                }
+                final data = snap.data() ?? {};
+                final currentStock = ((data['stockOnHand'] ?? data['availableStock'] ?? data['stockCount'] ?? 0) as num).toInt();
+                if (currentStock < entry.qty) {
+                  throw InsufficientStockException(entry.item.id, entry.item.name, currentStock);
+                }
+                final newStock = (currentStock - entry.qty).clamp(0, 999999);
+                final isStillAvailable = newStock > 0;
+                stockUpdates[itemRef] = {
+                  'stockOnHand': newStock,
+                  'stockCount': newStock,
+                  'availableStock': newStock,
+                  'isOrderable': isStillAvailable,
+                  'available': isStillAvailable,
+                  'availabilityStatus': isStillAvailable ? 'AVAILABLE' : 'OUT_OF_STOCK',
+                  'updatedAt': FieldValue.serverTimestamp(),
+                };
+              }
+            }
+
+            // Commit all stock decrements
+            stockUpdates.forEach((ref, updatePayload) {
+              tx.update(ref, updatePayload);
+            });
+
+            // Commit order document
+            tx.set(orderRef, order.toFirestore());
+          });
+          committed = true;
+          debugPrint('[Checkout] Stock decrement transaction SUCCESS for order $orderId (attempt $txAttempt)');
+          break;
+        } catch (txErr) {
+          if (txErr is InsufficientStockException) {
+            rethrow; // Stock is genuinely exhausted, never retry or oversell
+          }
+          lastException = txErr is Exception ? txErr : Exception(txErr.toString());
+          debugPrint('[Checkout] Transaction contention on attempt $txAttempt: $txErr');
+          if (txAttempt < 4) {
+            // Exponential backoff with random jitter to resolve contention
+            await Future.delayed(Duration(milliseconds: 70 * (txAttempt + 1) + secureRng.nextInt(100)));
+          }
+        }
+      }
+
+      if (!committed) {
+        if (lastException is InsufficientStockException) {
+          throw lastException;
+        }
+        throw CheckoutException(
+          'High order volume right now. Please tap Place Order again.',
+        );
+      }
+    }
+
+    // Save PIN in SharedPreferences for offline recovery
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('order_pin_$orderId', pinCode);
+    } catch (_) {}
+
+    return order;
   }
 }
 

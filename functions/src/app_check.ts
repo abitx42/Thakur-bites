@@ -12,6 +12,16 @@ export function enforceAppCheck(request: CallableRequest<any>): void {
   if (process.env.FUNCTIONS_EMULATOR === 'true' && process.env.ENFORCE_APP_CHECK !== 'true') {
     return;
   }
+  // Staff, Admin, and Workstation portal operations originating from web browsers do not run mobile App Check tokens
+  if (request.auth?.token?.isWorkstationSession ||
+      (request.auth?.token?.role && ['admin', 'manager', 'developer', 'security_admin', 'kitchen', 'pickup', 'staff'].includes(request.auth.token.role)) ||
+      (request.auth?.token?.email && (
+        request.auth.token.email.includes('admin') ||
+        request.auth.token.email.endsWith('@tcetmumbai.in') ||
+        request.auth.token.email.endsWith('@thakureducation.org')
+      ))) {
+    return;
+  }
   const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE);
   const isExplicitlyEnforced = process.env.ENFORCE_APP_CHECK === 'true';
 

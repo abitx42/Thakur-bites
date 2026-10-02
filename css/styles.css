@@ -70,7 +70,21 @@
   --duration-fast: 120ms;
   --duration-normal: 200ms;
   --duration-slow: 320ms;
+  --tb-duration-micro: 120ms;
+  --tb-duration-standard: 200ms;
+  --tb-duration-structural: 300ms;
+  --tb-duration-ambient: 2400ms;
+
   --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+  --tb-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --tb-ease-enter: cubic-bezier(0, 0, 0.2, 1);
+  --tb-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --tb-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Focus Ring Tokens */
+  --tb-focus-ring: 0 0 0 3px rgba(220, 38, 38, 0.25);
+  --tb-focus-ring-success: 0 0 0 3px rgba(22, 163, 74, 0.25);
+  --tb-focus-ring-info: 0 0 0 3px rgba(37, 99, 235, 0.25);
 
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
@@ -113,25 +127,31 @@ body {
   padding: 8px 16px;
   background: var(--bg-surface);
   color: var(--ink-primary);
-  transition: all var(--duration-fast) var(--ease-standard);
+  transition: transform var(--tb-duration-micro) var(--tb-ease-standard),
+              background-color var(--tb-duration-micro) ease,
+              border-color var(--tb-duration-micro) ease,
+              box-shadow var(--tb-duration-micro) var(--tb-ease-standard),
+              color var(--tb-duration-micro) ease;
   user-select: none;
   white-space: nowrap;
   vertical-align: middle;
+  will-change: transform;
 }
 
 .btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
+  transform: translateY(-1.5px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
 }
 
 .btn:active:not(:disabled) {
-  transform: scale(0.975);
-  transition: transform 0.08s var(--ease-standard);
+  transform: translateY(0.5px) scale(0.98);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  transition: transform 0.06s var(--tb-ease-standard);
 }
 
 .btn:focus-visible {
-  outline: 2px solid var(--curry-green);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--tb-focus-ring);
 }
 
 .btn:disabled,
@@ -702,6 +722,7 @@ body {
   inset: 0;
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   z-index: 60;
   display: flex;
   justify-content: flex-end;
@@ -898,7 +919,9 @@ body {
 .kds-card.urgent {
   border-color: var(--chili-red);
   background: #FFF1F2;
+  box-shadow: 4px 4px 0 var(--ink-primary);
   animation: urgentPulse 2s infinite ease-in-out;
+  will-change: transform, opacity;
 }
 
 @keyframes cardSlideIn {
@@ -914,10 +937,12 @@ body {
 
 @keyframes urgentPulse {
   0%, 100% {
-    box-shadow: 4px 4px 0 var(--ink-primary);
+    transform: translateZ(0) scale(1);
+    opacity: 1;
   }
   50% {
-    box-shadow: 4px 4px 14px rgba(220, 38, 38, 0.45);
+    transform: translateZ(0) scale(1.008);
+    opacity: 0.94;
   }
 }
 
@@ -977,12 +1002,14 @@ body {
   background: #14532D;
   border-color: #22C55E;
   color: #FFFFFF;
+  box-shadow: 0 0 18px rgba(34, 197, 94, 0.5);
   animation: pulseReady 2s infinite ease-in-out;
+  will-change: transform, opacity;
 }
 
 @keyframes pulseReady {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 15px rgba(34, 197, 94, 0.4); }
-  50% { transform: scale(1.03); box-shadow: 0 0 25px rgba(34, 197, 94, 0.8); }
+  0%, 100% { transform: translateZ(0) scale(1); opacity: 1; }
+  50% { transform: translateZ(0) scale(1.025); opacity: 0.93; }
 }
 
 .tv-token-prep {
@@ -1105,6 +1132,7 @@ body {
   inset: 0;
   background: rgba(34, 28, 21, 0.8);
   backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1227,10 +1255,318 @@ html, body {
 
 /* Fluid grids */
 .pickup-grid,
+.admin-menu-grid,
 .responsive-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)) !important;
+  gap: 1.1rem;
+}
+
+/* Admin Filter Controls & Responsive Chip Carousel */
+.admin-filter-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  width: 100%;
+}
+
+.admin-category-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.admin-filter-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Cashier POS 2-Column Desktop / 1-Column Mobile */
+.cashier-master-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .cashier-master-grid {
+    grid-template-columns: 1fr !important;
+    gap: 1.25rem !important;
+  }
+}
+
+/* Modal Form 2-Col Grids */
+.form-grid-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 1.2rem;
+}
+
+@media (max-width: 560px) {
+  .form-grid-2col {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+  }
+}
+
+/* Universal Responsive Modals */
+.modal-overlay,
+.pin-modal-overlay,
+.daily-board-modal-overlay {
+  padding: 0.75rem !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+}
+
+.modal-card,
+.pin-modal-card,
+.daily-board-modal-card,
+#admin-modal-card {
+  max-width: min(94vw, 580px) !important;
+  max-height: 92vh !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  box-sizing: border-box !important;
+}
+
+/* ─── Staff & Admin Modern Component Tokens ─── */
+.staff-header,
+.admin-header {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 2px solid var(--border-light);
+  padding: 0.75rem 1.25rem;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+}
+
+.staff-header-inner,
+.admin-header-inner {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   gap: 1rem;
+}
+
+.staff-brand-section,
+.admin-brand-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.staff-nav-bar,
+.admin-nav-bar {
+  display: flex;
+  gap: 5px;
+  background: var(--bg-surface);
+  padding: 4px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border-light);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.staff-nav-bar::-webkit-scrollbar,
+.admin-nav-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.staff-nav-btn,
+.admin-nav-btn {
+  padding: 8px 16px;
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+  font-weight: 700;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  min-height: 40px;
+  touch-action: manipulation;
+}
+
+.staff-nav-btn.active,
+.admin-nav-btn.active {
+  background: #18181B;
+  color: #FFFFFF !important;
+  font-weight: 800;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+.staff-specials-btn {
+  background: #FFFBEB;
+  color: #92400E;
+  border: 1.5px solid #F59E0B;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 40px;
+  touch-action: manipulation;
+}
+
+.staff-signout-btn {
+  background: #FEF2F2;
+  border: 1.5px solid #FCA5A5;
+  color: #DC2626;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  min-height: 40px;
+  touch-action: manipulation;
+}
+
+.staff-bread-bar {
+  background: #FFFBEB;
+  border-bottom: 2px solid #FDE68A;
+  padding: 8px 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.staff-bread-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.staff-bread-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+
+/* ─── Admin Floating Action Button (FAB) ─── */
+.admin-fab-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-fab-main {
+  background: #0F172A;
+  color: #FFF;
+  border: 2px solid #DC2626;
+  border-radius: 999px;
+  padding: 11px 20px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  transition: transform 0.2s, background 0.2s, box-shadow 0.2s;
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+.admin-fab-main:hover {
+  transform: scale(1.05);
+  background: #1E293B;
+}
+
+.admin-fab-popout {
+  background: #FFF;
+  color: #0F172A;
+  border: 1.5px solid var(--border-light);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: bold;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s;
+}
+
+.admin-fab-popout:hover {
+  transform: scale(1.1);
+}
+
+.admin-fab-pulse {
+  background: #22C55E;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  animation: tb-pulse-indicator 2s infinite;
+}
+
+@keyframes tb-pulse-indicator {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+/* Scrollable chip lists for categories & tags */
+.horizontal-chips-scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 2px;
+}
+.horizontal-chips-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 /* ─── Tablet Screens (max-width: 1024px) ─── */
@@ -1278,43 +1614,214 @@ html, body {
 
 /* ─── Mobile Large & Small Tablets (max-width: 768px) ─── */
 @media (max-width: 768px) {
-  .app-header {
-    padding: 0.6rem 0.8rem !important;
+  .app-header,
+  .staff-header,
+  .admin-header {
+    padding: 0.5rem 0.75rem !important;
   }
   
-  .header-container {
-    flex-direction: column;
+  .header-container,
+  .staff-header-inner,
+  .admin-header-inner {
+    flex-direction: column !important;
     align-items: stretch !important;
-    gap: 0.75rem;
+    gap: 0.5rem !important;
   }
 
-  .header-container > div:first-child {
-    justify-content: space-between;
-    width: 100%;
+  .staff-top-row,
+  .admin-top-row {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    width: 100% !important;
   }
 
-  .header-container nav {
-    order: 2;
-    width: 100%;
+  /* Full-width smooth scrollable tab navigation on mobile */
+  .staff-nav-bar,
+  .admin-nav-bar {
+    width: 100% !important;
+    border-radius: 12px !important;
+    padding: 3px !important;
+    gap: 4px !important;
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    -webkit-overflow-scrolling: touch;
   }
 
-  .header-container > div:last-child {
-    order: 3;
-    justify-content: flex-end;
-    width: 100%;
+  .staff-nav-btn,
+  .admin-nav-btn,
+  .staff-specials-btn {
+    flex: 1 0 auto !important;
+    padding: 7px 12px !important;
+    font-size: 0.8rem !important;
+    min-height: 38px !important;
+    justify-content: center !important;
+  }
+
+  /* Quick actions container on admin mobile */
+  .admin-actions-section {
+    width: 100% !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    padding-top: 2px !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-actions-section > * {
+    flex: 1 0 auto !important;
+    text-align: center !important;
+    padding: 6px 10px !important;
+    font-size: 0.75rem !important;
   }
 
   /* Bread stock bar */
+  .staff-bread-bar,
   #staff-bread-stock-bar {
-    padding: 8px 1rem !important;
-    flex-direction: column;
-    align-items: flex-start !important;
+    padding: 6px 0.75rem !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 6px !important;
+  }
+
+  .staff-bread-inner,
+  #staff-bread-stock-bar > div:first-child {
+    display: flex !important;
+    gap: 6px !important;
+    width: 100% !important;
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .staff-bread-btn,
+  #quick-toggle-roti-btn,
+  #quick-toggle-puri-btn {
+    flex: 1 0 auto !important;
+    padding: 6px 10px !important;
+    font-size: 0.78rem !important;
+    min-height: 36px !important;
+    justify-content: center !important;
+  }
+
+  /* Main wrapper mobile breathing room */
+  .main-wrapper {
+    padding: 0.85rem 0.65rem !important;
+  }
+
+  /* Admin Floating Action Button on mobile: Compact circle FAB */
+  .admin-fab-container {
+    bottom: 16px !important;
+    right: 16px !important;
+    gap: 6px !important;
+  }
+
+  .admin-fab-main {
+    padding: 0 !important;
+    width: 48px !important;
+    height: 48px !important;
+    border-radius: 50% !important;
+    justify-content: center !important;
+  }
+
+  .admin-fab-label {
+    display: none !important;
+  }
+
+  .admin-fab-icon {
+    font-size: 20px !important;
+  }
+
+  .admin-fab-popout {
+    width: 36px !important;
+    height: 36px !important;
+    font-size: 13px !important;
+  }
+
+  /* KDS Controls Mobile Adjustment */
+  .kds-pile-card {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 0.75rem !important;
+  }
+
+  .kds-pile-card > div:last-child {
+    width: 100%;
+    justify-content: space-between !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+
+  .kds-pile-card .focus-order-btn,
+  .kds-pile-card .start-cook-btn,
+  .kds-pile-card .mark-ready-btn {
+    flex: 1 !important;
+    min-height: 44px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 0.85rem !important;
+    padding: 8px !important;
+  }
+
+  /* Grid layouts turn into single-column clean stacks */
+  .admin-menu-grid,
+  .pickup-grid,
+  .responsive-card-grid {
+    grid-template-columns: 1fr !important;
+    gap: 0.85rem !important;
+  }
+
+  /* Menu Cards in Admin on Mobile */
+  .menu-card-admin {
+    padding: 1rem !important;
+  }
+
+  .menu-card-admin .toggle-cooked-btn,
+  .menu-card-admin .edit-item-btn {
+    min-height: 42px !important;
+    font-size: 0.82rem !important;
+  }
+
+  /* Admin Filter Stacking & Fluid Selects */
+  .admin-filter-bar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .admin-category-chips {
+    width: 100% !important;
+    padding-bottom: 4px !important;
+  }
+
+  .admin-filter-controls {
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)) !important;
     gap: 8px !important;
   }
 
-  #staff-bread-stock-bar > div {
-    width: 100%;
-    justify-content: space-between;
+  .admin-filter-controls > div {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 4px !important;
+  }
+
+  .admin-filter-controls select {
+    width: 100% !important;
+    min-height: 38px !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Cashier Master Grid on Mobile */
+  .cashier-master-grid {
+    grid-template-columns: 1fr !important;
+    gap: 1rem !important;
   }
 
   /* PIN Modal */
@@ -1342,39 +1849,20 @@ html, body {
     min-height: 48px;
     font-size: 1.3rem !important;
   }
-
-  /* KDS Hero Spotlight on Mobile */
-  .kds-pile-card {
-    flex-direction: column !important;
-    align-items: stretch !important;
-    gap: 0.75rem !important;
-  }
-
-  .kds-pile-card > div:last-child {
-    width: 100%;
-    justify-content: flex-end;
-  }
-
-  .kds-pile-card .focus-order-btn,
-  .kds-pile-card .start-cook-btn,
-  .kds-pile-card .mark-ready-btn {
-    flex: 1;
-    min-height: 42px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
 }
 
 /* ─── Smartphones (max-width: 480px) ─── */
 @media (max-width: 480px) {
   .brand-text h1,
-  h1, h2 {
-    font-size: 1.4rem !important;
+  h1, h2,
+  .staff-header h2,
+  .admin-header h2,
+  .copilot-brand-title {
+    font-size: 1.25rem !important;
   }
 
   .kds-header h3 {
-    font-size: 1.2rem !important;
+    font-size: 1.15rem !important;
   }
 
   .cat-pill {
@@ -1412,6 +1900,11 @@ html, body {
   .tv-display-screen {
     padding: 0.75rem 0.6rem !important;
   }
+
+  /* Safe Area Inset Support for modern iOS / Android notches */
+  body {
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
 }
 
 /* Station Verification High-Visibility Flash */
@@ -1432,5 +1925,262 @@ html, body {
     opacity: 1;
   }
 }
+
+/* ==========================================================================
+   INTERACTION DESIGN SYSTEM: FORMS, MODALS, TRANSITIONS & ACCESSIBILITY
+   ========================================================================== */
+
+/* Universal Form Inputs & Interactive Controls */
+.form-input,
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="email"],
+input[type="search"],
+select,
+textarea {
+  transition: border-color var(--tb-duration-micro) ease,
+              box-shadow var(--tb-duration-micro) var(--tb-ease-standard),
+              background-color var(--tb-duration-micro) ease;
+}
+
+.form-input:focus,
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+input[type="email"]:focus,
+input[type="search"]:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--brand-red) !important;
+  box-shadow: var(--tb-focus-ring) !important;
+}
+
+/* WCAG 2.2 Level AA Focus-Visible Accessibility Ring */
+.form-input:focus-visible,
+input[type="text"]:focus-visible,
+input[type="password"]:focus-visible,
+input[type="number"]:focus-visible,
+input[type="email"]:focus-visible,
+input[type="search"]:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent-orange, #EA580C) !important;
+  outline-offset: 2px !important;
+  box-shadow: var(--tb-focus-ring) !important;
+}
+
+/* GPU-Accelerated View Transitions */
+.tb-view-fade-in {
+  animation: tbViewFadeIn 0.16s var(--tb-ease-enter) forwards;
+  will-change: opacity, transform;
+}
+
+@keyframes tbViewFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Modal Animation System */
+.modal-overlay-fade-in {
+  animation: tbOverlayFadeIn 0.2s var(--tb-ease-enter) forwards;
+}
+
+@keyframes tbOverlayFadeIn {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+    -webkit-backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+}
+
+.modal-card-pop-in {
+  animation: tbModalPopIn 0.24s var(--tb-ease-spring) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes tbModalPopIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.modal-card-exit {
+  animation: tbModalExit 0.14s var(--tb-ease-exit) forwards !important;
+}
+
+@keyframes tbModalExit {
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+
+/* GPU-Friendly Ambient Pulse */
+.tb-ambient-pulse {
+  animation: tbAmbientPulse var(--tb-duration-ambient) infinite ease-in-out;
+  will-change: opacity, transform;
+}
+
+@keyframes tbAmbientPulse {
+  0%, 100% { opacity: 0.8; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.04); }
+}
+
+/* Interactive Card & Chip Press States */
+.cat-pill:active,
+.kds-filter-btn:active,
+.staff-nav-btn:active,
+.role-btn:active {
+  transform: scale(0.96);
+  transition: transform 0.08s var(--tb-ease-standard);
+}
+
+.portal-card {
+  transition: transform var(--tb-duration-standard) var(--tb-ease-standard),
+              box-shadow var(--tb-duration-standard) var(--tb-ease-standard),
+              border-color var(--tb-duration-micro) ease !important;
+  will-change: transform, box-shadow;
+}
+
+.portal-card:hover {
+  transform: translateY(-3px) !important;
+  box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.09) !important;
+  border-color: var(--brand-red) !important;
+}
+
+.portal-card:active {
+  transform: translateY(-1px) scale(0.99) !important;
+}
+
+/* KDS Card Exit Transition */
+.kds-card-leaving {
+  opacity: 0 !important;
+  transform: translateY(-8px) scale(0.98) !important;
+  transition: opacity 0.16s var(--tb-ease-exit), transform 0.16s var(--tb-ease-exit) !important;
+  pointer-events: none !important;
+}
+
+/* Pickup Station Order Card Transitions */
+.pickup-order-card {
+  transition: transform var(--tb-duration-standard) var(--tb-ease-standard),
+              box-shadow var(--tb-duration-standard) var(--tb-ease-standard),
+              border-color var(--tb-duration-micro) ease;
+}
+
+.pickup-order-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px -2px rgba(0, 0, 0, 0.06);
+}
+
+.pickup-order-card.card-collected {
+  opacity: 0 !important;
+  transform: scale(0.96) !important;
+  transition: opacity 0.14s var(--tb-ease-exit), transform 0.14s var(--tb-ease-exit) !important;
+  pointer-events: none !important;
+}
+
+/* ==========================================================================
+   ACCESSIBILITY: PREFERS-REDUCED-MOTION (WCAG 2.2 Level AA / AAA)
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  
+  .tb-view-fade-in,
+  .modal-overlay-fade-in,
+  .modal-card-pop-in,
+  .ticket-wrapper,
+  .cart-drawer,
+  .cart-floating-bar,
+  .toast,
+  .btn,
+  .portal-card {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+    transition: none !important;
+  }
+}
+
+/* ==========================================================================
+   PRINT MEDIA STYLESHEET (Canteen Receipts & Kitchen Tickets)
+   ========================================================================== */
+@media print {
+  *,
+  *::before,
+  *::after {
+    background: transparent !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  body {
+    background: #FFFFFF !important;
+    color: #000000 !important;
+    font-size: 11pt !important;
+    margin: 0 !important;
+    padding: 8mm !important;
+  }
+
+  /* Hide interactive chrome, headers, navigation bars, buttons & FABs */
+  .app-header,
+  .staff-header,
+  .admin-header,
+  .admin-nav-bar,
+  .staff-nav-bar,
+  .admin-actions-section,
+  .admin-fab-container,
+  #tb-network-sentinel-banner,
+  .btn,
+  button,
+  .modal-overlay-fade-in {
+    display: none !important;
+  }
+
+  /* Printable Ticket & Receipt Formatting */
+  .ticket-wrapper,
+  .kds-ticket-card,
+  .pickup-order-card {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    border: 1px solid #000000 !important;
+    margin-bottom: 5mm !important;
+    padding: 4mm !important;
+  }
+
+  .qr-code-img,
+  canvas {
+    max-width: 120px !important;
+    max-height: 120px !important;
+  }
+}
+
 
 

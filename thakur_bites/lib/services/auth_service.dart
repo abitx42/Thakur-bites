@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_profile.dart';
 import 'functions_service.dart';
 
@@ -71,20 +73,97 @@ class AuthService {
     return AccountType.visitor;
   }
 
-  /// Fetch a user profile by UID from authoritative `users` collection.
-  Future<UserProfile?> getUserProfile(String uid) async {
+  static const String _cachedProfileKey = 'tb_cached_user_profile';
+
+  /// Save profile to local disk cache for instant 0ms cold-start persistence
+  Future<void> saveCachedProfile(UserProfile profile) async {
     try {
-      final userDoc = await _users.doc(uid).get();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_cachedProfileKey, jsonEncode(profile.toJson()));
+    } catch (e) {
+      debugPrint('[AuthService] Error saving cached profile: $e');
+    }
+  }
+
+  /// Load profile from local disk cache
+  Future<UserProfile?> getCachedProfile() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_cachedProfileKey);
+      if (raw != null && raw.isNotEmpty) {
+        final data = jsonDecode(raw) as Map<String, dynamic>;
+        return UserProfile.fromJson(data);
+      }
+    } catch (e) {
+      debugPrint('[AuthService] Error loading cached profile: $e');
+    }
+    return null;
+  }
+
+  /// Clear local disk profile cache
+  Future<void> clearCachedProfile() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_cachedProfileKey);
+    } catch (_) {}
+  }
+
+  /// Synthesize a valid fallback profile from Firebase Auth User
+  UserProfile _synthesizeProfileFromUser(User user) {
+    final rawName = user.displayName ?? 'Student';
+    final cleanName = UserProfile.cleanName(rawName);
+    final email = user.email ?? '';
+    final accountType = getIdentityHintFromEmail(email);
+
+    return UserProfile(
+      uid: user.uid,
+      email: email,
+      displayName: cleanName,
+      photoURL: user.photoURL,
+      accountType: accountType,
+      verificationStatus: accountType == AccountType.student
+          ? VerificationStatus.pending
+          : VerificationStatus.notRequired,
+      priorityLevel: 0,
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// Fetch a user profile by UID from authoritative `users` collection with persistent disk caching.
+  Future<UserProfile?> getUserProfile(String uid) async {
+    final cached = await getCachedProfile();
+
+    try {
+      final userDoc = await _users.doc(uid).get().timeout(const Duration(seconds: 4));
       if (userDoc.exists && userDoc.data() != null) {
-        return UserProfile.fromFirestore(userDoc.id, userDoc.data()!);
+        final profile = UserProfile.fromFirestore(userDoc.id, userDoc.data()!);
+        await saveCachedProfile(profile);
+        return profile;
       }
 
       // If user profile document does not exist in Firestore yet, trigger server-side provisioning
       if (_auth.currentUser != null && _auth.currentUser!.uid == uid) {
-        return await _ensureUserProfile(_auth.currentUser!);
+        final profile = await _ensureUserProfile(_auth.currentUser!);
+        await saveCachedProfile(profile);
+        return profile;
       }
     } catch (e) {
       debugPrint('[AuthService] Error fetching user profile for $uid: $e');
+      // On network failure or offline startup, NEVER wipe user session if cached profile exists
+      if (cached != null && cached.uid == uid) {
+        debugPrint('[AuthService] Using cached profile for $uid');
+        return cached;
+      }
+      // If no cache, synthesize profile from current authenticated user
+      if (_auth.currentUser != null && _auth.currentUser!.uid == uid) {
+        final profile = _synthesizeProfileFromUser(_auth.currentUser!);
+        await saveCachedProfile(profile);
+        return profile;
+      }
+    }
+
+    if (cached != null && cached.uid == uid) {
+      return cached;
     }
     return null;
   }
@@ -299,6 +378,7 @@ class AuthService {
 
   /// Sign out current user
   Future<void> signOut() async {
+    await clearCachedProfile();
     try {
       await _googleSignIn.signOut();
     } catch (_) {}

@@ -287,6 +287,64 @@ class UserProfile {
     );
   }
 
+  Map<String, dynamic> toJson() {
+    return {
+      'uid': uid,
+      'email': email,
+      'displayName': displayName,
+      if (photoURL != null) 'photoURL': photoURL,
+      'accountType': accountType.toDbString(),
+      'verificationStatus': verificationStatus.toDbString(),
+      'priorityLevel': priorityLevel,
+      if (department != null) 'department': department,
+      if (designation != null) 'designation': designation,
+      if (year != null) 'year': year,
+      if (rollNo != null) 'rollNo': rollNo,
+      if (phone != null) 'phone': phone,
+      'isVerified': isVerified,
+      'accountDisabled': accountDisabled,
+      'totalOrders': totalOrders,
+      'totalSpentPaise': totalSpentPaise,
+      'averageOrderPaise': averageOrderPaise,
+      if (favouriteItemId != null) 'favouriteItemId': favouriteItemId,
+      'createdAt': createdAt.toIso8601String(),
+      if (updatedAt != null) 'updatedAt': updatedAt!.toIso8601String(),
+      if (lastLoginAt != null) 'lastLoginAt': lastLoginAt!.toIso8601String(),
+    };
+  }
+
+  factory UserProfile.fromJson(Map<String, dynamic> json) {
+    return UserProfile(
+      uid: json['uid'] as String? ?? '',
+      email: json['email'] as String? ?? '',
+      displayName: json['displayName'] as String? ?? 'Thakur Bites User',
+      photoURL: json['photoURL'] as String?,
+      accountType: AccountType.fromString(json['accountType'] as String?),
+      verificationStatus: VerificationStatus.fromString(json['verificationStatus'] as String?),
+      priorityLevel: (json['priorityLevel'] as num?)?.toInt() ?? 1,
+      department: json['department'] as String?,
+      designation: json['designation'] as String?,
+      year: json['year'] as String?,
+      rollNo: json['rollNo'] as String?,
+      phone: json['phone'] as String?,
+      isVerified: json['isVerified'] == true,
+      accountDisabled: json['accountDisabled'] == true,
+      totalOrders: (json['totalOrders'] as num?)?.toInt() ?? 0,
+      totalSpentPaise: (json['totalSpentPaise'] as num?)?.toInt() ?? 0,
+      averageOrderPaise: (json['averageOrderPaise'] as num?)?.toInt() ?? 0,
+      favouriteItemId: json['favouriteItemId'] as String?,
+      createdAt: json['createdAt'] != null
+          ? (DateTime.tryParse(json['createdAt'].toString()) ?? DateTime.now())
+          : DateTime.now(),
+      updatedAt: json['updatedAt'] != null
+          ? DateTime.tryParse(json['updatedAt'].toString())
+          : null,
+      lastLoginAt: json['lastLoginAt'] != null
+          ? DateTime.tryParse(json['lastLoginAt'].toString())
+          : null,
+    );
+  }
+
   Map<String, dynamic> toFirestore() {
     return {
       'uid': uid,

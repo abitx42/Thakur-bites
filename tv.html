@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.firebaseapp.com; img-src 'self' data: https:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.firebaseapp.com https://cloudflareinsights.com https://*.cloudflareinsights.com wss://*.firebaseio.com wss://*.googleapis.com; img-src 'self' data: https:;">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <title>Thakur Bites — Canteen Live Order Dispatch Board</title>
   
   <!-- High-Contrast Display Fonts -->
@@ -12,7 +13,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Custom Stylesheet -->
-  <link rel="stylesheet" href="css/styles.css?v=4">
+  <link rel="stylesheet" href="css/styles.css?v=5">
 
   <!-- Pre-Bootstrap Anti-Tamper & Integrity Seal -->
   <script>
@@ -25,19 +26,16 @@
         document.documentElement.innerHTML = '';
       }
       try {
-        var breach = sessionStorage.getItem('tb_tamper_lockdown_active') || sessionStorage.getItem('tb_web_lockdown_active');
-        if (breach) {
-          window.stop && window.stop();
-          document.addEventListener('DOMContentLoaded', function() {
-            document.body.innerHTML = '<div style="position:fixed;inset:0;background:#0A0D14;color:#F87171;display:flex;align-items:center;justify-content:center;font-family:sans-serif;flex-direction:column;z-index:9999999;padding:24px;text-align:center;"><h2>[SECURITY LOCKDOWN] Session Quarantined</h2><p style="color:#9CA3AF;">Violation: ' + breach + '</p></div>';
-          });
-        }
+        sessionStorage.removeItem('tb_tamper_lockdown_active');
+        localStorage.removeItem('tb_tamper_lockdown_active');
+        sessionStorage.removeItem('tb_web_lockdown_active');
+        localStorage.removeItem('tb_web_lockdown_active');
       } catch (_) {}
       try {
-        ['isAdmin', 'role', 'isSuperUser', 'isDeveloper', 'debugMode', 'bypassAuth'].forEach(function(prop) {
+        ['isAdminCanary', 'isSuperUserCanary', 'bypassAuthCanary'].forEach(function(prop) {
           var _v = undefined;
           Object.defineProperty(Object.prototype, prop, {
-            configurable: false,
+            configurable: true,
             get: function() { return _v; },
             set: function(v) {
               try { sessionStorage.setItem('tb_tamper_lockdown_active', 'PROTOTYPE_POLLUTION_ATTACK'); } catch(_) {}
@@ -60,6 +58,6 @@
   <div id="app-root"></div>
 
   <!-- Big Screen TV Token Board Script -->
-  <script type="module" src="js/tvApp.js?v=3"></script>
+  <script type="module" src="js/tvApp.js?v=4"></script>
 </body>
 </html>

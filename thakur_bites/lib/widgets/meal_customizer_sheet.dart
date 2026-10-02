@@ -496,24 +496,38 @@ class _MealCustomizerSheetState extends State<MealCustomizerSheet> {
                   ? null
                   : () {
                       final customization = _buildCustomizationSummary();
-                      context.read<CartProvider>().addItem(
+                      final added = context.read<CartProvider>().addItem(
                         widget.item,
                         customization: customization,
                       );
                       Navigator.of(context).pop();
 
                       ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Added ${widget.item.name} ($customization) to cart',
-                            style: AppFonts.body(fontSize: 13, color: Colors.white),
+                      if (added) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Added ${widget.item.name} ($customization) to cart',
+                              style: AppFonts.body(fontSize: 13, color: Colors.white),
+                            ),
+                            duration: const Duration(seconds: 2),
+                            backgroundColor: AppColors.ink,
+                            behavior: SnackBarBehavior.floating,
                           ),
-                          duration: const Duration(seconds: 2),
-                          backgroundColor: AppColors.ink,
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
+                        );
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Cannot add more ${widget.item.name} (Stock limit reached)',
+                              style: AppFonts.body(fontSize: 13, color: Colors.white),
+                            ),
+                            duration: const Duration(seconds: 2),
+                            backgroundColor: AppColors.danger,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
                     },
               child: Container(
                 width: double.infinity,

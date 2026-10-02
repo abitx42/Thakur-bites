@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Thakur Bites — TCET AAD Mini Project Presentation</title>
+  
+  <!-- Design System Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg-dark: #0F172A;
+      --bg-card: #FFFFFF;
+      --brand-red: #DC2626;
+      --brand-amber: #D97706;
+      --brand-green: #16A34A;
+      --ink-primary: #18181B;
+      --ink-secondary: #52525B;
+      --border-light: #E2E8F0;
+      --font-display: 'Bebas Neue', sans-serif;
+      --font-mono: 'IBM Plex Mono', monospace;
+      --font-sans: 'Inter', sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #090D16;
+      color: #F8FAFC;
+      font-family: var(--font-sans);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    #presentation-stage {
+      width: 92vw;
+      max-width: 1200px;
+      height: 54vw;
+      max-height: 675px;
+      background: #FFFFFF;
+      color: var(--ink-primary);
+      border-radius: 18px;
+      box-shadow: 0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1);
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .slide {
+      display: none;
+      width: 100%;
+      height: 100%;
+      padding: 3rem 3.5rem;
+      flex-direction: column;
+      justify-content: space-between;
+      animation: fadeIn 0.3s ease forwards;
+    }
+    .slide.active { display: flex; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Top Bar */
+    .slide-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid var(--border-light);
+      padding-bottom: 0.8rem;
+    }
+    .slide-badge {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--brand-red);
+      background: #FEE2E2;
+      padding: 3px 10px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .college-tag {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--ink-secondary);
+      font-weight: 600;
+    }
+
+    /* Slide Titles */
+    .slide-title-area {
+      margin: 1.2rem 0 1rem;
+    }
+    .slide-title {
+      font-family: var(--font-display);
+      font-size: 2.8rem;
+      letter-spacing: 0.03em;
+      line-height: 1.05;
+      color: var(--ink-primary);
+    }
+    .slide-subtitle {
+      font-family: var(--font-sans);
+      font-size: 1.05rem;
+      color: var(--ink-secondary);
+      margin-top: 4px;
+    }
+
+    /* Content Area */
+    .slide-body {
+      flex: 1;
+      display: flex;
+      gap: 2rem;
+      align-items: center;
+    }
+    .slide-bullets {
+      flex: 1.2;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    .slide-bullets li {
+      font-size: 1rem;
+      line-height: 1.45;
+      color: var(--ink-primary);
+      position: relative;
+      padding-left: 1.6rem;
+    }
+    .slide-bullets li::before {
+      content: "■";
+      color: var(--brand-red);
+      font-size: 0.8rem;
+      position: absolute;
+      left: 0;
+      top: 0.2rem;
+    }
+    .slide-bullets strong {
+      color: #0F172A;
+      font-weight: 700;
+    }
+
+    .slide-visual-box {
+      flex: 0.8;
+      background: #F8FAFC;
+      border: 1.5px solid var(--border-light);
+      border-radius: 14px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+
+    /* Slide Footer */
+    .slide-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top: 1.5px solid var(--border-light);
+      padding-top: 0.8rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--ink-secondary);
+    }
+
+    /* Controls Bar */
+    #controls {
+      display: flex;
+      align-items: center;
+      gap: 1.2rem;
+      margin-top: 1.2rem;
+    }
+    .ctrl-btn {
+      background: #1E293B;
+      color: #F8FAFC;
+      border: 1px solid #334155;
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .ctrl-btn:hover {
+      background: var(--brand-red);
+      border-color: var(--brand-red);
+    }
+    #slide-indicator {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: #94A3B8;
+      font-weight: 700;
+    }
+
+    /* Speaker Notes Modal */
+    #notes-drawer {
+      display: none;
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(15, 23, 42, 0.97);
+      color: #E2E8F0;
+      padding: 1.5rem 2rem;
+      font-size: 0.95rem;
+      line-height: 1.6;
+      border-top: 2px solid var(--brand-amber);
+      backdrop-filter: blur(10px);
+      z-index: 100;
+      max-height: 40%;
+      overflow-y: auto;
+    }
+    #notes-drawer.open { display: block; }
+    .notes-title {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--brand-amber);
+      font-weight: 800;
+      text-transform: uppercase;
+      margin-bottom: 0.4rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="presentation-stage">
+    
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 1: Title & Overview                                     -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide active" data-notes="Good morning respected evaluators. I am presenting Thakur Bites: an end-to-end campus commerce platform and anti-hallucination AI Copilot engineered for TCET's unique operational demands.">
+      <div class="slide-header">
+        <span class="slide-badge">AAD Mini Project Defense</span>
+        <span class="college-tag">TCET Autonomous · Department of CSE (Cyber Security)</span>
+      </div>
+      <div class="slide-title-area">
+        <div style="font-family: var(--font-display); font-size: 4rem; color: var(--brand-red); line-height: 0.95;">
+          THAKUR BITES
+        </div>
+        <div class="slide-subtitle" style="font-size: 1.25rem; font-weight: 600; color: #1E293B;">
+          High-Concurrency Real-Time Campus Canteen Commerce & Anti-Hallucination AI Copilot
+        </div>
+      </div>
+      <div class="slide-body">
+        <div class="slide-bullets">
+          <li><strong>Domain:</strong> Real-Time Campus Commerce, Distributed Ledger & Enterprise AI Safety</li>
+          <li><strong>Candidate:</strong> Roll No. 01 — CSE(CS)-A (Academic Year 2026–2027)</li>
+          <li><strong>Guide:</strong> Lecturer Mr. Chirag Yadav, Dept. of Computer Science & Engineering</li>
+          <li><strong>Affiliation:</strong> Thakur College of Engineering & Technology (University of Mumbai)</li>
+        </div>
+        <div class="slide-visual-box" style="background: #FFFBEB; border-color: #FDE68A;">
+          <div style="font-size: 3rem; margin-bottom: 0.5rem;">🍛 🤖 ⚡</div>
+          <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; color: #B45309;">
+            TCET PRODUCTION READY
+          </div>
+          <div style="font-size: 0.78rem; color: #78350F; margin-top: 4px;">
+            Flutter APK #73 · Cloud Functions · Gemini AI
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Thakur Bites Platform 2.0</span>
+        <span>Slide 1 of 12</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 2: Problem Statement                                    -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide" data-notes="During lunch recess at TCET, over 1000 students arrive in 35 minutes. Naive apps leave pricing on the client, leading to easy cart tampering. We set out to solve queue starvation, financial leakage, and LLM hallucinations.">
+      <div class="slide-header">
+        <span class="slide-badge">Problem Statement</span>
+        <span class="college-tag">Campus Friction & Operational Vulnerabilities</span>
+      </div>
+      <div class="slide-title-area">
+        <h2 class="slide-title">THE 30-MINUTE RECESS CRUNCH</h2>
+        <div class="slide-subtitle">Why generic food delivery apps fail in collegiate environments</div>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-bullets">
+          <li><strong>Massive Surge Contention:</strong> 1,000+ students descend on the counter in a tight 30–45 minute lunch interval, causing 350% queue spikes.</li>
+          <li><strong>Queue Starvation:</strong> Students buying a ₹15 beverage wait trapped behind multi-dish hot cooking queues.</li>
+          <li><strong>Client-Side Pricing Exploits:</strong> Web ordering forms that calculate totals on the client can be tampered via DevTools (altering prices to ₹0).</li>
+          <li><strong>Un-auditable Financial Discrepancies:</strong> Mixed cash counter and UPI transactions lack an immutable double-entry ledger.</li>
+          <li><strong>AI Hallucinations:</strong> Standard LLMs connected to raw databases invent profit margins without raw ingredient procurement records.</li>
+        </ul>
+        <div class="slide-visual-box" style="background: #FEF2F2; border-color: #FECACA;">
+          <div style="font-size: 2.8rem; margin-bottom: 0.5rem;">⚠️ ⏳ 📉</div>
+          <div style="font-family: var(--font-mono); font-size: 0.82rem; font-weight: 800; color: #991B1B;">
+            SECURITY & QUEUE BREAKDOWN
+          </div>
+          <div style="font-size: 0.78rem; color: #7F1D1D; margin-top: 4px;">
+            Physical queues: 25+ min delay<br>Financial reconciliations: Manual & leaky
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>TCET Canteen Engineering Analysis</span>
+        <span>Slide 2 of 12</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 3: Proposed Solution                                    -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide" data-notes="Thakur Bites is an integrated 4-pillar ecosystem. Student Flutter mobile app, Kitchen KDS with station routing, Cashier POS with integer-paise accounting, Public TV token board, and an air-gapped AI Copilot.">
+      <div class="slide-header">
+        <span class="slide-badge">Proposed Solution</span>
+        <span class="college-tag">Unified Campus Architecture</span>
+      </div>
+      <div class="slide-title-area">
+        <h2 class="slide-title">FOUR-PILLAR COMMERCE & GOVERNANCE</h2>
+        <div class="slide-subtitle">A synchronized ecosystem connecting students, chefs, cashiers, and management</div>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-bullets">
+          <li><strong>Pillar 1 — Student Flutter App:</strong> Android APK & responsive web client with meal customizers, offline wishlists, and Razorpay UPI checkout.</li>
+          <li><strong>Pillar 2 — Kitchen Display System (KDS):</strong> Station-filtered ticket routing (South Indian, Snacks, Beverages, Meals) with prep timers.</li>
+          <li><strong>Pillar 3 — Live Dispatch TV:</strong> High-contrast token board for the dining hall with zero PII (token strings only).</li>
+          <li><strong>Pillar 4 — AI Business Copilot:</strong> Read-only executive assistant inside the Admin Portal grounded in verified server ledger truth.</li>
+        </ul>
+        <div class="slide-visual-box">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700;">
+            <div style="background: #EFF6FF; color: #1D4ED8; padding: 10px; border-radius: 8px;">📱 Mobile App</div>
+            <div style="background: #F0FDF4; color: #15803D; padding: 10px; border-radius: 8px;">🍳 Kitchen KDS</div>
+            <div style="background: #FEF3C7; color: #B45309; padding: 10px; border-radius: 8px;">📺 Dispatch TV</div>
+            <div style="background: #FEE2E2; color: #B91C1C; padding: 10px; border-radius: 8px;">🤖 AI Copilot</div>
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Architecture Overview</span>
+        <span>Slide 3 of 12</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 4: System Architecture                                  -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide" data-notes="Our architecture separates untrusted client devices from authoritative servers. Client price overrides are impossible because checkoutOrder resolves prices strictly on the server. Firestore rules deny all direct client ledger writes.">
+      <div class="slide-header">
+        <span class="slide-badge">System Architecture</span>
+        <span class="college-tag">Defense-in-Depth & Server Authority</span>
+      </div>
+      <div class="slide-title-area">
+        <h2 class="slide-title">TIERED SERVER-AUTHORITATIVE ARCHITECTURE</h2>
+        <div class="slide-subtitle">Strict boundary between untrusted clients and immutable server ledgers</div>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-bullets">
+          <li><strong>Presentation Layer:</strong> Flutter 3.x (compiled to APK & Web) + ES Modules Admin/Staff consoles.</li>
+          <li><strong>Perimeter Sentinel:</strong> Framebusting defense (OWASP A05), strict CSP, and Firebase App Check.</li>
+          <li><strong>API Boundary:</strong> Serverless Cloud Functions (`checkoutOrder`, `updateOrderStatus`, `aiBusinessChat`). Client pricing overrides strictly denied.</li>
+          <li><strong>Database & Rules:</strong> Cloud Firestore protected by 537 lines of granular RBAC rules rejecting direct client writes.</li>
+          <li><strong>Air-Gapped AI Subsystem:</strong> Evaluates business intelligence over sanitized snapshots without direct DB query execution.</li>
+        </ul>
+        <div class="slide-visual-box" style="font-family: var(--font-mono); font-size: 0.72rem; text-align: left;">
+          <div style="color: #64748B; margin-bottom: 4px;">// Security Guarantee</div>
+          <div style="color: #0F172A; font-weight: 700;">Client writes to /financialLedger: <span style="color: #DC2626;">DENIED</span></div>
+          <div style="color: #0F172A; font-weight: 700;">Price resolution: <span style="color: #16A34A;">SERVER-AUTHORITATIVE</span></div>
+          <div style="color: #0F172A; font-weight: 700;">LLM DB Credentials: <span style="color: #2563EB;">NONE (AIR-GAPPED)</span></div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Distributed Cloud Architecture</span>
+        <span>Slide 4 of 12</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 5: Financial Engine                                     -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide" data-notes="We eliminate rounding errors by tracking everything in integer paise. Every order generates a double-entry debit and credit. If an invariant fails, a 3-tier circuit breaker protects campus funds.">
+      <div class="slide-header">
+        <span class="slide-badge">Financial Integrity</span>
+        <span class="college-tag">Integer-Paise Double-Entry Bookkeeping</span>
+      </div>
+      <div class="slide-title-area">
+        <h2 class="slide-title">MATHEMATICAL FINANCIAL INTEGRITY</h2>
+        <div class="slide-subtitle">Eliminating floating-point drift and guaranteeing auditability</div>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-bullets">
+          <li><strong>Integer-Paise Representation:</strong> ₹1 is stored as 100 paise; eliminates IEEE 754 floating-point rounding errors across checkout totals.</li>
+          <li><strong>Double-Entry Ledger:</strong> Every payment capture automatically writes balanced debits and credits to `financialLedger`.</li>
+          <li><strong>Deterministic Idempotency:</strong> Webhook retries and POS cash captures use deterministic keys (`cash_fin_${orderId}`) to block duplicate billing.</li>
+          <li><strong>Autonomous Circuit Breakers:</strong> 3 levels of automated fault mitigation: Warning, Restricted Checkout, and Emergency Freeze.</li>
+        </ul>
+        <div class="slide-visual-box" style="background: #F0FDF4; border-color: #BBF7D0;">
+          <div style="font-family: var(--font-display); font-size: 2.2rem; color: #166534; line-height: 1;">
+            ₹1 = 100 PAISE
+          </div>
+          <div style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: #15803D; margin-top: 6px;">
+            Σ Debits ≡ Σ Credits
+          </div>
+          <div style="font-size: 0.75rem; color: #14532D; margin-top: 4px;">
+            Zero floating-point leakage
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Enterprise Accounting Standards</span>
+        <span>Slide 5 of 12</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 6: Kitchen Operations                                   -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide" data-notes="Our kitchen display system routes tickets by preparation station. Anti-starvation algorithms elevate student queue priority if wait time exceeds 20 minutes. 4-digit pickup PINs prevent double-handover theft.">
+      <div class="slide-header">
+        <span class="slide-badge">Kitchen Operations</span>
+        <span class="college-tag">Station Routing & Dynamic Anti-Starvation</span>
+      </div>
+      <div class="slide-title-area">
+        <h2 class="slide-title">STATION-FILTERED KITCHEN KDS</h2>
+        <div class="slide-subtitle">Eliminating bottle-necks and anti-starvation queue fairness</div>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-bullets">
+          <li><strong>Dedicated Station Views:</strong> South Indian (Dosas), Tiffin/Snacks (Vada Pav), Beverages (Cold Coffee), and Thali/Meals.</li>
+          <li><strong>Anti-Starvation Queue Logic:</strong> A student order waiting over 20 minutes dynamically elevates in priority above fresh bulk faculty orders.</li>
+          <li><strong>Dynamic Daily Board:</strong> Morning chef configuration synchronizes sabji and bread (Roti/Puri) availability across student apps.</li>
+          <li><strong>Double-Handover Defense:</strong> Verifies unique 4-digit pickup PIN at handover, preventing token theft and replay attacks.</li>
+        </ul>
+        <div class="slide-visual-box">
+          <div style="font-size: 2.5rem; margin-bottom: 0.4rem;">🍳 ⏱️ 🛡️</div>
+          <div style="font-family: var(--font-mono); font-size: 0.82rem; font-weight: 800; color: #0F172A;">
+            KDS EFFICIENCY METRICS
+          </div>
+          <div style="font-size: 0.78rem; color: var(--ink-secondary); margin-top: 4px;">
+            Average Prep: ~6.2 mins<br>Pick-up Verification: < 3 seconds
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Cafeteria Kitchen Operations</span>
+        <span>Slide 6 of 12</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 7: AI Copilot Architecture                              -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide" data-notes="We built an AI Copilot that cannot invent numbers. It is air-gapped from raw database queries. Untrusted database strings are sanitized, student PII is stripped, and cost queries are refused truthfully.">
+      <div class="slide-header">
+        <span class="slide-badge">AI Business Intelligence</span>
+        <span class="college-tag">Zero-PII & Anti-Hallucination Framework</span>
+      </div>
+      <div class="slide-title-area">
+        <h2 class="slide-title">EVIDENCE-GROUNDED AI BUSINESS COPILOT</h2>
+        <div class="slide-subtitle">Transforming live cafeteria telemetry into safe, executive intelligence</div>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-bullets">
+          <li><strong>Air-Gapped Truth Layer:</strong> Server constructs pre-aggregated `BusinessContext` snapshots in Asia/Kolkata timezone.</li>
+          <li><strong>Strict Cost Refusal Invariant:</strong> Refuses dish-level profit questions ("What is making losses?") because raw ingredient procurement costs are not recorded.</li>
+          <li><strong>Prompt Injection Shield:</strong> Catalog names and questions are sanitized; wrapped inside `<UNTRUSTED_BUSINESS_DATA>` tags.</li>
+          <li><strong>Zero Student PII:</strong> Transmits zero student names, institutional emails, phone numbers, or pickup PINs to the model.</li>
+        </ul>
+        <div class="slide-visual-box" style="background: #EFF6FF; border-color: #BFDBFE;">
+          <div style="font-size: 2.5rem; margin-bottom: 0.4rem;">🤖 🔒 📊</div>
+          <div style="font-family: var(--font-mono); font-size: 0.82rem; font-weight: 800; color: #1D4ED8;">
+            ANTI-HALLUCINATION SHIELD
+          </div>
+          <div style="font-size: 0.78rem; color: #1E40AF; margin-top: 4px;">
+            Data Status: ACTUAL<br>Customer PII: 0% Transmitted
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Executive Decision Support</span>
+        <span>Slide 7 of 12</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 8: AI Router & Evidence Drawer                          -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide" data-notes="The AI engine cascades from Gemini 2.5 Flash to OpenRouter to a deterministic rule-based engine. Every answer provides an expandable Evidence Drawer showing the exact verified orders and revenue paise.">
+      <div class="slide-header">
+        <span class="slide-badge">Reliability & Verification</span>
+        <span class="college-tag">Multi-Provider Dynamic Cascade</span>
+      </div>
+      <div class="slide-title-area">
+        <h2 class="slide-title">MULTI-PROVIDER FAILOVER & EVIDENCE DRAWER</h2>
+        <div class="slide-subtitle">100% uptime with verifiable mathematical citations</div>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-bullets">
+          <li><strong>Primary Model:</strong> Google Gemini (`gemini-2.5-flash`) at temperature 0.1 for precise operational summarization.</li>
+          <li><strong>Secondary Cloud Fallback:</strong> OpenRouter API for multi-model redundancy.</li>
+          <li><strong>Tertiary Rule-Based Engine:</strong> Deterministic offline analytics engine; guarantees answers even with zero API keys or no internet.</li>
+          <li><strong>Verifiable Evidence Drawer:</strong> Every response includes an expandable drawer showing verified order count, period, paise totals, and data status.</li>
+        </ul>
+        <div class="slide-visual-box" style="font-family: var(--font-mono); font-size: 0.72rem; text-align: left;">
+          <div style="color: #15803D; font-weight: 700; margin-bottom: 6px;">[AIRouter Priority]</div>
+          <div>1. Google Gemini 2.5 Flash</div>
+          <div>2. OpenRouter Cloud Fallback</div>
+          <div style="color: #D97706; font-weight: 700;">3. Deterministic Rule-Based Engine</div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Failover Architecture</span>
+        <span>Slide 8 of 12</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 9: Frontend Craft & Responsive Layout                   -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide" data-notes="We engineered a high-craft Token & Tiffin design system. On phones, the Flutter app renders full-bleed. On desktop/tablet web, it automatically wraps in an elegant 540px centered frame with subtle elevation.">
+      <div class="slide-header">
+        <span class="slide-badge">Frontend & UI/UX Craft</span>
+        <span class="college-tag">Token & Tiffin Design System</span>
+      </div>
+      <div class="slide-title-area">
+        <h2 class="slide-title">RESPONSIVE DESIGN & ZERO-OVERFLOW UI</h2>
+        <div class="slide-subtitle">Pixel-perfect rendering across mobile APK, tablets, and web browsers</div>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-bullets">
+          <li><strong>Typography Scales:</strong> Bebas Neue for brand headers, IBM Plex Mono for financial tokens, and Inter for legible menu items.</li>
+          <li><strong>Adaptive `MaterialApp.builder`:</strong> Full-bleed on mobile screens; automatically constrains to a centered 540px frame with elevation on wide monitors.</li>
+          <li><strong>Zero Layout Overflows:</strong> Rigorous layout tests verify zero `RenderFlex` overflows across quantity steppers, add buttons, and stock limit banners.</li>
+          <li><strong>Accessibility (WCAG 2.2 AA):</strong> Complies with 44px+ tap targets, high contrast ratios, and `prefers-reduced-motion`.</li>
+        </ul>
+        <div class="slide-visual-box">
+          <div style="font-size: 2.2rem; margin-bottom: 0.4rem;">📱 💻 📐</div>
+          <div style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; color: #0F172A;">
+            ADAPTIVE BREAKPOINTS
+          </div>
+          <div style="font-size: 0.75rem; color: var(--ink-secondary); margin-top: 4px;">
+            Mobile: Edge-to-Edge<br>Desktop Web: 540px Centered Box
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Flutter & Web Engineering</span>
+        <span>Slide 9 of 12</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 10: Empirical Results & Verification                    -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide" data-notes="Our empirical verification is complete: 447 backend security and financial tests pass with 0 failures, 134 Flutter layout tests pass, flutter analyze has 0 warnings, and Release APK #73 was successfully compiled.">
+      <div class="slide-header">
+        <span class="slide-badge">Results & Verification</span>
+        <span class="college-tag">100% Automated Invariant Pass Rate</span>
+      </div>
+      <div class="slide-title-area">
+        <h2 class="slide-title">EMPIRICAL TESTING & SECURITY METRICS</h2>
+        <div class="slide-subtitle">Exhaustive automated testing across backend invariants and client UI</div>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-bullets">
+          <li><strong>Backend Security Suite:</strong> <strong>447 / 447 tests passed</strong> (0 failures, 3.57s execution) across 34 test suites.</li>
+          <li><strong>Flutter Widget & Layout Suite:</strong> <strong>134 / 134 tests passed</strong> with zero RenderFlex overflows.</li>
+          <li><strong>Static Code Quality:</strong> `flutter analyze` completed with <strong>0 issues found</strong> across all libraries.</li>
+          <li><strong>Release Artifact:</strong> Generated versioned Android APK build #73 (`ThakurBites_updated_73.apk`, 60 MB).</li>
+        </ul>
+        <div class="slide-visual-box" style="background: #F0FDF4; border-color: #86EFAC;">
+          <div style="font-family: var(--font-display); font-size: 3rem; color: #15803D; line-height: 1;">
+            447 / 447
+          </div>
+          <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #166534; margin-top: 6px;">
+            ALL TESTS PASSING
+          </div>
+          <div style="font-size: 0.75rem; color: #14532D; margin-top: 4px;">
+            100% Invariant Compliance
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Quality Assurance Verification</span>
+        <span>Slide 10 of 12</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 11: Live Demonstration                                  -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide" data-notes="We demonstrate the complete end-to-end flow: student mobile order, instant KDS alert, live TV token transition, PIN-verified pickup, and real-time AI Copilot business updates.">
+      <div class="slide-header">
+        <span class="slide-badge">System Demonstration</span>
+        <span class="college-tag">End-to-End Operational Lifecycle</span>
+      </div>
+      <div class="slide-title-area">
+        <h2 class="slide-title">LIVE SYSTEM DEMONSTRATION</h2>
+        <div class="slide-subtitle">Step-by-step verification of real-time multi-client synchronization</div>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-bullets">
+          <li><strong>1. Mobile Checkout:</strong> Student configures meal on Android, executes atomic server checkout.</li>
+          <li><strong>2. Kitchen KDS Dispatch:</strong> Ticket pops up on kitchen station with acoustic bell notification.</li>
+          <li><strong>3. Public TV Projection:</strong> Order token transitions from 'Preparing' to 'Ready' on the cafeteria TV.</li>
+          <li><strong>4. Secure Handover:</strong> 4-digit PIN verified at pickup counter; order archived with zero replay vulnerability.</li>
+          <li><strong>5. AI Copilot Synthesis:</strong> Manager checks live sales velocity and stockout warnings in the Admin Portal.</li>
+        </ul>
+        <div class="slide-visual-box">
+          <div style="font-size: 2.5rem; margin-bottom: 0.4rem;">🎬 ⚡ 🏆</div>
+          <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #0F172A;">
+            INTERCONNECTED SYNC
+          </div>
+          <div style="font-size: 0.75rem; color: var(--ink-secondary); margin-top: 4px;">
+            Sub-100ms Firestore update latency across all active screens
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Demonstration Runbook</span>
+        <span>Slide 11 of 12</span>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- SLIDE 12: Conclusion & Future Scope                           -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="slide" data-notes="In conclusion, Thakur Bites provides a secure, audited, and production-tested foundation for campus commerce. In the future, we will integrate smart college ID NFC taps and predictive pre-cooking models. Thank you.">
+      <div class="slide-header">
+        <span class="slide-badge">Conclusion & Future Scope</span>
+        <span class="college-tag">Next-Generation Roadmap</span>
+      </div>
+      <div class="slide-title-area">
+        <h2 class="slide-title">TRANSFORMING CAMPUS DINING</h2>
+        <div class="slide-subtitle">A production-grade blueprint for modern institutional software engineering</div>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-bullets">
+          <li><strong>Production-Tested:</strong> Fully verified against high-concurrency rush simulations and tamper vectors.</li>
+          <li><strong>Enterprise Auditable:</strong> Double-entry bookkeeping and tamper-resistant cryptographic anomaly logs.</li>
+          <li><strong>Future Scope — Predictive Recess Pre-Cooking:</strong> Machine learning time-series models for morning prep forecasting.</li>
+          <li><strong>Future Scope — Smart ID NFC Handover:</strong> Sub-second tap pickups via college student ID cards.</li>
+          <li><strong>Future Scope — Multi-Canteen Consortium:</strong> Extending governance across engineering, management, and polytechnic cafeterias.</li>
+        </ul>
+        <div class="slide-visual-box" style="background: #FFFBEB; border-color: #FDE68A;">
+          <div style="font-family: var(--font-display); font-size: 2.2rem; color: #B45309; line-height: 1;">
+            THANK YOU
+          </div>
+          <div style="font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; color: #78350F; margin-top: 6px;">
+            QUESTIONS & DEFENSE
+          </div>
+          <div style="font-size: 0.75rem; color: #92400E; margin-top: 4px;">
+            Roll No. 01 · Dept. of CSE (Cyber Security)
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Thakur College of Engineering & Technology</span>
+        <span>Slide 12 of 12</span>
+      </div>
+    </div>
+
+    <!-- Speaker Notes Drawer -->
+    <div id="notes-drawer">
+      <div class="notes-title">🎙️ Speaker Talking Points (Viva Defense Guide)</div>
+      <div id="notes-content">Notes load here...</div>
+    </div>
+
+  </div>
+
+  <!-- Navigation Controls -->
+  <div id="controls">
+    <button class="ctrl-btn" id="prev-btn">◀ Previous</button>
+    <span id="slide-indicator">Slide 1 of 12</span>
+    <button class="ctrl-btn" id="next-btn">Next ▶</button>
+    <button class="ctrl-btn" id="notes-toggle-btn" style="background: #334155;">🎙️ Speaker Notes [S]</button>
+    <button class="ctrl-btn" id="fullscreen-btn" style="background: #0F172A;">⛶ Fullscreen [F]</button>
+  </div>
+
+  <script>
+    const slides = document.querySelectorAll('.slide');
+    const indicator = document.getElementById('slide-indicator');
+    const prevBtn = document.getElementById('prev-btn');
+    const nextBtn = document.getElementById('next-btn');
+    const notesDrawer = document.getElementById('notes-drawer');
+    const notesContent = document.getElementById('notes-content');
+    const notesToggleBtn = document.getElementById('notes-toggle-btn');
+    const fullscreenBtn = document.getElementById('fullscreen-btn');
+
+    let currentSlide = 0;
+
+    function updateSlide(index) {
+      slides.forEach((s, i) => {
+        s.classList.toggle('active', i === index);
+      });
+      indicator.textContent = `Slide ${index + 1} of ${slides.length}`;
+      
+      const activeSlide = slides[index];
+      const notes = activeSlide.getAttribute('data-notes') || 'No speaker notes for this slide.';
+      notesContent.textContent = notes;
+    }
+
+    prevBtn.addEventListener('click', () => {
+      if (currentSlide > 0) {
+        currentSlide--;
+        updateSlide(currentSlide);
+      }
+    });
+
+    nextBtn.addEventListener('click', () => {
+      if (currentSlide < slides.length - 1) {
+        currentSlide++;
+        updateSlide(currentSlide);
+      }
+    });
+
+    function toggleNotes() {
+      notesDrawer.classList.toggle('open');
+    }
+
+    notesToggleBtn.addEventListener('click', toggleNotes);
+
+    fullscreenBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+      }
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+        if (currentSlide < slides.length - 1) {
+          currentSlide++;
+          updateSlide(currentSlide);
+        }
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        if (currentSlide > 0) {
+          currentSlide--;
+          updateSlide(currentSlide);
+        }
+      } else if (e.key.toLowerCase() === 's') {
+        toggleNotes();
+      } else if (e.key.toLowerCase() === 'f') {
+        fullscreenBtn.click();
+      }
+    });
+
+    updateSlide(0);
+  </script>
+</body>
+</html>

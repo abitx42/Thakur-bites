@@ -122,7 +122,7 @@ class FirestoreService {
           final data = doc.data()!;
           final isAvailable = data['available'] ?? false;
           final type = data['type'] ?? 'instant';
-          final rawStock = ((data['availableStock'] ?? data['stockCount']) as num?)?.toInt() ?? 0;
+          final rawStock = ((data['stockOnHand'] ?? data['availableStock'] ?? data['stockCount']) as num?)?.toInt() ?? 0;
           final stockCount = rawStock.clamp(0, 999999);
 
           if (!isAvailable) {
@@ -203,6 +203,7 @@ class FirestoreService {
     return _orders
         .where('studentId', isEqualTo: studentId)
         .orderBy('createdAt', descending: true)
+        .limit(30)
         .snapshots()
         .map(
           (snapshot) => snapshot.docs

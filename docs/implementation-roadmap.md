@@ -44,10 +44,10 @@ I checked current requirements since Google's changed this recently, and it chan
 
 **Goal:** Flutter is installed, a "hello world" app runs on your phone/emulator, and you've done one real official tutorial before touching your own app.
 
-- Install Flutter SDK; install Antigravity as your IDE (it's VS Code-based, so Flutter's Dart extension works inside it normally)
+- Install Flutter SDK; install your preferred IDE (VS Code / Android Studio, so Flutter's Dart extension works inside it normally)
 - Run `flutter doctor`, fix whatever it flags
 - Complete Flutter's official "first app" codelab (a simple counter or list app) — do this one mostly by hand, even with an agentic IDE available, so the fundamentals actually stick before you start delegating
-- Set up a GitHub repo for Thakur Bites, first commit — include this roadmap and the product plan as markdown files in a `/docs` folder, so Antigravity's agent has real project context to reference on every task, not just a blank repo
+- Set up a GitHub repo for Thakur Bites, first commit — include this roadmap and the product plan as markdown files in a `/docs` folder, so your development tools have real project context to reference on every task, not just a blank repo
 
 ### Phase 1 · Firebase Project & Data Model
 

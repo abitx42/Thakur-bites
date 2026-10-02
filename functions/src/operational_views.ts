@@ -33,6 +33,7 @@ export interface PickupOrderView {
   studentRoll: string;
   status: string;
   paymentStatus: string;
+  pinCode?: string;
   isOnlyReadyMade?: boolean;
   readyMadePreference?: string;
   failedPinAttempts?: number;
@@ -176,6 +177,7 @@ export const getPickupOrders = onCall<void, Promise<PickupOrderView[]>>(async (r
       studentRoll: data.studentRoll || 'TCET',
       status: data.status,
       paymentStatus: data.paymentStatus || 'unpaid',
+      pinCode: data.pinCode || undefined,
       isOnlyReadyMade,
       readyMadePreference: data.readyMadePreference || (isOnlyReadyMade ? 'Chilled ❄️ · Direct Handover ✋' : undefined),
       failedPinAttempts: typeof data.failedPinAttempts === 'number' ? data.failedPinAttempts : 0,

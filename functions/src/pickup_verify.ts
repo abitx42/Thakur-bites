@@ -24,7 +24,7 @@ const db = admin.firestore();
  * 3. One-time QR nonce consumption (`qrConsumedAt`).
  * 4. Multi-staff brute force lockout tracking.
  */
-export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?: string; appVersion?: string }>(async (request) => {
+export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?: string; staffVerified?: boolean; appVersion?: string }>(async (request) => {
   await assertNoHoneytokens(request.data, request.auth?.uid, 'verifyPickup');
   enforceAppCheck(request);
   await enforceAppVersionPolicy(request.data?.appVersion);
@@ -41,10 +41,10 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
     throw new HttpsError('permission-denied', 'Only pickup counter or station staff can verify and collect orders.');
   }
 
-  const { orderId, qrToken } = request.data || {};
+  const { orderId, qrToken, staffVerified } = request.data || {};
   const pinCode = request.data?.pinCode || (request.data as any)?.pin;
-  if (!orderId || (!pinCode && !qrToken)) {
-    throw new HttpsError('invalid-argument', 'orderId and either pinCode or qrToken are required.');
+  if (!orderId || (!pinCode && !qrToken && !staffVerified)) {
+    throw new HttpsError('invalid-argument', 'orderId and either pinCode, qrToken, or staffVerified are required.');
   }
 
   // Early size/format guards — MUST come before any crypto work (DoS prevention)
@@ -129,7 +129,7 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
     }
 
     let isVerified = false;
-    let verificationMethod: 'PIN' | 'QR' = 'PIN';
+    let verificationMethod: 'PIN' | 'QR' | 'STAFF_VERIFIED' = 'PIN';
 
     // 1. Check Signed One-Time QR Token Verification
     if (qrToken && typeof qrToken === 'string') {
@@ -198,6 +198,12 @@ export const verifyPickup = onCall<{ orderId: string; pinCode?: string; qrToken?
           }
         }
       }
+    }
+
+    // 3. Check Staff Counter Verification (Rush hour 1-tap handover)
+    if (!isVerified && staffVerified === true) {
+      isVerified = true;
+      verificationMethod = 'STAFF_VERIFIED';
     }
 
     if (!isVerified) {

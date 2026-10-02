@@ -13,7 +13,10 @@ class FunctionsService {
       : _functions = functions ?? FirebaseFunctions.instance;
 
   HttpsCallable _getCallable(String name) {
-    return _functions.httpsCallable(name);
+    return _functions.httpsCallable(
+      name,
+      options: HttpsCallableOptions(timeout: const Duration(seconds: 60)),
+    );
   }
 
   // ─── Checkout ───────────────────────────────────────────────────────────

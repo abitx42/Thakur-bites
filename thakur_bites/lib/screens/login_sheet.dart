@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bouncy_tap.dart';
+import '../services/error_helper.dart';
 
 /// Platform 2.0 — Google-Only Universal Login Sheet
 /// Streamlined: Instant Google Sign-In + Automatic Backend Role Classification
@@ -52,12 +53,12 @@ class _LoginSheetState extends State<LoginSheet> {
     } catch (e) {
       if (mounted) {
         setState(() => _isSubmitting = false);
-        final errMsg = e.toString().replaceAll('Exception:', '').trim();
-        // If web redirected, do not show error banner
-        if (!errMsg.toLowerCase().contains('redirect')) {
+        final friendlyMsg = ErrorHelper.getFriendlyErrorMessage(e);
+        // If user cancelled, friendlyMsg is null — do NOT disturb user with error banner!
+        if (friendlyMsg != null && !friendlyMsg.toLowerCase().contains('redirect')) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Google Sign-In: $errMsg'),
+              content: Text(friendlyMsg),
               backgroundColor: AppColors.red,
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -186,12 +187,31 @@ class _LoginSheetState extends State<LoginSheet> {
                             key: const ValueKey('google_idle'),
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Image.network(
-                                'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
+                              Container(
                                 width: 22,
                                 height: 22,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    const Icon(Icons.account_circle, color: Colors.blue, size: 22),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: AppColors.line),
+                                  boxShadow: const [
+                                    BoxShadow(
+                                      color: Color(0x0F000000),
+                                      blurRadius: 2,
+                                      offset: Offset(0, 1),
+                                    ),
+                                  ],
+                                ),
+                                alignment: Alignment.center,
+                                child: const Text(
+                                  'G',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFF4285F4),
+                                    height: 1,
+                                  ),
+                                ),
                               ),
                               const SizedBox(width: 12),
                               Text(

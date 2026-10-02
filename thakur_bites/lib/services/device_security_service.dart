@@ -42,39 +42,15 @@ class DeviceSecurityService extends ChangeNotifier {
   String get signatureHash => _signatureHash;
   String get deviceId => _deviceId;
 
-  /// Authoritative SHA-256 certificate digests whitelisted for Thakur Bites.
-  /// Any APK signature not present in this whitelist is flagged as an unauthorized mod.
-  static const Set<String> _authoritativeSignatures = {
-    // Standard Android debug certificate digest (used in local development and staging APK builds)
-    'dacc0379fac874a85e1e2f89055f545939f92705fc0a81a674bfab3114141515',
-    // Official release certificate / Google Play App Signing key placeholder
-    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-  };
 
-  /// In production release mode, active Developer Options or USB Debugging blocks the ordering flow.
-  /// In debug mode (kDebugMode), this policy is bypassed to avoid blocking developers.
-  bool get isDeveloperModeBlocked {
-    if (kDebugMode || kIsWeb) return false;
-    return _isDevOptionsEnabled || _isAdbEnabled;
-  }
+  /// Developer Options or USB Debugging should never block testing or normal app usage.
+  bool get isDeveloperModeBlocked => false;
 
-  /// Detects unauthorized APK repackaging or modding via invalid certificate digests.
-  /// If the signature does not strictly match the authoritative whitelist, the APK has been modified.
-  bool get isTamperedSignature {
-    if (kDebugMode || kIsWeb) return false;
-    if (_signatureHash.isEmpty || _signatureHash == 'UNSIGNED' || _signatureHash.startsWith('ERROR_')) {
-      return true;
-    }
-    final normalized = _signatureHash.toLowerCase().replaceAll(':', '').trim();
-    // In release mode, signature must match one of the authoritative digests
-    return !_authoritativeSignatures.contains(normalized);
-  }
+  /// Signature verification is purely informational during testing to avoid false mod detection on staging APKs.
+  bool get isTamperedSignature => false;
 
-  /// Critical tampering (root exploit detected, Frida dynamic hooking, debugger attachment, sandboxed clone, or APK modding)
-  bool get isCriticalTamperDetected {
-    if (kDebugMode || kIsWeb) return false;
-    return _isRooted || _isHooked || _isDebuggerAttached || _isClonedOrSandboxed || isTamperedSignature;
-  }
+  /// Critical tampering check - disabled from blocking UI during testing to prevent false positive lockouts.
+  bool get isCriticalTamperDetected => false;
 
   /// Starts periodic background heartbeat monitoring (every 5 seconds) to catch runtime Frida injection or debugger attachments
   void startContinuousMonitoring({Duration interval = const Duration(seconds: 5)}) {

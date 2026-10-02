@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import 'firebase_options.dart';
@@ -25,6 +26,13 @@ void main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
     firebaseReady = true;
+    // Explicitly set auth persistence to LOCAL on web so credentials survive
+    // browser storage policies (Safari ITP 7-day cap, incognito, etc.)
+    if (kIsWeb) {
+      try {
+        await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
+      } catch (_) {}
+    }
   } catch (e) {
     debugPrint('[Startup] Firebase initialization: $e');
     if (Firebase.apps.isNotEmpty) {
@@ -116,6 +124,33 @@ class ThakurBitesApp extends StatelessWidget {
         title: 'Thakur Bites',
         debugShowCheckedModeBanner: false,
         theme: buildAppTheme(),
+        builder: (context, child) {
+          final screenWidth = MediaQuery.sizeOf(context).width;
+          if (screenWidth <= 600) {
+            return child ?? const SizedBox.shrink();
+          }
+          return Container(
+            color: const Color(0xFFF0EBE1),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 540),
+                child: Container(
+                  decoration: BoxDecoration(
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withAlpha(25),
+                        blurRadius: 24,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: child ?? const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          );
+        },
         home: const DeviceSecurityWrapper(
           child: AppUpdateWrapper(child: MenuScreen()),
         ),

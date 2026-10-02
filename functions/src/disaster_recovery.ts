@@ -700,21 +700,21 @@ export const adminRestoreOperationalMode = onCall<{
 
   await db.collection('disasterRecoveryLogs').doc(logId).set(recoveryLogDoc);
 
-  // 5. Update Internal System Configuration
-  await db.collection('systemConfig').doc('global').set({
+  // F-006 Remediation: Atomic batched write for system config + public status to prevent state divergence
+  const restoreBatch = db.batch();
+  restoreBatch.set(db.collection('systemConfig').doc('global'), {
     mode: targetMode,
     reason: `Disaster Recovery Restoration: ${safeJustification}`,
     recoveryLogId: logId,
     updatedBy: approvingAdminUid,
     updatedAt: now,
   });
-
-  // 6. Update Public Status
-  await db.collection('publicSystemStatus').doc('global').set({
+  restoreBatch.set(db.collection('publicSystemStatus').doc('global'), {
     mode: targetMode,
     orderingAvailable: targetMode === 'NORMAL',
     updatedAt: now,
   });
+  await restoreBatch.commit();
 
   // 7. Security Event Logging
   await logSecurityEvent({

@@ -12,8 +12,13 @@
 
 const https = require('https');
 
-const KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_test_TcNKt0X7OsnsXu';
-const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || process.env.PAYMENT_GATEWAY_SECRET || 'F3ZjLHG2FEp4n3c6Fb5DoSBT';
+const KEY_ID = process.env.RAZORPAY_KEY_ID;
+const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || process.env.PAYMENT_GATEWAY_SECRET;
+
+if (!KEY_ID) {
+  console.error('\n❌ RAZORPAY_KEY_ID environment variable is required.\n   Set it: export RAZORPAY_KEY_ID="rzp_test_..." or export RAZORPAY_KEY_ID="rzp_live_..."\n');
+  process.exit(1);
+}
 
 const args = process.argv.slice(2);
 const paymentId = args.find(a => a.startsWith('pay_'));

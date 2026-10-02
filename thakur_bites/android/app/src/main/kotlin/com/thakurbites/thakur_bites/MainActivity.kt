@@ -191,14 +191,6 @@ class MainActivity : FlutterActivity() {
                             lower.contains("libgg") || lower.contains("gameguardian") || lower.contains("libhooker")) {
                             return true
                         }
-                        // RWX segments violate Android W^X policy and indicate injected shellcode or Frida stubs
-                        val tokens = line.trim().split("\\s+".toRegex())
-                        if (tokens.size >= 2) {
-                            val perms = tokens[1]
-                            if (perms.contains("r") && perms.contains("w") && perms.contains("x")) {
-                                return true
-                            }
-                        }
                     }
                 }
             }
@@ -212,16 +204,6 @@ class MainActivity : FlutterActivity() {
         )
         for (p in fridaPaths) {
             if (File(p).exists()) return true
-        }
-
-        // 3. Socket connectivity probe to default Frida server ports 27042 and 27043
-        for (port in arrayOf(27042, 27043)) {
-            try {
-                val socket = java.net.Socket()
-                socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 150)
-                socket.close()
-                return true
-            } catch (_: Exception) {}
         }
 
         // 4. Kernel socket table inspection (/proc/net/tcp and /proc/net/tcp6 for 0x69A2 / 0x69A3)

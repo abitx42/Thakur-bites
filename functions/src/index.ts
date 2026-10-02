@@ -106,3 +106,8 @@ export {
 export { getOrderSuccessFunnel } from './funnel_metrics';
 export { reportSecurityViolation } from './security_events';
 export { simulateDeveloperBypass } from './honeypot_defense';
+export {
+  getAiBusinessSnapshot,
+  aiBusinessChat,
+} from './ai_business_copilot';
+

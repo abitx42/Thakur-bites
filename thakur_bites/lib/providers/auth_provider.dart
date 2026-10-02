@@ -14,6 +14,7 @@ class AuthProvider extends ChangeNotifier {
   UserProfile? _currentUserProfile;
   bool _isLoading = true;
   bool _isGuestBrowsing = false;
+  bool _signOutExplicit = false;
   String? _errorMessage;
 
   UserProfile? get currentProfile => _currentUserProfile;
@@ -46,15 +47,30 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // 1. Instantly restore cached profile from disk (0ms cold start, offline resilient)
+      final cachedProfile = await _authService.getCachedProfile();
+      final firebaseUser = _authService.currentUser;
+      if (cachedProfile != null && (firebaseUser == null || firebaseUser.uid == cachedProfile.uid)) {
+        _currentUserProfile = cachedProfile;
+        _isGuestBrowsing = false;
+        _isLoading = false;
+        notifyListeners();
+      }
+
       final redirectProfile = await _authService.checkRedirectResult();
       if (redirectProfile != null) {
         _currentUserProfile = redirectProfile;
         _isGuestBrowsing = false;
+        await _authService.saveCachedProfile(redirectProfile);
       } else {
         final user = _authService.currentUser;
         if (user != null) {
-          _currentUserProfile = await _authService.getUserProfile(user.uid);
-          _isGuestBrowsing = false;
+          final liveProfile = await _authService.getUserProfile(user.uid);
+          if (liveProfile != null) {
+            _currentUserProfile = liveProfile;
+            _isGuestBrowsing = false;
+            await _authService.saveCachedProfile(liveProfile);
+          }
         }
       }
     } catch (e) {
@@ -69,11 +85,23 @@ class AuthProvider extends ChangeNotifier {
 
     _authSub = _authService.authStateChanges.listen((user) async {
       if (user == null) {
-        _currentUserProfile = null;
+        // Only wipe session if the user explicitly signed out.
+        // On cold start or transient Firebase Auth delays, authStateChanges
+        // may fire null before credential restoration completes — ignore it.
+        if (_signOutExplicit) {
+          _currentUserProfile = null;
+          _isGuestBrowsing = false;
+          await _authService.clearCachedProfile();
+          _signOutExplicit = false;
+        }
       } else {
         _isGuestBrowsing = false;
         try {
-          _currentUserProfile = await _authService.getUserProfile(user.uid);
+          final profile = await _authService.getUserProfile(user.uid);
+          if (profile != null) {
+            _currentUserProfile = profile;
+            await _authService.saveCachedProfile(profile);
+          }
         } catch (e) {
           debugPrint('[AuthProvider] Error fetching profile on auth change: $e');
         }
@@ -124,6 +152,7 @@ class AuthProvider extends ChangeNotifier {
     if (profile != null) {
       _currentUserProfile = profile;
       await _authService.updateUserProfile(profile);
+      await _authService.saveCachedProfile(profile);
       notifyListeners();
       return;
     }
@@ -156,6 +185,7 @@ class AuthProvider extends ChangeNotifier {
 
       await _authService.updateUserProfile(updated);
       _currentUserProfile = updated;
+      await _authService.saveCachedProfile(updated);
     } catch (e) {
       _errorMessage = e.toString().replaceAll('Exception:', '').trim();
       rethrow;
@@ -181,6 +211,7 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      _signOutExplicit = true;
       await _authService.signOut();
       _currentUserProfile = null;
       _isGuestBrowsing = false;

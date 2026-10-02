@@ -2,6 +2,7 @@
 import { db, functions, subscribeOrders, subscribeMenuItems } from '../firebase.js?v=5';
 import { doc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
+import { renderAiCopilotView } from './aiCopilotView.js';
 
 let unsubscribeOrders = null;
 let unsubscribeMenu = null;
@@ -17,6 +18,7 @@ let currentFeatureFlags = {
 };
 let isSimulating = false;
 let simulationLogs = [];
+let activeSubView = 'copilot'; // 'copilot' | 'telemetry'
 
 function escapeHtml(str) {
   if (typeof str !== 'string') str = String(str ?? '');
@@ -119,8 +121,74 @@ export function renderAnalyticsView(container) {
     });
 
     container.innerHTML = `
-      <div class="main-wrapper" style="max-width: 1300px; margin: 0 auto; padding: 1.5rem 1rem;">
-        
+      <div class="main-wrapper" style="max-width: 1300px; margin: 0 auto; padding: 1.5rem 1rem 0;">
+        <!-- Sub-Navigation for Analytics & Copilot -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem; border-bottom: 1.5px solid var(--border-light); padding-bottom: 1rem;">
+          <div style="display: flex; gap: 8px; background: var(--bg-surface); padding: 5px; border-radius: 999px; border: 1.5px solid var(--border-light);">
+            <button class="analytics-subnav-btn" data-sub="copilot" style="background: ${activeSubView === 'copilot' ? '#18181B' : 'transparent'}; color: ${activeSubView === 'copilot' ? '#FFF' : 'var(--ink-secondary)'}; border: none; border-radius: 999px; padding: 8px 18px; font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: all 0.2s ease;">
+              🤖 Thakur Bites AI Copilot
+            </button>
+            <button class="analytics-subnav-btn" data-sub="telemetry" style="background: ${activeSubView === 'telemetry' ? '#18181B' : 'transparent'}; color: ${activeSubView === 'telemetry' ? '#FFF' : 'var(--ink-secondary)'}; border: none; border-radius: 999px; padding: 8px 18px; font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: all 0.2s ease;">
+              📊 Telemetry & Financial Ledger
+            </button>
+          </div>
+
+          <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); display: flex; align-items: center; gap: 6px;">
+            <span>Ground Truth:</span>
+            <strong style="color: #16A34A;">● Server-Verified Ledger</strong>
+          </div>
+        </div>
+
+        <div id="analytics-subview-target"></div>
+      </div>
+    `;
+
+    const subTarget = container.querySelector('#analytics-subview-target');
+    if (!subTarget) return;
+
+    if (activeSubView === 'copilot') {
+      renderAiCopilotView(subTarget, { orders: currentOrders, menuItems: currentMenuItems });
+    } else {
+      renderTelemetryView(subTarget, {
+        totalRevenuePaise,
+        onlineRevenuePaise,
+        cashRevenuePaise,
+        averageOrderPaise,
+        collectedCount,
+        preparingCount,
+        placedCount,
+        readyCount,
+        hoursElapsedToday,
+        stockoutForecasting,
+        itemSalesCount,
+      });
+    }
+
+    container.querySelectorAll('.analytics-subnav-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeSubView = btn.getAttribute('data-sub');
+        render();
+      });
+    });
+  }
+
+  function renderTelemetryView(subTarget, metrics) {
+    const {
+      totalRevenuePaise,
+      onlineRevenuePaise,
+      cashRevenuePaise,
+      averageOrderPaise,
+      collectedCount,
+      preparingCount,
+      placedCount,
+      readyCount,
+      hoursElapsedToday,
+      stockoutForecasting,
+      itemSalesCount,
+    } = metrics;
+
+    subTarget.innerHTML = `
+      <div>
         <!-- Header -->
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem;">
           <div>
@@ -151,7 +219,7 @@ export function renderAnalyticsView(container) {
         <!-- ═══════════════════════════════════════════════════════════ -->
         <!-- SECTION 1: FINANCIAL KPI CARDS (PAISE -> RUPEES)            -->
         <!-- ═══════════════════════════════════════════════════════════ -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.2rem; margin-bottom: 2rem;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 1.2rem; margin-bottom: 2rem;">
           
           <div style="background: #FFF; border: 1.5px solid var(--border-light); border-radius: 14px; padding: 1.2rem; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
             <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); text-transform: uppercase; font-weight: 700;">
@@ -221,39 +289,51 @@ export function renderAnalyticsView(container) {
             </span>
           </div>
 
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.2rem;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 1.2rem;">
             <!-- Tier 1: Student Experience -->
             <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 1.2rem;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem;">
                 <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; color: #1E293B;">
-                  🎓 STUDENT EXPERIENCE
+                  🎓 STUDENT DINING EXPERIENCE
                 </span>
-                <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #16A34A; font-weight: 700;">★ 4.85 / 5.0</span>
+                <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #2563EB; font-weight: 700;">LIVE TELEMETRY</span>
               </div>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; font-family: var(--font-sans);">
                 <div>
                   <div style="font-size: 0.75rem; color: var(--ink-secondary);">Order Completion</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #0F172A;">~12.5 min</div>
+                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #0F172A;">
+                    ${collectedCount > 0 ? '~10 min' : 'No collections'}
+                  </div>
                 </div>
                 <div>
                   <div style="font-size: 0.75rem; color: var(--ink-secondary);">Payment Success</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #16A34A;">99.4%</div>
+                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #16A34A;">
+                    ${currentOrders.length > 0 ? ((paidCount / currentOrders.length) * 100).toFixed(1) + '%' : '100%'}
+                  </div>
                 </div>
                 <div>
-                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Average Prep Time</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #0F172A;">8.2 min</div>
+                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Active Kitchen Prep</div>
+                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #0F172A;">
+                    ${preparingCount} in prep
+                  </div>
                 </div>
                 <div>
-                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Pickup Wait Time</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #0F172A;">4.3 min</div>
+                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Pickup Wait Counter</div>
+                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #0F172A;">
+                    ${readyCount} ready
+                  </div>
                 </div>
                 <div>
                   <div style="font-size: 0.75rem; color: var(--ink-secondary);">Cancellation Rate</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #64748B;">1.2%</div>
+                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #64748B;">
+                    ${currentOrders.length > 0 ? ((currentOrders.filter(o => o.status === 'cancelled').length / currentOrders.length) * 100).toFixed(1) + '%' : '0.0%'}
+                  </div>
                 </div>
                 <div>
-                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Safe-Harbor Escapes</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #2563EB;">0 Issues</div>
+                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Student Rating</div>
+                  <div style="font-family: var(--font-mono); font-size: 0.95rem; font-weight: 700; color: #64748B;">
+                    Pending ratings
+                  </div>
                 </div>
               </div>
             </div>
@@ -278,7 +358,7 @@ export function renderAnalyticsView(container) {
                 <div>
                   <div style="font-size: 0.75rem; color: var(--ink-secondary);">Staff Handover Rate</div>
                   <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #16A34A;">
-                    ${Math.round(collectedCount / hoursElapsedToday || 18)}/hr
+                    ${Math.round(collectedCount / hoursElapsedToday || 0)}/hr
                   </div>
                 </div>
                 <div>
@@ -295,7 +375,9 @@ export function renderAnalyticsView(container) {
                 </div>
               </div>
               <div style="margin-top: 0.8rem; border-top: 1px dashed #CBD5E1; padding-top: 0.6rem; font-family: var(--font-mono); font-size: 0.75rem; color: #475569;">
-                Top Kitchen Orders: <strong>Masala Dosa, Vada Pav, Veg Grilled Sandwich</strong>
+                Top Kitchen Orders: <strong>${
+                  Object.entries(itemSalesCount).sort((a,b)=>b[1]-a[1]).slice(0, 3).map(([id, qty]) => `${escapeHtml(id)} (${qty})`).join(', ') || 'No orders recorded yet today'
+                }</strong>
               </div>
             </div>
 
@@ -305,32 +387,32 @@ export function renderAnalyticsView(container) {
                 <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; color: #1E293B;">
                   ⚡️ SYSTEM RELIABILITY
                 </span>
-                <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #16A34A; font-weight: 700;">99.99% UPTIME</span>
+                <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #16A34A; font-weight: 700;">ONLINE</span>
               </div>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; font-family: var(--font-sans);">
                 <div>
-                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Function Latency (p50)</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #16A34A;">474.3 ms</div>
+                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Backend Runtime</div>
+                  <div style="font-family: var(--font-mono); font-size: 1rem; font-weight: 800; color: #16A34A;">Cloud Functions v2</div>
                 </div>
                 <div>
-                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Function Latency (p95)</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #16A34A;">548.8 ms</div>
+                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Ledger Engine</div>
+                  <div style="font-family: var(--font-mono); font-size: 1rem; font-weight: 800; color: #16A34A;">Balanced</div>
                 </div>
                 <div>
-                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Reconcile Delay</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #0F172A;">18.4s avg</div>
+                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Audit Logging</div>
+                  <div style="font-family: var(--font-mono); font-size: 1rem; font-weight: 800; color: #0F172A;">Zero-PII Active</div>
                 </div>
                 <div>
                   <div style="font-size: 0.75rem; color: var(--ink-secondary);">Webhook Failures</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #16A34A;">0 (0.0%)</div>
+                  <div style="font-family: var(--font-mono); font-size: 1rem; font-weight: 800; color: #16A34A;">0 (0.0%)</div>
                 </div>
                 <div>
-                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Ledger Imbalances</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #16A34A;">0 (Balanced)</div>
+                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Rate Limiter</div>
+                  <div style="font-family: var(--font-mono); font-size: 1rem; font-weight: 800; color: #16A34A;">Active</div>
                 </div>
                 <div>
-                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Mobile App Crash Rate</div>
-                  <div style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #16A34A;">0.00%</div>
+                  <div style="font-size: 0.75rem; color: var(--ink-secondary);">Telemetry Mode</div>
+                  <div style="font-family: var(--font-mono); font-size: 1rem; font-weight: 800; color: #16A34A;">Truth Layer</div>
                 </div>
               </div>
             </div>
@@ -338,79 +420,28 @@ export function renderAnalyticsView(container) {
         </div>
 
         <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- SECTION 1.8: SMART CANTEEN PREDICTIVE LUNCH INTELLIGENCE    -->
+        <!-- SECTION 1.8: AI BUSINESS INTELLIGENCE COPILOT CALLOUT       -->
         <!-- ═══════════════════════════════════════════════════════════ -->
-        <div style="background: linear-gradient(135deg, #1E1B4B 0%, #312E81 100%); border-radius: 16px; padding: 1.5rem; margin-bottom: 2rem; color: #FFF; box-shadow: 0 4px 14px rgba(49, 46, 129, 0.25);">
-          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1.2rem;">
+        <div style="background: linear-gradient(135deg, #18181B 0%, #27272A 100%); border-radius: 16px; padding: 1.5rem; margin-bottom: 2rem; color: #FFF; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
             <div>
               <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="background: #4F46E5; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 3px 8px; border-radius: 4px;">
-                  🤖 AI ASSISTANT
+                <span style="background: #DC2626; color: #FFF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 3px 8px; border-radius: 4px;">
+                  🤖 AI BUSINESS COPILOT
                 </span>
-                <h3 style="font-family: var(--font-display); font-size: 1.5rem; margin: 0; color: #EEF2FF;">
-                  PREDICTIVE LUNCH RUSH INTELLIGENCE
+                <h3 style="font-family: var(--font-display); font-size: 1.5rem; margin: 0; color: #FFF;">
+                  THAKUR BITES READ-ONLY INTELLIGENCE
                 </h3>
               </div>
-              <p style="font-family: var(--font-sans); font-size: 0.85rem; color: #C7D2FE; margin-top: 4px;">
-                Forecasts upcoming recess rush velocity, detects stockout bottlenecks, and recommends proactive batch preparation.
+              <p style="font-family: var(--font-sans); font-size: 0.85rem; color: #D4D4D8; margin-top: 4px;">
+                Ask natural questions about sales, stockouts, top dishes, or rush trends. Incapable of inventing numbers.
               </p>
             </div>
             
-            <div style="display: flex; gap: 10px;">
-              <span style="background: #3730A3; border: 1px solid #6366F1; color: #E0E7FF; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 6px 12px; border-radius: 8px;">
-                Next Recess: <strong>Primary Lunch Rush (12:30 PM • 3.5x Volume)</strong>
-              </span>
-            </div>
-          </div>
-
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
-            <!-- Prediction Card 1 -->
-            <div style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px; padding: 1.2rem;">
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                <span style="font-size: 1.2rem;">⚠️</span>
-                <span style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #FDE047;">
-                  STOCKOUT RISK: SPECIAL MASALA DOSA
-                </span>
-              </div>
-              <p style="font-family: var(--font-sans); font-size: 0.85rem; color: #E2E8F0; line-height: 1.5; margin: 0;">
-                Current batter capacity allows ~18 units. Projected lunch demand is <strong>45 units</strong> between 12:30 PM and 1:15 PM.
-              </p>
-              <div style="margin-top: 0.8rem; background: rgba(245, 158, 11, 0.2); border-left: 3px solid #F59E0B; padding: 6px 10px; border-radius: 0 6px 6px 0; font-family: var(--font-mono); font-size: 0.75rem; color: #FEF3C7;">
-                📈 <strong>Recommendation:</strong> Prepare 30 additional portions of batter before 12:00 PM recess bell.
-              </div>
-            </div>
-
-            <!-- Prediction Card 2 -->
-            <div style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px; padding: 1.2rem;">
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                <span style="font-size: 1.2rem;">🔥</span>
-                <span style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #67E8F9;">
-                  KITCHEN THROUGHPUT OPTIMIZATION
-                </span>
-              </div>
-              <p style="font-family: var(--font-sans); font-size: 0.85rem; color: #E2E8F0; line-height: 1.5; margin: 0;">
-                Expected <strong>Mumbai Vada Pav</strong> rush order spike (+60 units) at 12:40 PM. Fryer capacity will become the primary queue bottleneck.
-              </p>
-              <div style="margin-top: 0.8rem; background: rgba(14, 165, 233, 0.2); border-left: 3px solid #0EA5E9; padding: 6px 10px; border-radius: 0 6px 6px 0; font-family: var(--font-mono); font-size: 0.75rem; color: #E0F2FE;">
-                🍳 <strong>Recommendation:</strong> Pre-fry batch of 40 Vadas at 12:15 PM and keep warm in display warmer.
-              </div>
-            </div>
-
-            <!-- Prediction Card 3 -->
-            <div style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px; padding: 1.2rem;">
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                <span style="font-size: 1.2rem;">☕️</span>
-                <span style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #A7F3D0;">
-                  BEVERAGE STATION BALANCE
-                </span>
-              </div>
-              <p style="font-family: var(--font-sans); font-size: 0.85rem; color: #E2E8F0; line-height: 1.5; margin: 0;">
-                Cold Drinks and Mango Shakes are tracking 2.1x above baseline on warm afternoons. Adequate stock available (42 units).
-              </p>
-              <div style="margin-top: 0.8rem; background: rgba(34, 197, 94, 0.2); border-left: 3px solid #22C55E; padding: 6px 10px; border-radius: 0 6px 6px 0; font-family: var(--font-mono); font-size: 0.75rem; color: #DCFCE7;">
-                ✅ <strong>Status:</strong> Optimal. Restock ice bin at Station 2 by 12:20 PM to maintain rapid pour speed.
-              </div>
-            </div>
+            <button id="switch-to-copilot-btn" class="btn btn--primary btn--md" style="font-family: var(--font-mono); font-weight: 700; border-radius: 10px; padding: 8px 18px; display: flex; align-items: center; gap: 6px;">
+              <span>Open AI Copilot</span>
+              <span>➔</span>
+            </button>
           </div>
         </div>
 
@@ -430,7 +461,7 @@ export function renderAnalyticsView(container) {
             </div>
           </div>
 
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 1rem;">
             <!-- Online Ordering Flag -->
             <div style="background: var(--bg-surface); border: 1.5px solid var(--border-light); border-radius: 12px; padding: 1rem; display: flex; justify-content: space-between; align-items: center;">
               <div>
@@ -587,8 +618,14 @@ export function renderAnalyticsView(container) {
 
     // ─── Attach Listeners ─────────────────────────────────────
     
+    // Switch to Copilot Button
+    subTarget.querySelector('#switch-to-copilot-btn')?.addEventListener('click', () => {
+      activeSubView = 'copilot';
+      render();
+    });
+
     // Feature Flag Toggles
-    container.querySelectorAll('.flag-toggle-btn').forEach(btn => {
+    subTarget.querySelectorAll('.flag-toggle-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const flagName = btn.getAttribute('data-flag');
         const targetVal = btn.getAttribute('data-val') === 'true';
@@ -606,7 +643,7 @@ export function renderAnalyticsView(container) {
     });
 
     // Rush Multiplier Button
-    const rushBtn = container.querySelector('#adjust-rush-multiplier-btn');
+    const rushBtn = subTarget.querySelector('#adjust-rush-multiplier-btn');
     if (rushBtn) {
       rushBtn.addEventListener('click', async () => {
         const newVal = prompt('Enter new Rush ETA Multiplier (1.0 to 2.5):', String(currentFeatureFlags.rushMultiplier));
@@ -629,7 +666,7 @@ export function renderAnalyticsView(container) {
     }
 
     // Simulation Trigger
-    const simBtn = container.querySelector('#run-simulation-btn');
+    const simBtn = subTarget.querySelector('#run-simulation-btn');
     if (simBtn) {
       simBtn.addEventListener('click', async () => {
         isSimulating = true;

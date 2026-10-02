@@ -1,65 +1,313 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.firebaseapp.com; img-src 'self' data: https:;">
-  <title>Thakur Bites — Operations & Management Portal Gateway</title>
-  
-  <!-- Design System Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  
-  <!-- Custom Stylesheet -->
-  <link rel="stylesheet" href="css/styles.css?v=4">
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
 
-  <!-- Pre-Bootstrap Anti-Tamper & Integrity Seal -->
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="/">
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta charset="UTF-8">
+  <meta name="description" content="Thakur Bites — Digital Campus Canteen App. Order fresh meals, track live tokens, and skip the rush.">
+  <meta property="og:title" content="Thakur Bites — Digital Campus Canteen App">
+  <meta property="og:description" content="Order fresh campus meals, track live kitchen tokens, and skip the canteen rush at TCET Mumbai.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://adi-thakur-bite.web.app/">
+  <meta property="og:image" content="https://adi-thakur-bite.web.app/icons/Icon-512.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Thakur Bites — Digital Campus Canteen App">
+  <meta name="twitter:description" content="Order fresh campus meals, track live kitchen tokens, and skip the canteen rush at TCET Mumbai.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="thakur_bites">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <!-- Google Identity Platform / Firebase Web Auth Configuration -->
+  <meta name="google-signin-client_id" content="391012293021-web.apps.googleusercontent.com">
+
+  <title>Thakur Bites</title>
+  <link rel="manifest" href="manifest.json">
+
   <script>
-    (function() {
-      try {
-        if (window.top !== window.self) {
-          window.top.location = window.self.location;
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (registrations) {
+        for (var r of registrations) {
+          r.unregister();
         }
-      } catch (_) {
-        document.documentElement.innerHTML = '';
+      });
+      navigator.serviceWorker.register = function () {
+        return Promise.reject(new Error('ServiceWorker registration disabled by security policy.'));
+      };
+    }
+    if ('caches' in window) {
+      caches.keys().then(function (keys) {
+        for (var k of keys) {
+          caches.delete(k);
+        }
+      });
+    }
+
+    // 1. Anti-Clickjacking Framebusting Guard (RFC 7034 / OWASP A05)
+    try {
+      if (window.top !== window.self) {
+        window.top.location = window.self.location;
       }
+    } catch (_) {}
+
+    // 2. High-Visibility Console Security Warning
+    try {
+      console.log('%c[STOP] THAKUR BITES STUDENT APP PERIMETER', 'color: #DC2626; font-size: 28px; font-weight: 900;');
+      console.log(
+        '%cThis browser console is intended for developers. Any attempt to tamper with prices, token states, or transaction data is recorded and reported under college disciplinary regulations.\nAll checkout pricing and order state transitions are strictly server-authoritative.',
+        'color: #1F2937; font-size: 14px; font-weight: 600;'
+      );
+    } catch (_) {}
+
+    // 3. Universal Web Anti-Tamper & Mod-Lockdown Guard (Testing Hardened)
+    try {
+      sessionStorage.removeItem('tb_web_lockdown_active');
+      sessionStorage.removeItem('tb_tamper_lockdown_active');
+      localStorage.removeItem('tb_web_lockdown_active');
+      localStorage.removeItem('tb_tamper_lockdown_active');
+    } catch (_) {}
+
+    var isWebLockdownActive = false;
+    function triggerWebTamperLockdown(reason, details) {
+      if (isWebLockdownActive) return;
+      isWebLockdownActive = true;
+      details = details || {};
+
+      console.error('[SECURITY TAMPER WARNING] Violation: ' + reason, details);
+
+      // Render Full-Screen Notification Overlay with Dismiss Option for Testing
+      var overlay = document.getElementById('tb-web-lockdown-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'tb-web-lockdown-overlay';
+        overlay.setAttribute('style',
+          'position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
+          'background:#0A0D14!important;color:#F3F4F6!important;z-index:2147483647!important;' +
+          'display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;' +
+          'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif!important;padding:24px!important;box-sizing:border-box!important;text-align:center!important;'
+        );
+        overlay.innerHTML =
+          '<div style="max-width:480px;width:100%;background:#111827;border:1px solid #DC2626;border-radius:16px;padding:32px 24px;box-shadow:0 25px 50px -12px rgba(220,38,38,0.3);text-align:center;">' +
+            '<div style="width:64px;height:64px;background:rgba(220,38,38,0.15);border:2px solid #EF4444;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">' +
+              '<span style="font-size:32px;">🛡️</span>' +
+            '</div>' +
+            '<div style="font-size:11px;font-weight:800;letter-spacing:1.5px;color:#EF4444;text-transform:uppercase;margin-bottom:6px;">SECURITY INTEGRITY CHECK</div>' +
+            '<h1 style="font-size:20px;font-weight:800;color:#FFF;margin:0 0 10px 0;">Client Environment Notice</h1>' +
+            '<p style="font-size:13px;line-height:1.6;color:#9CA3AF;margin:0 0 20px 0;">An unexpected client modification or browser extension script was observed.</p>' +
+            '<div style="background:#1F2937;border-radius:8px;padding:12px 14px;text-align:left;font-family:monospace;font-size:12px;margin-bottom:20px;border:1px solid #374151;">' +
+              '<div style="color:#9CA3AF;margin-bottom:4px;">EVENT: <span style="color:#F87171;font-weight:bold;">' + reason + '</span></div>' +
+              '<div style="color:#9CA3AF;">STATUS: <span style="color:#34D399;font-weight:bold;">SESSION SAFE</span></div>' +
+            '</div>' +
+            '<button id="tb-dismiss-lockdown-btn" style="background:#DC2626;color:#FFF;border:none;padding:10px 20px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">Dismiss & Continue Testing</button>' +
+          '</div>';
+        document.body.appendChild(overlay);
+        document.getElementById('tb-dismiss-lockdown-btn').addEventListener('click', function() {
+          isWebLockdownActive = false;
+          try {
+            sessionStorage.removeItem('tb_web_lockdown_active');
+            sessionStorage.removeItem('tb_tamper_lockdown_active');
+          } catch (_) {}
+          overlay.remove();
+        });
+      }
+    }
+
+    // 4. Client Canary Honeypot Traps (Only monitor synthetic canary keys)
+    ['__tb_canary_overridePrice__', '__tb_canary_bypassPayment__'].forEach(function(key) {
       try {
-        var breach = sessionStorage.getItem('tb_tamper_lockdown_active') || sessionStorage.getItem('tb_web_lockdown_active');
-        if (breach) {
-          window.stop && window.stop();
-          document.addEventListener('DOMContentLoaded', function() {
-            document.body.innerHTML = '<div style="position:fixed;inset:0;background:#0A0D14;color:#F87171;display:flex;align-items:center;justify-content:center;font-family:sans-serif;flex-direction:column;z-index:9999999;padding:24px;text-align:center;"><h2>[SECURITY LOCKDOWN] Session Quarantined</h2><p style="color:#9CA3AF;">Violation: ' + breach + '</p></div>';
-          });
-        }
-      } catch (_) {}
-      try {
-        ['isAdmin', 'role', 'isSuperUser', 'isDeveloper', 'debugMode', 'bypassAuth'].forEach(function(prop) {
-          var _v = undefined;
-          Object.defineProperty(Object.prototype, prop, {
-            configurable: false,
-            get: function() { return _v; },
-            set: function(v) {
-              try { sessionStorage.setItem('tb_tamper_lockdown_active', 'PROTOTYPE_POLLUTION_ATTACK'); } catch(_) {}
-              window.location.reload();
-            }
-          });
+        Object.defineProperty(window, key, {
+          configurable: true,
+          get: function() { return undefined; },
+          set: function(val) {
+            console.warn('[CANARY_TRAP] Tamper write on window.' + key + ' =', val);
+          }
         });
       } catch (_) {}
+    });
+
+    // 5. Native Function Hook Detection (Warning only — never locks out browser extensions)
+    setInterval(function() {
       try {
-        if ('serviceWorker' in navigator && navigator.serviceWorker) {
-          navigator.serviceWorker.register = function() {
-            return Promise.reject(new Error('ServiceWorker disabled by security policy'));
-          };
+        var toStr = Function.prototype.toString;
+        if (window.fetch && !toStr.call(window.fetch).includes('[native code]')) {
+          console.warn('[Sentinel] Extension wrapped fetch detected.');
+        }
+        if (window.XMLHttpRequest && !toStr.call(XMLHttpRequest.prototype.open).includes('[native code]')) {
+          console.warn('[Sentinel] Extension wrapped XMLHttpRequest detected.');
         }
       } catch (_) {}
-    })();
+    }, 5000);
+
+    // 6. DOM Mutation Observer (Warning only for dynamic extension elements)
+    try {
+      var isTrusted = function(src) {
+        if (!src) return false;
+        try {
+          var u = new URL(src, window.location.href);
+          if (u.origin === window.location.origin) return true;
+          var h = u.hostname.toLowerCase();
+          return h.endsWith('.gstatic.com') || h.endsWith('.googleapis.com') || h.endsWith('.google.com') ||
+                 h.endsWith('.razorpay.com') || h.endsWith('.jsdelivr.net') || u.protocol === 'blob:';
+        } catch (_) { return false; }
+      };
+
+      var domObs = new MutationObserver(function(mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+          var added = mutations[i].addedNodes;
+          for (var j = 0; j < added.length; j++) {
+            var n = added[j];
+            if (n.nodeType !== 1) continue;
+            var t = (n.tagName || '').toUpperCase();
+            if (t === 'BASE' || t === 'OBJECT' || t === 'EMBED' || t === 'APPLET') {
+              console.warn('[Sentinel] Disallowed DOM tag:', t);
+            }
+          }
+        }
+      });
+      domObs.observe(document.documentElement, { childList: true, subtree: true });
+    } catch (_) {}
   </script>
+
+  <!-- Razorpay Official Checkout SDK & Web Bridge -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script>
+    window.openRazorpayCheckout = function(options, successCallback, failureCallback) {
+      try {
+        if (typeof Razorpay === 'undefined') {
+          if (failureCallback) failureCallback('Razorpay SDK failed to load. Please check your internet connection or ad-blocker.');
+          return;
+        }
+        var opts = Object.assign({}, options);
+        opts.handler = function(response) {
+          if (successCallback) {
+            successCallback(
+              response.razorpay_payment_id || '',
+              response.razorpay_order_id || '',
+              response.razorpay_signature || ''
+            );
+          }
+        };
+        opts.modal = {
+          ondismiss: function() {
+            if (failureCallback) failureCallback('Payment was cancelled.');
+          }
+        };
+        var rzp = new Razorpay(opts);
+        rzp.on('payment.failed', function(response) {
+          var desc = (response && response.error && response.error.description)
+            ? response.error.description
+            : 'Payment failed or was declined.';
+          if (failureCallback) failureCallback(desc);
+        });
+        rzp.open();
+      } catch (err) {
+        if (failureCallback) failureCallback(err.toString());
+      }
+    };
+  </script>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #F8F9FA;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+    }
+    #loading-splash {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #FFFFFF;
+      z-index: 999999;
+      transition: opacity 0.4s ease-out;
+      pointer-events: none;
+      animation: autoDismissSplash 0.5s ease 4s forwards;
+    }
+    @keyframes autoDismissSplash {
+      to {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+    }
+    .splash-logo {
+      font-size: 28px;
+      font-weight: 800;
+      color: #D32F2F;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+    .splash-tagline {
+      font-size: 13px;
+      color: #6C757D;
+      margin-bottom: 28px;
+      font-weight: 500;
+    }
+    .splash-spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid #E9ECEF;
+      border-top: 3px solid #D32F2F;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
 </head>
 <body>
-  <div id="app-root"></div>
+  <div id="loading-splash">
+    <div class="splash-logo">🍛 THAKUR BITES</div>
+    <div class="splash-tagline">TCET Digital College Canteen</div>
+    <div class="splash-spinner"></div>
+  </div>
 
-  <!-- Application Module Script -->
-  <script type="module" src="js/app.js?v=10"></script>
+  <script>
+    function hideLoadingSplash() {
+      var splash = document.getElementById('loading-splash');
+      if (splash) {
+        splash.style.opacity = '0';
+        splash.style.pointerEvents = 'none';
+        setTimeout(function () {
+          if (splash && splash.parentNode) {
+            splash.parentNode.removeChild(splash);
+          }
+        }, 400);
+      }
+    }
+    window.addEventListener('flutter-first-frame', hideLoadingSplash);
+    // Safety fallback: fade out splash after 3.5s so UI is never permanently blocked
+    setTimeout(hideLoadingSplash, 3500);
+  </script>
+
+  <script src="flutter_bootstrap.js?v=20260914_0820" async></script>
 </body>
 </html>

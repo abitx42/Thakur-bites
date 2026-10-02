@@ -65,6 +65,8 @@ export const DEFAULT_ENDPOINT_LIMITS: Record<string, RateLimitConfig> = {
   security_report: { maxRequests: 10, windowSeconds: 60 },
   webhook_ingress: { maxRequests: 60, windowSeconds: 60 },
   mfa_activation: { maxRequests: 5, windowSeconds: 60 },
+  ai_business_chat: { maxRequests: 20, windowSeconds: 60 },
+  ai_business_snapshot: { maxRequests: 30, windowSeconds: 60 },
 };
 
 export const ENDPOINT_LIMITS: Record<string, RateLimitConfig> = DEFAULT_ENDPOINT_LIMITS;

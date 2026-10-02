@@ -20,7 +20,7 @@ export function detectEnvironment(): RuntimeEnvironment {
   const nodeEnv = (process.env.NODE_ENV || '').trim().toLowerCase();
   const projectId = getProjectId().toLowerCase();
 
-  if (nodeEnv === 'production' || projectId.includes('prod') || projectId.includes('thakurbites-live')) {
+  if (nodeEnv === 'production' || projectId.includes('prod') || projectId.includes('thakurbites-live') || projectId === 'adi-thakur-bite') {
     return 'production';
   }
   if (nodeEnv === 'staging' || projectId.includes('stage') || projectId.includes('staging')) {

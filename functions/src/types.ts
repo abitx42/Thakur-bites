@@ -99,7 +99,8 @@ export interface OrderDocument {
   readyAt: Timestamp;
   collectedAt?: Timestamp;
   collectedByStaffId?: string;
-  verificationMethod?: 'PIN' | 'QR';
+  pinCode?: string;
+  verificationMethod?: 'PIN' | 'QR' | 'STAFF_VERIFIED';
   unlockedByStaffId?: string;
   unlockedAt?: Timestamp;
   unlockReason?: string;
@@ -493,29 +494,33 @@ export interface AdminOperationsDashboardResponse {
     expiredReservationsCount: number;
   };
   productionKpis?: {
+    dataStatus?: 'ACTUAL' | 'INSUFFICIENT_DATA';
     studentExperience: {
-      averageOrderCompletionMinutes: number;
-      paymentSuccessRate: number;
-      averagePreparationMinutes: number;
-      pickupWaitMinutes: number;
+      averageOrderCompletionMinutes: number | null;
+      paymentSuccessRate: number | null;
+      averagePreparationMinutes: number | null;
+      pickupWaitMinutes: number | null;
       cancellationRate: number;
-      averageRatingStars: number;
+      averageRatingStars: number | null;
+      dataStatus?: 'ACTUAL' | 'INSUFFICIENT_DATA';
     };
     canteenOperations: {
       ordersPer15Min: number;
       kitchenBacklog: number;
       topOrderedDishes: Array<{ name: string; quantity: number }>;
+      topDishesStatus?: 'ACTUAL' | 'INSUFFICIENT_DATA';
       stockoutFrequencyCount: number;
       staffHandoverThroughputPerHour: number;
     };
     systemReliability: {
-      functionLatencyP50Ms: number;
-      functionLatencyP95Ms: number;
+      functionLatencyP50Ms: number | null;
+      functionLatencyP95Ms: number | null;
       firestoreContentionRetries: number;
       webhookFailures: number;
-      paymentReconciliationDelaySeconds: number;
+      paymentReconciliationDelaySeconds: number | null;
       errorRate: number;
       crashRate: number;
+      status?: 'ACTUAL' | 'UNAVAILABLE';
     };
   };
 }

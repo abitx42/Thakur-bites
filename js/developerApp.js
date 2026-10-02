@@ -3,8 +3,10 @@ import { staffAuth, renderPinPadModal, getPrivilegedSession, onStaffAuthStateCha
 import { renderSecurityCenterView } from './views/securityCenterView.js?v=7';
 import { renderPrivilegedAuthModal } from './views/mfaModal.js?v=2';
 import { initSecuritySentinel } from './securitySentinel.js?v=2';
+import { initNetworkSentinel } from './networkSentinel.js';
 
 initSecuritySentinel({ blockShortcuts: true, portalName: 'Developer Command Cockpit' });
+initNetworkSentinel({ portalName: 'Developer Command Cockpit' });
 
 function escapeHtml(str) {
   if (!str) return '';
@@ -35,7 +37,7 @@ function initDeveloperCockpit() {
 
     if (!isAuthorizedDev) {
       root.innerHTML = `
-        <div style="max-width: 520px; margin: 5rem auto; background: #09090B; border: 2px solid #EF4444; border-radius: 14px; padding: 2.5rem 2rem; text-align: center; color: #FFF; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+        <div style="max-width: 520px; width: calc(100% - 2rem); box-sizing: border-box; margin: 3rem auto; background: #09090B; border: 2px solid #EF4444; border-radius: 14px; padding: 2rem 1.25rem; text-align: center; color: #FFF; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
           <div style="font-size: 3.5rem; margin-bottom: 0.75rem;">🔒</div>
           <h2 style="font-family: var(--font-display); font-size: 2.2rem; color: #EF4444; margin: 0 0 0.5rem 0; letter-spacing: 0.05em;">
             ENGINEERING COCKPIT LOCKED
@@ -160,4 +162,8 @@ function initDeveloperCockpit() {
   });
 }
 
-window.addEventListener('DOMContentLoaded', initDeveloperCockpit);
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', initDeveloperCockpit);
+} else {
+  initDeveloperCockpit();
+}

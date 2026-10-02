@@ -5,6 +5,7 @@ import '../models/user_preferences.dart';
 import '../providers/auth_provider.dart';
 import '../services/preferences_service.dart';
 import '../theme/app_theme.dart';
+import 'login_sheet.dart';
 
 /// Platform 2.0 — Customer Dietary & Notification Preferences Screen
 class PreferencesScreen extends StatefulWidget {
@@ -30,7 +31,12 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
   Future<void> _save() async {
     final auth = context.read<AuthProvider>();
     final user = auth.currentProfile;
-    if (user == null) return;
+    if (user == null || auth.isGuest) {
+      if (mounted) {
+        LoginSheet.show(context);
+      }
+      return;
+    }
 
     setState(() => _isSaving = true);
     HapticFeedback.mediumImpact();

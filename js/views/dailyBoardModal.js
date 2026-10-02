@@ -95,8 +95,10 @@ export function renderDailyBoardModal(container, onClose) {
     announcement: '',
   };
 
+  let unsub = null;
   const modalOverlay = document.createElement('div');
   modalOverlay.id = 'daily-board-modal-backdrop';
+  modalOverlay.className = 'modal-overlay-fade-in';
   modalOverlay.style.cssText = `
     position: fixed; inset: 0; background: rgba(15, 23, 42, 0.7);
     backdrop-filter: blur(4px); z-index: 1000;
@@ -106,7 +108,7 @@ export function renderDailyBoardModal(container, onClose) {
 
   function renderForm() {
     modalOverlay.innerHTML = `
-      <div style="background: #FFF; border-radius: 16px; max-width: 640px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); border: 2px solid var(--border-light); overflow: hidden;">
+      <div class="modal-card-pop-in" style="background: #FFF; border-radius: 16px; max-width: 640px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); border: 2px solid var(--border-light); overflow: hidden;">
         
         <!-- Header -->
         <div style="padding: 1.2rem 1.5rem; background: #FFFBEB; border-bottom: 2px solid #FDE68A; display: flex; justify-content: space-between; align-items: center;">
@@ -344,14 +346,8 @@ export function renderDailyBoardModal(container, onClose) {
     });
 
     // Cancel & Close
-    modalOverlay.querySelector('#board-close-btn')?.addEventListener('click', () => {
-      modalOverlay.remove();
-      if (onClose) onClose();
-    });
-    modalOverlay.querySelector('#board-cancel-btn')?.addEventListener('click', () => {
-      modalOverlay.remove();
-      if (onClose) onClose();
-    });
+    modalOverlay.querySelector('#board-close-btn')?.addEventListener('click', closeModal);
+    modalOverlay.querySelector('#board-cancel-btn')?.addEventListener('click', closeModal);
 
     // Publish
     modalOverlay.querySelector('#board-publish-btn')?.addEventListener('click', async () => {
@@ -388,8 +384,7 @@ export function renderDailyBoardModal(container, onClose) {
         await saveDailyBoard(payload);
         publishBtn.textContent = '✓ Published!';
         setTimeout(() => {
-          modalOverlay.remove();
-          if (onClose) onClose();
+          closeModal();
         }, 500);
       } catch (err) {
         console.error('Error publishing daily board:', err);
@@ -400,19 +395,41 @@ export function renderDailyBoardModal(container, onClose) {
     });
   }
 
+  function closeModal() {
+    if (unsub) {
+      try { unsub(); } catch (_) {}
+      unsub = null;
+    }
+    const card = modalOverlay.querySelector('.modal-card-pop-in');
+    if (card) {
+      card.classList.add('modal-card-exit');
+      setTimeout(() => {
+        modalOverlay.remove();
+        if (onClose) onClose();
+      }, 120);
+    } else {
+      modalOverlay.remove();
+      if (onClose) onClose();
+    }
+  }
+
   // Subscribe to live daily board to pre-populate form
-  const unsub = subscribeDailyBoard((liveData) => {
+  let initialRenderDone = false;
+  unsub = subscribeDailyBoard((liveData) => {
     if (liveData) {
       currentBoard = { ...currentBoard, ...liveData };
     }
-    renderForm();
+    const activeEl = document.activeElement;
+    const isTypingInside = activeEl && modalOverlay.contains(activeEl) && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+    if (!initialRenderDone || !isTypingInside) {
+      initialRenderDone = true;
+      renderForm();
+    }
   });
 
   modalOverlay.addEventListener('click', (e) => {
     if (e.target === modalOverlay) {
-      unsub();
-      modalOverlay.remove();
-      if (onClose) onClose();
+      closeModal();
     }
   });
 

@@ -16,6 +16,8 @@ import '../screens/order_status_screen.dart';
 import '../screens/preferences_screen.dart';
 import '../screens/verification_screen.dart';
 import '../services/firestore_service.dart';
+import '../services/preferences_service.dart';
+import '../services/error_helper.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bouncy_tap.dart';
 import '../widgets/canteen_status_banner.dart';
@@ -118,18 +120,18 @@ class _MenuScreenState extends State<MenuScreen> {
   Future<void> _recoverActiveOrder() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final orderId = prefs.getString('active_order_id');
-      if (orderId != null && orderId.isNotEmpty) {
+      final list = prefs.getStringList('active_order_ids') ?? <String>[];
+      final singleId = prefs.getString('active_order_id');
+      final allIds = <String>{...list, ?singleId}.where((id) => id.isNotEmpty).toList();
+      for (final orderId in allIds) {
         final order = await _firestore.getOrder(orderId);
         if (order != null && !order.isCollected && order.status != 'cancelled') {
           if (mounted) {
             setState(() {
               _recoveredActiveOrder = order;
             });
+            break;
           }
-        } else {
-          // If order is completed or cancelled, clean up stored order ID
-          await prefs.remove('active_order_id');
         }
       }
     } catch (e) {
@@ -477,6 +479,74 @@ class _MenuScreenState extends State<MenuScreen> {
                     ),
                   ],
 
+                  // Favourites shortcut button
+                  ListenableBuilder(
+                    listenable: PreferencesService(),
+                    builder: (context, _) {
+                      final favCount = PreferencesService().cachedFavourites.length;
+                      return BouncyTap(
+                        scaleFactor: 0.90,
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const FavouritesScreen()),
+                          );
+                        },
+                        child: Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: favCount > 0 ? const Color(0xFFFEF2F2) : AppColors.surface,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: favCount > 0 ? const Color(0xFFFCA5A5) : AppColors.line,
+                              width: 1,
+                            ),
+                          ),
+                          child: Stack(
+                            children: [
+                              Center(
+                                child: Icon(
+                                  favCount > 0 ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                                  color: favCount > 0 ? AppColors.red : AppColors.inkSecondary,
+                                  size: 18,
+                                ),
+                              ),
+                              if (favCount > 0)
+                                Positioned(
+                                  top: 0,
+                                  right: 0,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(2),
+                                    decoration: const BoxDecoration(
+                                      color: AppColors.red,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    constraints: const BoxConstraints(
+                                      minWidth: 14,
+                                      minHeight: 14,
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        favCount > 9 ? '9+' : '$favCount',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w800,
+                                          height: 1,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(width: 8),
+
                   // Cart button — live badge from CartProvider
                   Consumer<CartProvider>(
                     builder: (context, cart, _) {
@@ -485,7 +555,11 @@ class _MenuScreenState extends State<MenuScreen> {
                         onTap: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(builder: (_) => const CartScreen()),
-                          );
+                          ).then((_) {
+                            if (mounted) {
+                              _scrollToTop();
+                            }
+                          });
                         },
                         child: Container(
                           width: 38,
@@ -849,13 +923,13 @@ class _MenuScreenState extends State<MenuScreen> {
       },
       child: GridView.builder(
         controller: _menuScrollController,
-        padding: const EdgeInsets.only(bottom: 16, top: 4),
+        padding: const EdgeInsets.only(bottom: 24, top: 6),
         physics: const AlwaysScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
           crossAxisSpacing: 12,
           mainAxisSpacing: 12,
-          childAspectRatio: 0.78,
+          childAspectRatio: 0.70,
         ),
         itemCount: items.length,
         itemBuilder: (context, index) {
@@ -910,33 +984,44 @@ class _MenuScreenState extends State<MenuScreen> {
   }
 
   Widget _buildErrorState(String error) {
+    final isNetwork = ErrorHelper.isNetworkError(error);
+    final friendlyMessage = isNetwork
+        ? 'Please check your Wi-Fi or mobile data connection and tap Retry.'
+        : ErrorHelper.getFriendlyErrorMessage(error, defaultFallback: 'Couldn\'t load the latest menu items.');
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.wifi_off_rounded, size: 40, color: AppColors.red),
+            Icon(isNetwork ? Icons.wifi_off_rounded : Icons.cloud_off_rounded, size: 44, color: AppColors.red),
             const SizedBox(height: 12),
-            Text('Couldn\'t load the menu',
-                style: AppFonts.body(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.ink)),
-            const SizedBox(height: 4),
-            Text(error,
-                style: AppFonts.body(fontSize: 12, color: AppColors.inkSoft),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 16),
+            Text(
+              isNetwork ? 'No Internet Connection' : 'Couldn\'t load the menu',
+              style: AppFonts.display(
+                fontSize: 22,
+                color: AppColors.ink,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              friendlyMessage ?? 'Please check your connection and try again.',
+              style: AppFonts.body(fontSize: 13, color: AppColors.inkSoft),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 18),
             ElevatedButton.icon(
               onPressed: () => setState(() {}),
               icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Retry'),
+              label: const Text('Retry Connection'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.ink,
                 foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999)),
+                  borderRadius: BorderRadius.circular(999),
+                ),
               ),
             ),
           ],
@@ -2017,7 +2102,10 @@ class _MenuScreenState extends State<MenuScreen> {
             icon: Icons.home_rounded,
             label: 'Menu',
             isActive: _currentNavIndex == 0,
-            onTap: () => setState(() => _currentNavIndex = 0),
+            onTap: () {
+              setState(() => _currentNavIndex = 0);
+              _scrollToTop();
+            },
           ),
           _NavItem(
             icon: Icons.receipt_long_rounded,
@@ -2045,21 +2133,47 @@ class _MenuScreenState extends State<MenuScreen> {
         builder: (context, snapshot) {
           final orders = snapshot.data ?? [];
           if (orders.isNotEmpty) {
-            // Find the most recent active order that is not collected or cancelled
-            final activeOrder = orders.where((o) {
+            // Find all active orders that are not collected or cancelled
+            final activeOrders = orders.where((o) {
               return !o.isCollected && o.status != 'cancelled';
-            }).firstOrNull;
+            }).toList();
 
-            if (activeOrder != null) {
-              // Sync persistent recovery ID
+            if (activeOrders.isNotEmpty) {
+              // Sync persistent recovery ID list for offline recovery
               SharedPreferences.getInstance().then((prefs) {
-                prefs.setString('active_order_id', activeOrder.id);
+                prefs.setString('active_order_id', activeOrders.first.id);
+                prefs.setStringList('active_order_ids', activeOrders.map((o) => o.id).toList());
               }).catchError((_) {});
-              return _ActiveOrderBanner(order: activeOrder);
+
+              if (activeOrders.length == 1) {
+                return _ActiveOrderBanner(order: activeOrders.first);
+              }
+
+              return Container(
+                margin: const EdgeInsets.fromLTRB(18, 4, 18, 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4, bottom: 4),
+                      child: Text(
+                        'Active Orders (${activeOrders.length})',
+                        style: AppFonts.body(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.inkSoft),
+                      ),
+                    ),
+                    ...activeOrders.take(3).map((o) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: _ActiveOrderBanner(order: o, isCompact: true),
+                    )),
+                  ],
+                ),
+              );
             } else {
               // No active orders in list; clear stored active_order_id
               SharedPreferences.getInstance().then((prefs) {
                 prefs.remove('active_order_id');
+                prefs.remove('active_order_ids');
               }).catchError((_) {});
             }
           }
@@ -2249,45 +2363,52 @@ class _OrderCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Text(
-                    order.tokenNumber,
-                    style: AppFonts.mono(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.ink,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: isReady
-                          ? AppColors.successBg
-                          : AppColors.surface2,
-                      borderRadius: AppRadius.radiusPill,
-                    ),
-                    child: Text(
-                      isReady
-                          ? 'PIN: ${order.pinCode}'
-                          : isCollected
-                              ? 'PIN: Collected'
-                              : order.status == 'cancelled'
-                                  ? 'PIN: Cancelled'
-                                  : 'PIN: Locked until food ready',
+              Expanded(
+                child: Row(
+                  children: [
+                    Text(
+                      order.tokenNumber,
                       style: AppFonts.mono(
-                        fontSize: 11,
-                        fontWeight: isReady ? FontWeight.w700 : FontWeight.w500,
-                        color: isReady
-                            ? AppColors.greenInk
-                            : AppColors.inkSoft,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.ink,
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isReady
+                              ? AppColors.successBg
+                              : AppColors.surface2,
+                          borderRadius: AppRadius.radiusPill,
+                        ),
+                        child: Text(
+                          isReady
+                              ? 'PIN: ${order.pinCode}'
+                              : isCollected
+                                  ? 'PIN: Collected'
+                                  : order.status == 'cancelled'
+                                      ? 'PIN: Cancelled'
+                                      : 'PIN: Locked',
+                          style: AppFonts.mono(
+                            fontSize: 10.5,
+                            fontWeight: isReady ? FontWeight.w700 : FontWeight.w500,
+                            color: isReady
+                                ? AppColors.greenInk
+                                : AppColors.inkSoft,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -2437,8 +2558,16 @@ class _OrderCard extends StatelessWidget {
     for (final item in order.items) {
       final liveItem = await firestore.getMenuItem(item.menuItemId);
       if (liveItem != null && liveItem.isInStock) {
-        cart.setQty(liveItem, item.quantity);
-        addedCount++;
+        bool addedAny = false;
+        for (int i = 0; i < item.quantity; i++) {
+          final ok = cart.addItem(liveItem, customization: item.customization);
+          if (ok) addedAny = true;
+        }
+        if (addedAny) {
+          addedCount++;
+        } else {
+          unavailableCount++;
+        }
       } else {
         unavailableCount++;
       }
@@ -2522,8 +2651,9 @@ class _OrderCard extends StatelessWidget {
 /// Floating persistent card displayed on MenuScreen showing live status of in-flight orders
 class _ActiveOrderBanner extends StatelessWidget {
   final app.Order order;
+  final bool isCompact;
 
-  const _ActiveOrderBanner({required this.order});
+  const _ActiveOrderBanner({required this.order, this.isCompact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -2573,8 +2703,8 @@ class _ActiveOrderBanner extends StatelessWidget {
       },
       scaleFactor: 0.98,
       child: Container(
-        margin: const EdgeInsets.fromLTRB(18, 4, 18, 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        margin: isCompact ? EdgeInsets.zero : const EdgeInsets.fromLTRB(18, 4, 18, 8),
+        padding: EdgeInsets.symmetric(horizontal: 14, vertical: isCompact ? 8 : 10),
         decoration: BoxDecoration(
           color: bgColor,
           borderRadius: BorderRadius.circular(12),

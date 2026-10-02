@@ -78,10 +78,17 @@ class AppRadius {
 class AppMotion {
   AppMotion._();
 
+  static const Duration micro = Duration(milliseconds: 120);
   static const Duration fast = Duration(milliseconds: 120);
   static const Duration normal = Duration(milliseconds: 200);
+  static const Duration standard = Duration(milliseconds: 240);
   static const Duration slow = Duration(milliseconds: 320);
+  static const Duration structural = Duration(milliseconds: 360);
+
   static const Curve curve = Curves.easeOutCubic;
+  static const Curve enter = Curves.easeOutCubic;
+  static const Curve exit = Curves.easeInCubic;
+  static const Curve spring = Curves.easeOutBack;
 }
 
 /// Three-font split matching the HTML mockup:
