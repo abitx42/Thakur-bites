@@ -121,11 +121,11 @@ async function audit() {
   // 2. Check Client-Side Emulator Routing Hygiene
   console.log('▶ 2. Checking Web Client (js/firebase.js) Emulator Routing Hygiene...');
   const jsFirebase = fs.readFileSync(path.join(ROOT_DIR, 'js/firebase.js'), 'utf8');
-  if (jsFirebase.includes('isLocalDev') && jsFirebase.includes('window.location.hostname.endsWith(\'.trycloudflare.com\')')) {
+  if (jsFirebase.includes('isLocalDev') && jsFirebase.includes("window.location.hostname === 'localhost'")) {
     scorecard.push({
       item: 'Client-Side Production Routing',
       status: 'PASS',
-      detail: 'functions.emulatorOrigin is safely gated to localhost/tunnels only'
+      detail: 'functions.emulatorOrigin is strictly gated to localhost/127.0.0.1 only'
     });
     console.log('   ✓ Client-side production endpoint routing is safely isolated.');
   } else {
