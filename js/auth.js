@@ -220,6 +220,12 @@ export const staffAuth = {
     const workstationToken = registeredWs ? registeredWs.token : undefined;
     const requestedRole = role || (registeredWs?.role || 'kitchen');
 
+    // Security Invariant: Shift PINs can NEVER be used for administrative access
+    const allowedShiftRoles = ['kitchen', 'pickup', 'cashier'];
+    if (!allowedShiftRoles.includes(requestedRole)) {
+      return { success: false, error: 'Shift PIN authentication is strictly restricted to operational roles (Kitchen, Pickup, Cashier).' };
+    }
+
     if (!pin || typeof pin !== 'string' || pin.trim().length !== 6) {
       return { success: false, error: 'A valid 6-digit shift PIN is required.' };
     }
@@ -309,7 +315,7 @@ export const staffAuth = {
       localStorage.removeItem('tb_staff_authenticated');
       sessionStorage.removeItem('tb_session_role');
       localStorage.removeItem('tb_staff_email');
-      localStorage.removeItem('tb_privileged_session');
+      clearPrivilegedSession();
     } catch (_) {}
     await staffLogout().catch(() => {});
     currentStaffState = { user: null, role: null, isAuthenticated: false, deviceId: getOrCreateDeviceId() };

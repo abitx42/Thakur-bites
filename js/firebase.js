@@ -68,6 +68,24 @@ if (typeof window !== 'undefined') {
 
 // ─── Staff Authentication & Role Management ─────────────────────────
 
+const KNOWN_ADMIN_EMAILS = [
+  'moreaboutastram@gmail.com',
+  'adi@tcetmumbai.in',
+  '1032251174@tcetmumbai.in',
+  'adityadjsb@gmail.com',
+];
+
+function isKnownAdminEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  return KNOWN_ADMIN_EMAILS.includes(email.toLowerCase().trim());
+}
+
+function isInstitutionalEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  const clean = email.toLowerCase().trim();
+  return clean.endsWith('@tcetmumbai.in') || clean.endsWith('@thakureducation.org');
+}
+
 /**
  * Sign in staff with email and password
  */
@@ -102,12 +120,13 @@ export async function staffLogin(email, password) {
   }
 
   if (!role) {
-    if (cleanEmail.includes('admin') || cleanEmail === 'adi@tcetmumbai.in') {
+    // SECURITY: Align with firestore.rules — exact admin email allowlist + institutional domains only
+    if (isKnownAdminEmail(cleanEmail)) {
       role = 'admin';
-    } else if (cleanEmail.endsWith('@tcetmumbai.in') || cleanEmail.endsWith('@thakureducation.org') || cleanEmail.includes('staff')) {
+    } else if (isInstitutionalEmail(cleanEmail)) {
       role = 'staff';
     } else {
-      role = 'staff';
+      throw new Error('Unauthorized: This account does not possess staff or administrative authorization.');
     }
   }
 
@@ -125,6 +144,8 @@ export async function staffQuickAuth() {
 export async function staffLogout() {
   try {
     sessionStorage.removeItem('tb_session_role');
+    localStorage.removeItem('tb_privileged_session');
+    localStorage.removeItem('tb_privileged_session_sig');
   } catch (_) {}
   await fbSignOut(auth);
 }
@@ -159,10 +180,10 @@ export function subscribeStaffAuth(callback) {
       }
 
       if (!role && user.email) {
-        const cleanEmail = user.email.toLowerCase();
-        if (cleanEmail.includes('admin') || cleanEmail === 'adi@tcetmumbai.in') {
+        const cleanEmail = user.email.toLowerCase().trim();
+        if (isKnownAdminEmail(cleanEmail)) {
           role = 'admin';
-        } else if (cleanEmail.endsWith('@tcetmumbai.in') || cleanEmail.endsWith('@thakureducation.org') || cleanEmail.includes('staff')) {
+        } else if (isInstitutionalEmail(cleanEmail)) {
           role = 'staff';
         }
       }
