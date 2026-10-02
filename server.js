@@ -83,9 +83,29 @@ const server = http.createServer((req, res) => {
     return serveFile(res, targetFile);
   }
 
-  // Prevent directory traversal
-  const safePath = path.normalize(pathname).replace(/^(\.\.[\/\\])+/, '');
-  let filePath = path.join(ROOT_DIR, safePath);
+  // Prevent directory traversal: Canonical root path jail
+  const normalizedRelPath = path.normalize('/' + pathname);
+  const filePath = path.resolve(ROOT_DIR, '.' + normalizedRelPath);
+
+  // Security Invariant: Ensure resolved path resides strictly within ROOT_DIR
+  if (!filePath.startsWith(ROOT_DIR + path.sep) && filePath !== ROOT_DIR) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('403 Forbidden');
+    return;
+  }
+
+  // Security Invariant: Block access to dotfiles, backend functions, git, and secret files
+  const segments = normalizedRelPath.split(/[\/\\]/).filter(Boolean);
+  const hasHiddenSegment = segments.some(s => s.startsWith('.'));
+  const isProtectedDir = segments.length > 0 && ['functions', 'scripts', 'firestore', 'docs'].includes(segments[0]);
+  const isSensitiveFile = /\.(env.*|key|keystore|pem|log|ts|sh|yml|yaml)$/i.test(filePath) ||
+                          /^(firebase\.json|\.firebaserc|package\.json|package-lock\.json)$/i.test(path.basename(filePath));
+
+  if (hasHiddenSegment || isProtectedDir || isSensitiveFile) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('404 Not Found');
+    return;
+  }
 
   fs.stat(filePath, (err, stats) => {
     if (!err && stats.isFile()) {

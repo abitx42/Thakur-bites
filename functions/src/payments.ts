@@ -61,12 +61,19 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
   }
 
   verifyPaymentSignature(gatewayOrderId: string, gatewayPaymentId: string, signature: string): boolean {
+    if (typeof gatewayOrderId !== 'string' || typeof gatewayPaymentId !== 'string' || typeof signature !== 'string') {
+      return false;
+    }
+    if (!gatewayOrderId || !gatewayPaymentId || !signature) {
+      return false;
+    }
+
     const expected = crypto
       .createHmac('sha256', this.secret)
       .update(`${gatewayOrderId}|${gatewayPaymentId}`)
       .digest('hex');
 
-    const cleanSig = typeof signature === 'string' ? signature.trim() : '';
+    const cleanSig = signature.trim();
     try {
       const expBuf = Buffer.from(expected, 'utf8');
       const actBuf = Buffer.from(cleanSig, 'utf8');
@@ -99,9 +106,12 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
   }
 
   async getPaymentDetails(gatewayPaymentId: string): Promise<any> {
+    if (typeof gatewayPaymentId !== 'string' || !/^[a-zA-Z0-9_-]{4,64}$/.test(gatewayPaymentId)) {
+      throw new Error('INVALID_GATEWAY_PAYMENT_ID: Format mismatch or forbidden characters');
+    }
     const keyId = getRequiredSecret('PAYMENT_GATEWAY_KEY_ID');
     const authHeader = `Basic ${Buffer.from(`${keyId}:${this.secret}`).toString('base64')}`;
-    const res = await fetch(`https://api.razorpay.com/v1/payments/${gatewayPaymentId}`, {
+    const res = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(gatewayPaymentId)}`, {
       method: 'GET',
       headers: { 'Authorization': authHeader },
     });
@@ -113,9 +123,12 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
   }
 
   async capturePayment(gatewayPaymentId: string, amountPaise: number, currency: string = 'INR'): Promise<any> {
+    if (typeof gatewayPaymentId !== 'string' || !/^[a-zA-Z0-9_-]{4,64}$/.test(gatewayPaymentId)) {
+      throw new Error('INVALID_GATEWAY_PAYMENT_ID: Format mismatch or forbidden characters');
+    }
     const keyId = getRequiredSecret('PAYMENT_GATEWAY_KEY_ID');
     const authHeader = `Basic ${Buffer.from(`${keyId}:${this.secret}`).toString('base64')}`;
-    const res = await fetch(`https://api.razorpay.com/v1/payments/${gatewayPaymentId}/capture`, {
+    const res = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(gatewayPaymentId)}/capture`, {
       method: 'POST',
       headers: {
         'Authorization': authHeader,
@@ -152,6 +165,9 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
     idempotencyKey?: string
   ): Promise<RefundResult> {
     if (this.isProduction()) {
+      if (typeof gatewayPaymentId !== 'string' || !/^[a-zA-Z0-9_-]{4,64}$/.test(gatewayPaymentId)) {
+        throw new Error('INVALID_GATEWAY_PAYMENT_ID: Format mismatch or forbidden characters');
+      }
       const keyId = getRequiredSecret('PAYMENT_GATEWAY_KEY_ID');
       const authHeader = `Basic ${Buffer.from(`${keyId}:${this.secret}`).toString('base64')}`;
 
@@ -166,7 +182,7 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
         console.warn(`[RazorpayPaymentAdapter] Pre-refund auto-capture attempt notice: ${capErr}`);
       }
 
-      const res = await fetch(`https://api.razorpay.com/v1/payments/${gatewayPaymentId}/refund`, {
+      const res = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(gatewayPaymentId)}/refund`, {
         method: 'POST',
         headers: {
           'Authorization': authHeader,
@@ -388,8 +404,13 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
   const gatewayPaymentId = rawData.gatewayPaymentId || rawData.razorpayPaymentId;
   const gatewaySignature = rawData.gatewaySignature || rawData.razorpaySignature;
 
-  if (!orderId || !gatewayOrderId || !gatewayPaymentId || !gatewaySignature) {
-    throw new HttpsError('invalid-argument', 'All payment verification arguments are required.');
+  if (
+    typeof orderId !== 'string' || !orderId.trim() || orderId.length > 128 ||
+    typeof gatewayOrderId !== 'string' || !gatewayOrderId.trim() || gatewayOrderId.length > 128 ||
+    typeof gatewayPaymentId !== 'string' || !gatewayPaymentId.trim() || gatewayPaymentId.length > 128 ||
+    typeof gatewaySignature !== 'string' || !gatewaySignature.trim() || gatewaySignature.length > 256
+  ) {
+    throw new HttpsError('invalid-argument', 'All payment verification arguments must be non-empty strings within acceptable bounds.');
   }
 
   const adapter = new RazorpayPaymentAdapter();
