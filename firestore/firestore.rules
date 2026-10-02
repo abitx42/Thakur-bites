@@ -46,6 +46,8 @@ service cloud.firestore {
     }
 
     function isAdmin() {
+      // SECURITY: Email-regex checks removed — use exact allowlist + domain suffix only.
+      // .*admin.* regex was overly broad (e.g., "notadmin@gmail.com" would match).
       return isAuthenticated() && (
         ('role' in request.auth.token && (request.auth.token.role == 'admin' || request.auth.token.role == 'manager')) ||
         (getStaffRole() == 'admin' || getStaffRole() == 'manager') ||
@@ -54,8 +56,7 @@ service cloud.firestore {
           request.auth.token.email == 'adi@tcetmumbai.in' ||
           request.auth.token.email == '1032251174@tcetmumbai.in' ||
           request.auth.token.email == 'adityadjsb@gmail.com' ||
-          request.auth.token.email.matches('.*admin.*') ||
-          request.auth.token.email.matches('.*@(tcetmumbai[.]in|thakureducation[.]org)')
+          request.auth.token.email.matches('^[a-zA-Z0-9._%+\\-]+@(tcetmumbai\\.in|thakureducation\\.org)$')
         )) ||
         ('isWorkstationSession' in request.auth.token && request.auth.token.isWorkstationSession == true)
       );
@@ -79,12 +80,12 @@ service cloud.firestore {
     }
 
     function hasAdministrativeAccess() {
+      // SECURITY: Removed .*admin.* and .*staff.* open-ended regex patterns.
+      // Administrative access now requires exact email allowlist or institutional domain suffix.
       return isAdmin() || isDeveloper() || isManager() ||
-        (isAuthenticated() && request.auth.token.email != null && (
-          request.auth.token.email.matches('.*@(tcetmumbai[.]in|thakureducation[.]org)') ||
-          request.auth.token.email.matches('.*admin.*') ||
-          request.auth.token.email.matches('.*staff.*')
-        ));
+        (isAuthenticated() && request.auth.token.email != null &&
+          request.auth.token.email.matches('^[a-zA-Z0-9._%+\\-]+@(tcetmumbai\\.in|thakureducation\\.org)$')
+        );
     }
 
     function isManagerOrAdmin() {
@@ -104,19 +105,9 @@ service cloud.firestore {
         && (!('stockOnHand' in request.resource.data) || (request.resource.data.stockOnHand is number && request.resource.data.stockOnHand >= 0))
         && (!('reservedStock' in request.resource.data) || (request.resource.data.reservedStock is number && request.resource.data.reservedStock >= 0));
       allow delete: if isManagerOrAdmin();
-
-      // Allow authenticated students to decrement stockOnHand when purchasing items
-      // Invariant: Students can ONLY strictly decrement stockOnHand (never increase or arbitrary set)
-      allow update: if isAuthenticated()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'stockOnHand', 'availableStock', 'stockCount', 'reservedStock', 
-          'available', 'isOrderable', 'availabilityStatus', 'updatedAt'
-        ])
-        && request.resource.data.stockOnHand is number
-        && request.resource.data.stockOnHand >= 0
-        && request.resource.data.stockOnHand < resource.data.stockOnHand
-        && (!('price' in request.resource.data) || request.resource.data.price == resource.data.price)
-        && (!('name' in request.resource.data) || request.resource.data.name == resource.data.name);
+      // SECURITY: Removed student stock-decrement direct write rule (TB-VULN-STOCK-DOS).
+      // Any authenticated student could set isOrderable=false on all menu items causing a canteen-wide
+      // denial-of-service. Stock/availability changes are server-authority only via Cloud Functions.
     }
 
     // ─── Categories & Subcategories Taxonomy ──────────────────────
@@ -183,14 +174,11 @@ service cloud.firestore {
               request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt', 'cancelReason', 'updatedAt'])
               && request.resource.data.status == 'cancelled'
               && resource.data.status in ['placed', 'payment_pending']
-            ) ||
-            // Payment confirmation
-            (
-              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'paymentStatus', 'paymentId', 'paidAt', 'confirmedAt', 'updatedAt'])
-              && request.resource.data.paymentStatus == 'paid'
-              && request.resource.data.status in ['confirmed', 'placed', 'payment_pending']
-              && resource.data.paymentStatus in ['pending', 'unpaid']
             )
+            // CRITICAL SECURITY FIX (TB-VULN-FREE-ORDER): Removed student self-payment-confirmation rule.
+            // A student could previously call update({paymentStatus: 'paid'}) from the client SDK,
+            // bypassing the gateway entirely and receiving free orders.
+            // Payment status transitions are NOW strictly server-side only (Cloud Functions webhook handler).
           )
         )
       );
@@ -286,8 +274,10 @@ service cloud.firestore {
 
     // ─── Internal System Tables ─────────────────────────────────
     match /counters/dailyTokenCounter {
+      // SECURITY FIX (TB-VULN-TOKEN-HIJACK): Write restricted to operational staff only.
+      // Previously any authenticated student could set lastToken 100-1000, causing token collisions.
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated()
+      allow write: if isOperationalStaff()
         && request.resource.data.lastToken is number
         && request.resource.data.lastToken >= 100
         && request.resource.data.lastToken <= 1000
