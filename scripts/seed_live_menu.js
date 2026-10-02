@@ -73,13 +73,20 @@ async function seedLiveMenu() {
   console.log('   Target Firebase Project:', PROJECT_ID);
   console.log('════════════════════════════════════════════════════════════════\n');
 
-  // 1. Authenticate as Developer
+  // 1. Authenticate as Developer — credentials from environment only
   console.log('[1/4] Authenticating with Developer Account...');
+  const seedEmail = process.env.SEED_EMAIL;
+  const seedPassword = process.env.SEED_PASSWORD;
+  if (!seedEmail || !seedPassword) {
+    console.error('❌ SEED_EMAIL and SEED_PASSWORD environment variables are required.');
+    console.error('   Usage: SEED_EMAIL="you@example.com" SEED_PASSWORD="..." node scripts/seed_live_menu.js');
+    process.exit(1);
+  }
   const authRes = await postHttps(
     `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${API_KEY}`,
     {
-      email: 'moreaboutastram@gmail.com',
-      password: 'Aditya@123',
+      email: seedEmail,
+      password: seedPassword,
       returnSecureToken: true
     }
   );
