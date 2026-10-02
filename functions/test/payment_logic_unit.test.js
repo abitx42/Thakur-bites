@@ -385,4 +385,36 @@ describe('Phase 9 Pillar 2: Payment Logic, HMAC & Idempotency Unit Tests', () =>
     const refund3 = await adapter.createRefund(gatewayPaymentId, amountPaise, 'Another reason', 'refund_idemp_key_tcet_1002');
     assert.notStrictEqual(refund1.refundId, refund3.refundId, 'Different idempotency key produces unique refund ID');
   });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 7. Security Invariant: SSRF & Path Traversal Parameter Guards
+  // ──────────────────────────────────────────────────────────────────────────
+  it('9. RazorpayPaymentAdapter: Strictly rejects path traversal and malformed payment IDs (TB-VULN-GATEWAY-INJECT)', async () => {
+    const adapter = new RazorpayPaymentAdapter();
+
+    // Path traversal payload
+    await assert.rejects(
+      async () => adapter.getPaymentDetails('../transfers'),
+      /INVALID_GATEWAY_PAYMENT_ID/,
+      'Path traversal in gatewayPaymentId is blocked'
+    );
+
+    // Forbidden characters
+    await assert.rejects(
+      async () => adapter.getPaymentDetails('pay_test/../../evil'),
+      /INVALID_GATEWAY_PAYMENT_ID/,
+      'Directory separator in gatewayPaymentId is blocked'
+    );
+
+    // Empty or non-string
+    await assert.rejects(
+      async () => adapter.getPaymentDetails(''),
+      /INVALID_GATEWAY_PAYMENT_ID/,
+      'Empty payment ID is rejected'
+    );
+
+    // Non-string arguments to verifyPaymentSignature fail gracefully without throwing
+    assert.strictEqual(adapter.verifyPaymentSignature(12345, 'pay_123', 'sig'), false);
+    assert.strictEqual(adapter.verifyPaymentSignature('ord_123', { id: 'pay_123' }, 'sig'), false);
+  });
 });
