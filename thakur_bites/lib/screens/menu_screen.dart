@@ -914,28 +914,45 @@ class _MenuScreenState extends State<MenuScreen> {
   // ─── Grid ───────────────────────────────────────────────────────
 
   Widget _buildGrid(List<MenuItem> items, [DailyBoard? dailyBoard]) {
-    return RefreshIndicator(
-      color: AppColors.red,
-      backgroundColor: AppColors.surface,
-      onRefresh: () async {
-        setState(() {});
-        await Future.delayed(const Duration(milliseconds: 400));
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final int crossAxisCount = width >= 1100
+            ? 5
+            : (width >= 820
+                ? 4
+                : (width >= 560 ? 3 : 2));
+        final double childAspectRatio = width >= 820 ? 0.74 : (width >= 560 ? 0.72 : 0.70);
+
+        return RefreshIndicator(
+          color: AppColors.red,
+          backgroundColor: AppColors.surface,
+          onRefresh: () async {
+            setState(() {});
+            await Future.delayed(const Duration(milliseconds: 400));
+          },
+          child: GridView.builder(
+            controller: _menuScrollController,
+            padding: EdgeInsets.only(
+              bottom: 24,
+              top: 6,
+              left: width >= 600 ? 6 : 0,
+              right: width >= 600 ? 6 : 0,
+            ),
+            physics: const AlwaysScrollableScrollPhysics(),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              crossAxisSpacing: width >= 600 ? 14 : 12,
+              mainAxisSpacing: width >= 600 ? 14 : 12,
+              childAspectRatio: childAspectRatio,
+            ),
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              return MenuItemCard(item: items[index], dailyBoard: dailyBoard);
+            },
+          ),
+        );
       },
-      child: GridView.builder(
-        controller: _menuScrollController,
-        padding: const EdgeInsets.only(bottom: 24, top: 6),
-        physics: const AlwaysScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          childAspectRatio: 0.70,
-        ),
-        itemCount: items.length,
-        itemBuilder: (context, index) {
-          return MenuItemCard(item: items[index], dailyBoard: dailyBoard);
-        },
-      ),
     );
   }
 

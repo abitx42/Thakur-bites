@@ -157,32 +157,47 @@ class FavouritesScreen extends StatelessWidget {
 
               return Consumer<CartProvider>(
                 builder: (context, cart, _) {
-                  return GridView.builder(
-                    padding: const EdgeInsets.all(18),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      childAspectRatio: 0.72,
-                    ),
-                    itemCount: favItems.length,
-                    itemBuilder: (context, index) {
-                      final item = favItems[index];
-                      final staggeredDelay = (index * 35).clamp(0, 280);
-                      return TweenAnimationBuilder<double>(
-                        tween: Tween<double>(begin: 0.0, end: 1.0),
-                        duration: Duration(milliseconds: 220 + staggeredDelay),
-                        curve: Curves.easeOutCubic,
-                        builder: (context, progress, child) {
-                          return Opacity(
-                            opacity: progress,
-                            child: Transform.translate(
-                              offset: Offset(0, 14 * (1 - progress)),
-                              child: child,
-                            ),
+                  return LayoutBuilder(
+                    builder: (context, constraints) {
+                      final width = constraints.maxWidth;
+                      final int crossAxisCount = width >= 1100
+                          ? 5
+                          : (width >= 820
+                              ? 4
+                              : (width >= 560 ? 3 : 2));
+                      final double childAspectRatio = width >= 820 ? 0.74 : (width >= 560 ? 0.72 : 0.72);
+
+                      return GridView.builder(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: width >= 600 ? 24 : 18,
+                          vertical: 18,
+                        ),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxisCount,
+                          crossAxisSpacing: width >= 600 ? 14 : 12,
+                          mainAxisSpacing: width >= 600 ? 14 : 12,
+                          childAspectRatio: childAspectRatio,
+                        ),
+                        itemCount: favItems.length,
+                        itemBuilder: (context, index) {
+                          final item = favItems[index];
+                          final staggeredDelay = (index * 35).clamp(0, 280);
+                          return TweenAnimationBuilder<double>(
+                            tween: Tween<double>(begin: 0.0, end: 1.0),
+                            duration: Duration(milliseconds: 220 + staggeredDelay),
+                            curve: Curves.easeOutCubic,
+                            builder: (context, progress, child) {
+                              return Opacity(
+                                opacity: progress,
+                                child: Transform.translate(
+                                  offset: Offset(0, 14 * (1 - progress)),
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: MenuItemCard(item: item),
                           );
                         },
-                        child: MenuItemCard(item: item),
                       );
                     },
                   );

@@ -9,25 +9,36 @@ class MenuShimmer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Shimmer.fromColors(
-      baseColor: AppColors.surface2,
-      highlightColor: AppColors.surface,
-      child: GridView.builder(
-        padding: const EdgeInsets.only(bottom: 16, top: 4),
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          childAspectRatio: 0.82,
-        ),
-        itemCount: 6,
-        itemBuilder: (context, index) {
-          return Container(
-            decoration: BoxDecoration(
-              color: AppColors.surface2,
-              borderRadius: BorderRadius.circular(16),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final int crossAxisCount = width >= 1100
+            ? 5
+            : (width >= 820
+                ? 4
+                : (width >= 560 ? 3 : 2));
+        final double childAspectRatio = width >= 820 ? 0.74 : (width >= 560 ? 0.72 : 0.82);
+        final int itemCount = crossAxisCount * 2;
+
+        return Shimmer.fromColors(
+          baseColor: AppColors.surface2,
+          highlightColor: AppColors.surface,
+          child: GridView.builder(
+            padding: const EdgeInsets.only(bottom: 16, top: 4),
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              crossAxisSpacing: width >= 600 ? 14 : 12,
+              mainAxisSpacing: width >= 600 ? 14 : 12,
+              childAspectRatio: childAspectRatio,
             ),
+            itemCount: itemCount,
+            itemBuilder: (context, index) {
+              return Container(
+                decoration: BoxDecoration(
+                  color: AppColors.surface2,
+                  borderRadius: BorderRadius.circular(16),
+                ),
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
@@ -71,7 +82,6 @@ class MenuShimmer extends StatelessWidget {
                     height: 12,
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(4),
                     ),
                   ),
                 ],
@@ -81,5 +91,7 @@ class MenuShimmer extends StatelessWidget {
         },
       ),
     );
+  },
+);
   }
 }

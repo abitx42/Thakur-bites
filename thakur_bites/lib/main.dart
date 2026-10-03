@@ -130,23 +130,23 @@ class ThakurBitesApp extends StatelessWidget {
             return child ?? const SizedBox.shrink();
           }
           return Container(
-            color: const Color(0xFFF0EBE1),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 540),
-                child: Container(
-                  decoration: BoxDecoration(
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withAlpha(25),
-                        blurRadius: 24,
-                        spreadRadius: 2,
-                      ),
-                    ],
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: child ?? const SizedBox.shrink(),
+            color: const Color(0xFFF3EFE6),
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1240),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withAlpha(18),
+                      blurRadius: 24,
+                      spreadRadius: 2,
+                    ),
+                  ],
                 ),
+                clipBehavior: Clip.antiAlias,
+                child: child ?? const SizedBox.shrink(),
               ),
             ),
           );
