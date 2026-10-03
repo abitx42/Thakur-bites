@@ -16,8 +16,10 @@ import '../screens/order_status_screen.dart';
 import '../screens/preferences_screen.dart';
 import '../screens/verification_screen.dart';
 import '../services/firestore_service.dart';
+import '../services/functions_service.dart';
 import '../services/preferences_service.dart';
 import '../services/error_helper.dart';
+import '../services/in_app_notification_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bouncy_tap.dart';
 import '../widgets/canteen_status_banner.dart';
@@ -88,6 +90,8 @@ class _MenuScreenState extends State<MenuScreen> {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _menuScrollController = ScrollController();
   app.Order? _recoveredActiveOrder;
+  final Map<String, String> _lastKnownOrderStatuses = {};
+  final Set<String> _autoCancelledFromMenu = {};
 
   Stream<List<app.Order>>? _cachedUserOrdersStream;
   String? _cachedOrdersUid;
@@ -125,7 +129,7 @@ class _MenuScreenState extends State<MenuScreen> {
       final allIds = <String>{...list, ?singleId}.where((id) => id.isNotEmpty).toList();
       for (final orderId in allIds) {
         final order = await _firestore.getOrder(orderId);
-        if (order != null && !order.isCollected && order.status != 'cancelled') {
+        if (order != null && !order.isCollected && !order.isCancelled && !order.isReservationExpired) {
           if (mounted) {
             setState(() {
               _recoveredActiveOrder = order;
@@ -2152,10 +2156,80 @@ class _MenuScreenState extends State<MenuScreen> {
           if (orders.isNotEmpty) {
             // Find all active orders that are not collected or cancelled
             final activeOrders = orders.where((o) {
-              return !o.isCollected && o.status != 'cancelled';
+              if (o.isCollected || o.isCancelled) return false;
+              // Filter out payment-pending orders whose reservation has expired
+              if (o.isPaymentPending && o.isReservationExpired) return false;
+              return true;
             }).toList();
 
+            // Proactively auto-cancel expired payment-pending orders from menu screen
+            for (final o in orders) {
+              if (o.isPaymentPending && o.isReservationExpired && !o.isCancelled && !_autoCancelledFromMenu.contains(o.id)) {
+                _autoCancelledFromMenu.add(o.id);
+                FunctionsService().cancelOrder(orderId: o.id, reason: 'RESERVATION_EXPIRED').catchError((_) => <String, dynamic>{});
+                // Clean from active storage
+                SharedPreferences.getInstance().then((prefs) {
+                  final list = prefs.getStringList('active_order_ids') ?? <String>[];
+                  list.remove(o.id);
+                  prefs.setStringList('active_order_ids', list);
+                  if (prefs.getString('active_order_id') == o.id) {
+                    if (list.isNotEmpty) {
+                      prefs.setString('active_order_id', list.first);
+                    } else {
+                      prefs.remove('active_order_id');
+                    }
+                  }
+                }).catchError((_) {});
+                // Notify user that reservation expired
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  InAppNotificationService().showReservationExpired(
+                    context: context,
+                    tokenNumber: o.tokenNumber,
+                  );
+                });
+              }
+            }
+
             if (activeOrders.isNotEmpty) {
+              // Fire in-app notifications for order status transitions
+              for (final o in activeOrders) {
+                final prevStatus = _lastKnownOrderStatuses[o.id];
+                if (prevStatus != null && prevStatus != o.status) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!mounted) return;
+                    InAppNotificationService().showStatusChange(
+                      context: context,
+                      tokenNumber: o.tokenNumber,
+                      newStatus: o.status,
+                      onTrack: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => OrderStatusScreen(orderId: o.id, order: o),
+                          ),
+                        );
+                      },
+                    );
+                    HapticFeedback.mediumImpact();
+                  });
+                }
+                _lastKnownOrderStatuses[o.id] = o.status;
+              }
+              // Also fire for cancelled/expired orders that got filtered out
+              for (final o in orders) {
+                final prevStatus = _lastKnownOrderStatuses[o.id];
+                if (prevStatus != null && prevStatus != o.status && o.isCancelled) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!mounted) return;
+                    InAppNotificationService().showStatusChange(
+                      context: context,
+                      tokenNumber: o.tokenNumber,
+                      newStatus: 'cancelled',
+                    );
+                  });
+                  _lastKnownOrderStatuses[o.id] = o.status;
+                }
+              }
               // Sync persistent recovery ID list for offline recovery
               SharedPreferences.getInstance().then((prefs) {
                 prefs.setString('active_order_id', activeOrders.first.id);
@@ -2198,7 +2272,8 @@ class _MenuScreenState extends State<MenuScreen> {
           // Fallback to recovered active order if stream is empty or still loading
           if (_recoveredActiveOrder != null &&
               !_recoveredActiveOrder!.isCollected &&
-              _recoveredActiveOrder!.status != 'cancelled') {
+              !_recoveredActiveOrder!.isCancelled &&
+              !_recoveredActiveOrder!.isReservationExpired) {
             return StreamBuilder<app.Order?>(
               stream: _getSingleOrderStream(_recoveredActiveOrder!.id),
               initialData: _recoveredActiveOrder,
@@ -2220,7 +2295,8 @@ class _MenuScreenState extends State<MenuScreen> {
     // Guest browsing or unauthenticated session with an active cached order
     if (_recoveredActiveOrder != null &&
         !_recoveredActiveOrder!.isCollected &&
-        _recoveredActiveOrder!.status != 'cancelled') {
+        !_recoveredActiveOrder!.isCancelled &&
+        !_recoveredActiveOrder!.isReservationExpired) {
       return StreamBuilder<app.Order?>(
         stream: _getSingleOrderStream(_recoveredActiveOrder!.id),
         initialData: _recoveredActiveOrder,

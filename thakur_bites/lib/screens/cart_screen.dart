@@ -13,6 +13,7 @@ import '../services/checkout_service.dart';
 import '../services/payment_service.dart';
 import '../services/functions_service.dart';
 import '../services/error_helper.dart';
+import '../services/in_app_notification_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bouncy_tap.dart';
 import '../widgets/canteen_status_banner.dart';
@@ -1008,6 +1009,13 @@ class _CartSummaryState extends State<_CartSummary> with WidgetsBindingObserver 
           setState(() => _isProcessing = false);
           _tapLocked = false;
           if (mounted) {
+            // Show in-app payment failed notification
+            InAppNotificationService().showPaymentFailed(
+              context: context,
+              tokenNumber: order.tokenNumber,
+              onRetry: () => _handleConfirmAndPay(),
+            );
+
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(pe.message),
@@ -1079,6 +1087,19 @@ class _CartSummaryState extends State<_CartSummary> with WidgetsBindingObserver 
       );
 
       if (mounted) {
+        // Fire "Track Here" notification — visible when user returns to menu
+        InAppNotificationService().showOrderPlaced(
+          context: context,
+          tokenNumber: confirmedOrder.tokenNumber,
+          onTrack: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => OrderStatusScreen(orderId: confirmedOrder.id, order: confirmedOrder),
+              ),
+            );
+          },
+        );
+
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => TicketScreen(order: confirmedOrder),

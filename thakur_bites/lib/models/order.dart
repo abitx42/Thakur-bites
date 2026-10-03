@@ -101,6 +101,13 @@ class Order {
   /// Pre-preparation cancellation exclusivity (INV-007, INV-014)
   bool get canCancel => !isCancelled && !isPreparing && !isReady && !isCollected;
 
+  /// Whether the payment reservation window has expired (15-minute default)
+  bool get isReservationExpired {
+    if (!isPaymentPending) return false;
+    final expiresAt = reservationExpiresAt ?? createdAt.add(const Duration(minutes: 15));
+    return DateTime.now().isAfter(expiresAt);
+  }
+
   /// Index of current status in the flow (0-3)
   int get statusIndex {
     final idx = statusFlow.indexOf(status);

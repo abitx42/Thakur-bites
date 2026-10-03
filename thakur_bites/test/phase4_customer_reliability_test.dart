@@ -184,6 +184,7 @@ void main() {
 
       final isExpired = expiredOrder.reservationExpiresAt!.isBefore(DateTime.now());
       expect(isExpired, isTrue);
+      expect(expiredOrder.isReservationExpired, isTrue);
 
       // Transition to expired cleanup
       final cleanedOrder = expiredOrder.copyWith(
@@ -196,6 +197,55 @@ void main() {
       expect(cleanedOrder.paymentStatus, equals('expired'));
       expect(cleanedOrder.cancellationReason, contains('expired'));
       expect(cleanedOrder.canCancel, isFalse);
+    });
+
+    test('Order.isReservationExpired: accurate evaluation across lifecycle states', () {
+      final now = DateTime.now();
+      
+      // 1. Pending order created now -> not expired
+      final freshPending = basePendingOrder.copyWith(
+        createdAt: now,
+        reservationExpiresAt: now.add(const Duration(minutes: 15)),
+      );
+      expect(freshPending.isReservationExpired, isFalse);
+
+      // 2. Pending order with fallback 15 mins (null reservationExpiresAt)
+      final fallbackFresh = basePendingOrder.copyWith(
+        createdAt: now,
+        reservationExpiresAt: null,
+      );
+      expect(fallbackFresh.isReservationExpired, isFalse);
+
+      // 3. Pending order created 20 minutes ago with null reservationExpiresAt -> expired via 15-min default
+      final fallbackExpired = Order(
+        id: 'ord_exp_fallback',
+        tokenNumber: 'TB-999',
+        pinCode: '1234',
+        status: 'payment_pending',
+        createdAt: now.subtract(const Duration(minutes: 20)),
+        reservationExpiresAt: null,
+        estimatedMinutes: 5,
+        totalAmount: 50.0,
+        items: [],
+      );
+      expect(fallbackExpired.isReservationExpired, isTrue);
+
+      // 4. Confirmed / Paid order created 20 minutes ago -> NEVER expired
+      final confirmedOrder = basePendingOrder.copyWith(
+        status: 'confirmed',
+        paymentStatus: 'paid',
+        createdAt: now.subtract(const Duration(minutes: 20)),
+        reservationExpiresAt: now.subtract(const Duration(minutes: 5)),
+      );
+      expect(confirmedOrder.isReservationExpired, isFalse);
+
+      // 5. Cancelled order created 20 minutes ago -> isPaymentPending is false -> not expired
+      final cancelledOrder = basePendingOrder.copyWith(
+        status: 'cancelled',
+        paymentStatus: 'cancelled',
+        createdAt: now.subtract(const Duration(minutes: 20)),
+      );
+      expect(cancelledOrder.isReservationExpired, isFalse);
     });
   });
 }
