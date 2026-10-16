@@ -13,17 +13,40 @@ const inFlightOrderIds = new Set();
 let pollInterval = null;
 let unsubscribeOrders = null;
 let currentOrders = [];
-let selectedCategoryFilter = localStorage.getItem('tb_kds_locked_station') || 'all';
-let isStationLocked = Boolean(localStorage.getItem('tb_kds_locked_station') && localStorage.getItem('tb_kds_locked_station') !== 'all');
+let selectedCategoryFilter = 'all';
 let viewMode = 'pipeline'; // 'pipeline' (sequential pile) or 'grid' (all tickets)
 let focusedOrderId = null; // User manual focus override if desired
 let isInitialSyncDone = false;
 let audioAlertsEnabled = localStorage.getItem('tb_kds_audio_enabled') !== 'false'; // default ON
+let kitchenVoiceEnabled = localStorage.getItem('tb_kds_voice_enabled') !== 'false'; // default ON for 3 chefs
+const announcedKitchenOrders = new Set();
 let kitchenAudioCtx = null;
 let kitchenKeydownHandler = null;
 let autoCookTimeout = null;
 let tokenKeyBuffer = '';
 let tokenKeyTimer = null;
+
+function speakKitchenOrder(order) {
+  if (!kitchenVoiceEnabled || !('speechSynthesis' in window)) return;
+  if (!order || !order.items || order.items.length === 0) return;
+
+  setTimeout(() => {
+    try {
+      window.speechSynthesis.cancel();
+      const token = (order.tokenNumber || '').replace(/^TB-?0*/i, 'Token ');
+      const itemsList = (order.items || []).map(i => `${i.quantity || 1} ${i.name}`).join(', and ');
+      const text = `New ${token}: ${itemsList}`;
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.05;
+      utterance.lang = 'en-IN';
+      const voices = window.speechSynthesis.getVoices();
+      const voice = voices.find(v => v.lang.includes('en-IN') || v.lang.includes('hi-IN')) || voices.find(v => v.lang.startsWith('en'));
+      if (voice) utterance.voice = voice;
+      window.speechSynthesis.speak(utterance);
+    } catch (_) {}
+  }, 700);
+}
 
 function showKdsToast(message) {
   let toastEl = document.getElementById('kds-toast-notification');
@@ -202,7 +225,8 @@ export function renderKitchenView(container) {
         batchCounts[key] = (batchCounts[key] || 0) + (i.quantity || 1);
       });
     });
-    const batchEntries = Object.entries(batchCounts);
+    const batchEntries = Object.entries(batchCounts).sort((a, b) => b[1] - a[1]);
+    const totalItemsOnStove = batchEntries.reduce((sum, [, q]) => sum + q, 0);
 
     container.innerHTML = `
       <div class="main-wrapper" style="max-width: 1400px; margin: 0 auto; padding: 1.5rem 1rem;">
@@ -216,11 +240,11 @@ export function renderKitchenView(container) {
               </h2>
             </div>
             <p style="font-family: var(--font-sans); font-size: 0.9rem; color: var(--ink-secondary); margin-top: 4px; margin-bottom: 0; font-weight: 500;">
-              Orders waiting to be cooked. Click <strong>Ready</strong> as soon as food is cooked!
+              Unified 3-chef production line. Tap <strong>+1 Done</strong> or <strong>All ✅</strong> to batch-plate!
             </p>
           </div>
 
-          <!-- Controls: View Mode, Audio Alerts, Bump Bar & Quick Stats -->
+          <!-- Controls: View Mode, Audio Alerts, Voice Toggle, Bump Bar & Quick Stats -->
           <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             
             <!-- Physical Bump Bar Keyboard Indicator -->
@@ -243,8 +267,12 @@ export function renderKitchenView(container) {
               </button>
             </div>
 
-            <button id="toggle-kds-audio-btn" class="btn btn--sm ${audioAlertsEnabled ? 'btn--info' : 'btn--secondary'}">
+            <button id="toggle-kds-audio-btn" class="btn btn--sm ${audioAlertsEnabled ? 'btn--info' : 'btn--secondary'}" title="Chime alert when new orders arrive">
               <span>${audioAlertsEnabled ? '🔔 Sound: ON' : '🔕 Sound: MUTED'}</span>
+            </button>
+
+            <button id="toggle-kds-voice-btn" class="btn btn--sm ${kitchenVoiceEnabled ? 'btn--info' : 'btn--secondary'}" title="Speaks new orders aloud for 3 chefs while cooking">
+              <span>${kitchenVoiceEnabled ? '🗣️ Voice: ON' : '🔇 Voice: OFF'}</span>
             </button>
 
             ${focusedOrderId ? `
@@ -277,46 +305,78 @@ export function renderKitchenView(container) {
           </div>
         </div>
 
-        <!-- Smart Cooking Batches Bar (Interactive 1-Tap Batch Fulfill) -->
+        <!-- 👨‍🍳 3-CHEF BATCH PREP BOARD (Zero-Popup 1-Tap Knuckle Buttons) -->
         ${batchEntries.length > 0 ? `
-          <div style="background: #FFFBEB; border: 1.5px solid #FDE68A; border-radius: 12px; padding: 12px 16px; margin-bottom: 1.3rem; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
-              <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #92400E; display: flex; align-items: center; gap: 6px;">
-                <span>🔥 SMART COOKING BATCHES</span>
-                <span style="font-size: 0.75rem; font-weight: 500; color: #B45309;">(Click any batch below to 1-tap fulfill all waiting items)</span>
+          <div style="background: linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%); border: 2px solid #F59E0B; border-radius: 14px; padding: 14px 18px; margin-bottom: 1.4rem; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.12);">
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 1.35rem;">👨‍🍳</span>
+                <div>
+                  <div style="font-family: var(--font-mono); font-size: 0.92rem; font-weight: 900; color: #92400E; letter-spacing: 0.03em;">
+                    3-CHEF LIVE BATCH PREP BOARD
+                  </div>
+                  <div style="font-family: var(--font-sans); font-size: 0.78rem; font-weight: 600; color: #B45309;">
+                    Sorted by stove quantity · 1-tap with knuckle/finger to advance queue (zero popups)
+                  </div>
+                </div>
               </div>
-              <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; background: #FEF3C7; color: #B45309; padding: 2px 8px; border-radius: 6px; border: 1px solid #FCD34D;">
-                ⚡ 1-Tap Fulfill
-              </span>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-family: var(--font-mono); font-size: 0.82rem; font-weight: 900; background: #B45309; color: #FFF; padding: 4px 12px; border-radius: 8px; box-shadow: 0 2px 4px rgba(180, 83, 9, 0.25);">
+                  🔥 ${totalItemsOnStove} TOTAL ITEMS ON STOVE
+                </span>
+              </div>
             </div>
 
-            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;">
               ${batchEntries.map(([name, qty]) => `
-                <button 
-                  class="kds-batch-chip-btn" 
-                  data-item-name="${escapeHtml(name)}" 
-                  data-item-qty="${qty}"
-                  style="background: #FFF; border: 2px solid #F59E0B; padding: 8px 14px; border-radius: 10px; display: flex; align-items: center; gap: 10px; cursor: pointer; transition: transform 0.1s ease, box-shadow 0.1s ease; box-shadow: 0 2px 4px rgba(245,158,11,0.15);"
-                  title="Click to fulfill ${qty}x ${escapeHtml(name)}"
+                <div 
+                  class="kds-batch-card"
+                  style="background: #FFFFFF; border: 2px solid #FDE68A; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); transition: transform 0.1s ease, box-shadow 0.1s ease;"
                 >
-                  <span style="font-family: var(--font-mono); font-size: 1.25rem; font-weight: 900; color: #92400E; background: #FEF3C7; padding: 2px 8px; border-radius: 6px;">${qty}x</span>
-                  <span style="font-family: var(--font-sans); font-size: 0.95rem; font-weight: 800; color: var(--ink-primary);">${escapeHtml(name)}</span>
-                  <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; color: #047857; background: #D1FAE5; border: 1px solid #6EE7B7; padding: 2px 7px; border-radius: 5px;">
-                    ⚡ Cooked
-                  </span>
-                </button>
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                    <span style="font-family: var(--font-mono); font-size: 1.45rem; font-weight: 900; color: #92400E; background: #FEF3C7; border: 1.5px solid #F59E0B; padding: 4px 10px; border-radius: 8px; min-width: 44px; text-align: center;">
+                      ${qty}x
+                    </span>
+                    <span style="font-family: var(--font-sans); font-size: 1.05rem; font-weight: 800; color: var(--ink-primary); flex: 1; margin-left: 6px; line-height: 1.25;">
+                      ${escapeHtml(name)}
+                    </span>
+                  </div>
+
+                  <div style="display: flex; gap: 8px; margin-top: 2px;">
+                    <button 
+                      class="kds-quick-plate-btn btn" 
+                      data-action="single"
+                      data-item-name="${escapeHtml(name)}"
+                      data-count="1"
+                      style="flex: 1; height: 42px; background: #F8FAFC; border: 1.5px solid #CBD5E1; color: #334155; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;"
+                      title="Plate 1 item and advance oldest ticket"
+                    >
+                      <span>+1 Done</span>
+                    </button>
+                    <button 
+                      class="kds-quick-plate-btn btn" 
+                      data-action="all"
+                      data-item-name="${escapeHtml(name)}"
+                      data-count="${qty}"
+                      style="flex: 1.4; height: 42px; background: #16A34A; border: 1.5px solid #15803D; color: #FFFFFF; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; box-shadow: 0 2px 4px rgba(22,163,74,0.25);"
+                      title="Plate all ${qty} items and mark matching tickets ready"
+                    >
+                      <span>All (${qty}) ✅</span>
+                    </button>
+                  </div>
+                </div>
               `).join('')}
             </div>
           </div>
         ` : ''}
 
-        <!-- Filter Chips & Station Lock -->
+        <!-- Quick Category Filters (Non-locking, instant toggle for 3 chefs) -->
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1.2rem;">
           <div style="display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; align-items: center;">
             ${[
-              { id: 'all', label: '🍽️ All Stations' },
-              { id: 'dosa', label: '🥞 Dosa Station' },
-              { id: 'sandwich', label: '🥪 Sandwich Grill' },
+              { id: 'all', label: '🍽️ All Dishes (Unified 3-Chef View)' },
+              { id: 'dosa', label: '🥞 Dosa / Tawa' },
+              { id: 'sandwich', label: '🥪 Sandwich & Grill' },
               { id: 'chinese', label: '🍜 Chinese & Meals' },
               { id: 'snack', label: '🥖 Pav & Snacks' },
               { id: 'beverage', label: '🥤 Beverage Counter' },
@@ -324,37 +384,13 @@ export function renderKitchenView(container) {
               <button 
                 class="kds-filter-btn ${selectedCategoryFilter === cat.id ? 'active' : ''}" 
                 data-cat="${cat.id}"
-                ${isStationLocked && selectedCategoryFilter !== cat.id ? 'disabled' : ''}
-                style="padding: 7px 16px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: ${isStationLocked && selectedCategoryFilter !== cat.id ? 'not-allowed' : 'pointer'}; opacity: ${isStationLocked && selectedCategoryFilter !== cat.id ? '0.45' : '1'}; border: 1.5px solid ${selectedCategoryFilter === cat.id ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedCategoryFilter === cat.id ? 'var(--brand-red)' : '#FFF'}; color: ${selectedCategoryFilter === cat.id ? '#FFF' : 'var(--ink-secondary)'}; transition: all 0.15s ease;"
+                style="padding: 8px 18px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; cursor: pointer; border: 1.5px solid ${selectedCategoryFilter === cat.id ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedCategoryFilter === cat.id ? 'var(--brand-red)' : '#FFF'}; color: ${selectedCategoryFilter === cat.id ? '#FFF' : 'var(--ink-secondary)'}; transition: all 0.15s ease;"
               >
                 ${cat.label}
               </button>
             `).join('')}
           </div>
-
-          ${selectedCategoryFilter !== 'all' ? `
-            <button 
-              id="toggle-station-lock-btn" 
-              style="padding: 7px 16px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; cursor: pointer; border: 1.5px solid ${isStationLocked ? '#D97706' : '#CBD5E1'}; background: ${isStationLocked ? '#FEF3C7' : '#F8FAFC'}; color: ${isStationLocked ? '#92400E' : '#475569'}; display: flex; align-items: center; gap: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);"
-              title="${isStationLocked ? 'Unlock to allow changing station filter' : 'Lock this screen to current station'}"
-            >
-              <span>${isStationLocked ? '🔒 Station Locked' : '🔓 Lock Station'}</span>
-            </button>
-          ` : ''}
         </div>
-
-        ${isStationLocked ? `
-          <div style="background: #FEF3C7; border: 1.5px solid #F59E0B; border-radius: 10px; padding: 10px 16px; margin-bottom: 1.2rem; display: flex; align-items: center; justify-content: space-between; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; color: #92400E; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span>🔒 DEDICATED STATION MODE:</span>
-              <span style="background: #FDE68A; padding: 2px 8px; border-radius: 5px;">${selectedCategoryFilter.toUpperCase()}</span>
-              <span style="font-weight: 500; font-size: 0.78rem; color: #B45309;">(Screen only displays orders & batches for this station)</span>
-            </div>
-            <button id="dismiss-station-lock-btn" style="background: transparent; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; color: #92400E; text-decoration: underline; cursor: pointer;">
-              Unlock Screen
-            </button>
-          </div>
-        ` : ''}
 
         ${!isInitialSyncDone && cookOrders.length === 0 ? `
           <!-- Responsive Loading Skeleton (Never Blank) -->
@@ -818,41 +854,33 @@ export function renderKitchenView(container) {
       renderKDS();
     });
 
+    // Attach Voice Toggle Listener
+    container.querySelector('#toggle-kds-voice-btn')?.addEventListener('click', () => {
+      kitchenVoiceEnabled = !kitchenVoiceEnabled;
+      localStorage.setItem('tb_kds_voice_enabled', String(kitchenVoiceEnabled));
+      if (kitchenVoiceEnabled && 'speechSynthesis' in window) {
+        try {
+          const u = new SpeechSynthesisUtterance("Kitchen voice assistant active for 3 chefs");
+          u.rate = 1.0;
+          u.pitch = 1.05;
+          u.lang = 'en-IN';
+          window.speechSynthesis.speak(u);
+        } catch (_) {}
+      }
+      renderKDS();
+    });
+
     // Attach Manual Refresh
     container.querySelector('#refresh-kds-manual-btn')?.addEventListener('click', () => {
       loadKitchenDataAuthoritative();
     });
 
-    // Attach KDS Filter Listeners
+    // Attach KDS Filter Listeners (Unified 3-chef non-locking switcher)
     container.querySelectorAll('.kds-filter-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        if (isStationLocked) {
-          showKdsToast(`🔒 Station is locked to ${selectedCategoryFilter.toUpperCase()}. Unlock first to change.`);
-          return;
-        }
-        selectedCategoryFilter = btn.getAttribute('data-cat');
+        selectedCategoryFilter = btn.getAttribute('data-cat') || 'all';
         renderKDS();
       });
-    });
-
-    // Attach Station Lock Listeners
-    container.querySelector('#toggle-station-lock-btn')?.addEventListener('click', () => {
-      isStationLocked = !isStationLocked;
-      if (isStationLocked) {
-        localStorage.setItem('tb_kds_locked_station', selectedCategoryFilter);
-        showKdsToast(`🔒 Screen locked to ${selectedCategoryFilter.toUpperCase()} station`);
-      } else {
-        localStorage.removeItem('tb_kds_locked_station');
-        showKdsToast(`🔓 Station unlocked`);
-      }
-      renderKDS();
-    });
-
-    container.querySelector('#dismiss-station-lock-btn')?.addEventListener('click', () => {
-      isStationLocked = false;
-      localStorage.removeItem('tb_kds_locked_station');
-      showKdsToast(`🔓 Station unlocked`);
-      renderKDS();
     });
 
     // Attach Status Update Listeners (Optimistic UI & Auto-Progression)
@@ -954,11 +982,11 @@ export function renderKitchenView(container) {
       }, 4000);
     }
 
-    // Attach Batch Chip Fulfillment Listeners
-    container.querySelectorAll('.kds-batch-chip-btn').forEach(btn => {
+    // Attach 1-Tap Knuckle Batch Fulfillment Listeners (Zero Popups)
+    container.querySelectorAll('.kds-quick-plate-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const itemName = btn.getAttribute('data-item-name');
-        const totalQty = parseInt(btn.getAttribute('data-item-qty'), 10) || 1;
+        const count = parseInt(btn.getAttribute('data-count'), 10) || 1;
         
         // Find matching orders that need this item
         const matchingOrders = cookOrders.filter(o => 
@@ -967,18 +995,10 @@ export function renderKitchenView(container) {
 
         if (matchingOrders.length === 0) return;
 
-        const countStr = prompt(
-          `🍳 Batch Complete: "${itemName}"\nHow many did you plate and finish? (Enter quantity, or press OK for all ${totalQty}):`,
-          String(totalQty)
-        );
-        if (countStr === null) return;
-        const parsedCount = parseInt(countStr, 10);
-        if (isNaN(parsedCount) || parsedCount <= 0) return;
-
         btn.disabled = true;
         btn.style.opacity = '0.5';
 
-        let remaining = parsedCount;
+        let remaining = count;
         let fulfilledCount = 0;
 
         for (const order of matchingOrders) {
@@ -1003,7 +1023,7 @@ export function renderKitchenView(container) {
         }
 
         playKitchenOrderChime();
-        showKdsToast(`🎉 Plated ${parsedCount}x ${itemName} — ${fulfilledCount} order(s) marked READY!`);
+        showKdsToast(`🎉 Plated ${count}x ${itemName} — ${fulfilledCount} order(s) marked READY!`);
         renderKDS();
       });
     });
@@ -1088,6 +1108,16 @@ export function renderKitchenView(container) {
           ...o,
           id: o.orderId || o.id,
         }));
+
+        currentOrders.forEach(o => {
+          const oId = o.orderId || o.id;
+          if (!announcedKitchenOrders.has(oId)) {
+            if (isInitialSyncDone && (o.status === 'placed' || o.status === 'confirmed' || o.status === 'preparing') && !o.isOnlyReadyMade) {
+              speakKitchenOrder(o);
+            }
+            announcedKitchenOrders.add(oId);
+          }
+        });
       }
       isInitialSyncDone = true;
       renderKDS();
@@ -1126,6 +1156,16 @@ export function renderKitchenView(container) {
       if (audioAlertsEnabled && isInitialSyncDone && liveOrders.length > currentOrders.length) {
         playKitchenOrderChime();
       }
+
+      liveOrders.forEach(o => {
+        const oId = o.orderId || o.id;
+        if (!announcedKitchenOrders.has(oId)) {
+          if (isInitialSyncDone && (o.status === 'placed' || o.status === 'confirmed' || o.status === 'preparing') && !o.isOnlyReadyMade) {
+            speakKitchenOrder(o);
+          }
+          announcedKitchenOrders.add(oId);
+        }
+      });
 
       if (pollInterval) {
         clearInterval(pollInterval);
@@ -1171,6 +1211,10 @@ export function cleanupKitchenView() {
     window.removeEventListener('keydown', kitchenKeydownHandler);
     kitchenKeydownHandler = null;
   }
+  if ('speechSynthesis' in window) {
+    try { window.speechSynthesis.cancel(); } catch (_) {}
+  }
+  announcedKitchenOrders.clear();
   clearTimeout(autoCookTimeout);
   clearTimeout(tokenKeyTimer);
   tokenKeyBuffer = '';
