@@ -19,6 +19,49 @@ let focusedOrderId = null; // User manual focus override if desired
 let isInitialSyncDone = false;
 let audioAlertsEnabled = localStorage.getItem('tb_kds_audio_enabled') !== 'false'; // default ON
 let kitchenAudioCtx = null;
+let kitchenKeydownHandler = null;
+let autoCookTimeout = null;
+let tokenKeyBuffer = '';
+let tokenKeyTimer = null;
+
+function showKdsToast(message) {
+  let toastEl = document.getElementById('kds-toast-notification');
+  if (!toastEl) {
+    toastEl = document.createElement('div');
+    toastEl.id = 'kds-toast-notification';
+    toastEl.style.cssText = `
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 9999;
+      background: #0F172A;
+      color: #F8FAFC;
+      font-family: var(--font-mono, monospace);
+      font-size: 0.95rem;
+      font-weight: 700;
+      padding: 12px 20px;
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+      border: 1.5px solid #334155;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: none;
+    `;
+    document.body.appendChild(toastEl);
+  }
+  toastEl.innerHTML = message;
+  toastEl.style.opacity = '1';
+  toastEl.style.transform = 'translateY(0)';
+  clearTimeout(toastEl._timer);
+  toastEl._timer = setTimeout(() => {
+    toastEl.style.opacity = '0';
+    toastEl.style.transform = 'translateY(12px)';
+  }, 2500);
+}
 
 function getKitchenAudioContext() {
   try {
@@ -168,9 +211,19 @@ export function renderKitchenView(container) {
             </p>
           </div>
 
-          <!-- Controls: View Mode, Audio Alerts & Quick Stats -->
+          <!-- Controls: View Mode, Audio Alerts, Bump Bar & Quick Stats -->
           <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             
+            <!-- Physical Bump Bar Keyboard Indicator -->
+            <div style="display: flex; align-items: center; gap: 8px; background: #0F172A; color: #FFF; padding: 6px 14px; border-radius: 10px; font-family: var(--font-mono); font-size: 0.78rem; border: 1.5px solid #334155;">
+              <span style="color: #94A3B8;">⌨️ BUMP BAR:</span>
+              <span style="background: #22C55E; color: #FFF; font-weight: 800; padding: 2px 7px; border-radius: 5px; box-shadow: 0 1px 3px rgba(34,197,94,0.4);">[SPACE / ENTER]</span>
+              <span style="color: #CBD5E1;">= Next Ready</span>
+              <span style="color: #475569; margin: 0 2px;">|</span>
+              <span style="background: #F59E0B; color: #FFF; font-weight: 800; padding: 2px 6px; border-radius: 4px;">[+]</span>
+              <span style="color: #CBD5E1;">= Cook</span>
+            </div>
+
             <!-- View Mode Switcher -->
             <div style="display: flex; background: #F4F4F5; padding: 3px; border-radius: 10px; border: 1.5px solid var(--border-light);">
               <button id="view-mode-pipeline-btn" class="btn btn--sm ${viewMode === 'pipeline' ? 'btn--secondary' : 'btn--ghost'}" style="${viewMode === 'pipeline' ? 'background: #FFF; color: var(--brand-red);' : ''}">
@@ -215,22 +268,34 @@ export function renderKitchenView(container) {
           </div>
         </div>
 
-        <!-- Smart Cooking Batches Bar -->
+        <!-- Smart Cooking Batches Bar (Interactive 1-Tap Batch Fulfill) -->
         ${batchEntries.length > 0 ? `
           <div style="background: #FFFBEB; border: 1.5px solid #FDE68A; border-radius: 12px; padding: 12px 16px; margin-bottom: 1.3rem; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
               <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; color: #92400E; display: flex; align-items: center; gap: 6px;">
                 <span>🔥 SMART COOKING BATCHES</span>
-                <span style="font-size: 0.75rem; font-weight: 400; color: #B45309;">(Consolidated item totals across all waiting tickets in queue)</span>
+                <span style="font-size: 0.75rem; font-weight: 500; color: #B45309;">(Click any batch below to 1-tap fulfill all waiting items)</span>
               </div>
+              <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; background: #FEF3C7; color: #B45309; padding: 2px 8px; border-radius: 6px; border: 1px solid #FCD34D;">
+                ⚡ 1-Tap Fulfill
+              </span>
             </div>
 
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
               ${batchEntries.map(([name, qty]) => `
-                <div style="background: #FFF; border: 1.5px solid #FCD34D; padding: 6px 12px; border-radius: 8px; display: flex; align-items: center; gap: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
-                  <span style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 800; color: #92400E;">${qty}x</span>
-                  <span style="font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; color: var(--ink-primary);">${escapeHtml(name)}</span>
-                </div>
+                <button 
+                  class="kds-batch-chip-btn" 
+                  data-item-name="${escapeHtml(name)}" 
+                  data-item-qty="${qty}"
+                  style="background: #FFF; border: 2px solid #F59E0B; padding: 8px 14px; border-radius: 10px; display: flex; align-items: center; gap: 10px; cursor: pointer; transition: transform 0.1s ease, box-shadow 0.1s ease; box-shadow: 0 2px 4px rgba(245,158,11,0.15);"
+                  title="Click to fulfill ${qty}x ${escapeHtml(name)}"
+                >
+                  <span style="font-family: var(--font-mono); font-size: 1.25rem; font-weight: 900; color: #92400E; background: #FEF3C7; padding: 2px 8px; border-radius: 6px;">${qty}x</span>
+                  <span style="font-family: var(--font-sans); font-size: 0.95rem; font-weight: 800; color: var(--ink-primary);">${escapeHtml(name)}</span>
+                  <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; color: #047857; background: #D1FAE5; border: 1px solid #6EE7B7; padding: 2px 7px; border-radius: 5px;">
+                    ⚡ Cooked
+                  </span>
+                </button>
               `).join('')}
             </div>
           </div>
@@ -344,23 +409,27 @@ export function renderKitchenView(container) {
                     </div>
 
                     <!-- 1-Tap Ready Progression CTA -->
-                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
                       ${!isCooking ? `
                         <button 
                           class="btn btn--outline-warning btn--xl kds-action-btn start-cook-btn" 
                           data-order-id="${escapeHtml(orderId)}" 
                           data-target-status="preparing"
+                          style="min-height: 64px; padding: 14px 22px; font-size: 1.1rem; font-weight: 800; border-radius: 12px;"
                         >
                           <span>🔥 Start Cooking</span>
                         </button>
                       ` : ''}
 
                       <button 
-                        class="btn btn--success btn--xl kds-action-btn mark-ready-btn" 
+                        class="btn btn--success btn--xl kds-action-btn mark-ready-btn hero-mark-ready-btn" 
                         data-order-id="${escapeHtml(orderId)}" 
                         data-target-status="ready"
+                        style="min-height: 74px; padding: 16px 32px; font-size: 1.35rem; font-weight: 900; border-radius: 14px; box-shadow: 0 6px 20px rgba(34,197,94,0.4); display: inline-flex; align-items: center; gap: 12px; border: 2px solid #16A34A;"
                       >
-                        <span>✅ Mark Ready & Next ⏭️</span>
+                        <span style="font-size: 1.6rem;">✅</span>
+                        <span>Mark Ready & Next ⏭️</span>
+                        <span style="background: rgba(255,255,255,0.28); font-size: 0.75rem; font-family: var(--font-mono); padding: 4px 8px; border-radius: 6px; letter-spacing: 0.05em;">[SPACE / ENTER]</span>
                       </button>
 
                       <button 
@@ -368,6 +437,7 @@ export function renderKitchenView(container) {
                         data-order-id="${escapeHtml(orderId)}" 
                         data-token="${escapeHtml(heroOrder.tokenNumber || 'TB-???')}"
                         title="Cancel order due to out-of-stock dish or customer request"
+                        style="min-height: 64px; border-radius: 12px;"
                       >
                         <span>🚫 Out of Stock / Cancel</span>
                       </button>
@@ -805,6 +875,143 @@ export function renderKitchenView(container) {
         }
       });
     });
+
+    // Auto-Cook Feature: If Hero order is placed/confirmed, auto-advance to preparing after 4s
+    clearTimeout(autoCookTimeout);
+    if (heroOrder && (heroOrder.status === 'placed' || heroOrder.status === 'confirmed')) {
+      const heroId = heroOrder.orderId || heroOrder.id;
+      autoCookTimeout = setTimeout(async () => {
+        if (!inFlightOrderIds.has(heroId)) {
+          inFlightOrderIds.add(heroId);
+          try {
+            await updateOrderStatus(heroId, 'preparing');
+            heroOrder.status = 'preparing';
+            renderKDS();
+          } catch (_) {}
+          finally {
+            inFlightOrderIds.delete(heroId);
+          }
+        }
+      }, 4000);
+    }
+
+    // Attach Batch Chip Fulfillment Listeners
+    container.querySelectorAll('.kds-batch-chip-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const itemName = btn.getAttribute('data-item-name');
+        const totalQty = parseInt(btn.getAttribute('data-item-qty'), 10) || 1;
+        
+        // Find matching orders that need this item
+        const matchingOrders = cookOrders.filter(o => 
+          (o.items || []).some(i => (i.name || '').toLowerCase() === itemName.toLowerCase())
+        );
+
+        if (matchingOrders.length === 0) return;
+
+        const countStr = prompt(
+          `🍳 Batch Complete: "${itemName}"\nHow many did you plate and finish? (Enter quantity, or press OK for all ${totalQty}):`,
+          String(totalQty)
+        );
+        if (countStr === null) return;
+        const parsedCount = parseInt(countStr, 10);
+        if (isNaN(parsedCount) || parsedCount <= 0) return;
+
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+
+        let remaining = parsedCount;
+        let fulfilledCount = 0;
+
+        for (const order of matchingOrders) {
+          if (remaining <= 0) break;
+          const oId = order.orderId || order.id;
+          if (inFlightOrderIds.has(oId)) continue;
+
+          const itemObj = (order.items || []).find(i => (i.name || '').toLowerCase() === itemName.toLowerCase());
+          const itemQty = itemObj ? (itemObj.quantity || 1) : 1;
+          remaining -= itemQty;
+          fulfilledCount++;
+
+          inFlightOrderIds.add(oId);
+          try {
+            await updateOrderStatus(oId, 'ready');
+            order.status = 'ready';
+          } catch (err) {
+            console.error("Batch update error for order " + oId, err);
+          } finally {
+            inFlightOrderIds.delete(oId);
+          }
+        }
+
+        playKitchenOrderChime();
+        showKdsToast(`🎉 Plated ${parsedCount}x ${itemName} — ${fulfilledCount} order(s) marked READY!`);
+        renderKDS();
+      });
+    });
+
+    // Setup Global Physical Numpad / Bump Bar Keyboard Shortcuts
+    if (kitchenKeydownHandler) {
+      window.removeEventListener('keydown', kitchenKeydownHandler);
+    }
+
+    kitchenKeydownHandler = (e) => {
+      // Don't intercept when staff is typing in an input or modal prompt
+      if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+
+      // 1. Spacebar or Enter: Complete the active Hero order (#1 in queue)
+      if (e.code === 'Space' || e.code === 'Enter') {
+        e.preventDefault();
+        if (tokenKeyBuffer.length > 0) {
+          // Process token jump buffer if any digits were entered
+          const queryToken = tokenKeyBuffer;
+          tokenKeyBuffer = '';
+          clearTimeout(tokenKeyTimer);
+          const found = cookOrders.find(o => (o.tokenNumber || '').endsWith(queryToken));
+          if (found) {
+            const fId = found.orderId || found.id;
+            updateOrderStatus(fId, 'ready').then(() => {
+              playKitchenOrderChime();
+              showKdsToast(`⚡ Token #${found.tokenNumber} marked READY via Numpad!`);
+              renderKDS();
+            }).catch(() => {});
+          } else {
+            showKdsToast(`❓ No active order matching token "...${queryToken}"`);
+          }
+          return;
+        }
+
+        const heroReadyBtn = container.querySelector('.hero-mark-ready-btn');
+        if (heroReadyBtn && !heroReadyBtn.disabled) {
+          heroReadyBtn.click();
+          playKitchenOrderChime();
+          showKdsToast(`✅ Order ${heroOrder?.tokenNumber || ''} marked READY via [${e.code}]!`);
+        }
+        return;
+      }
+
+      // 2. Key '+' or '=': Start cooking the active Hero order
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        const startBtn = container.querySelector('.start-cook-btn');
+        if (startBtn && !startBtn.disabled) {
+          startBtn.click();
+          showKdsToast(`🔥 Cooking started for ${heroOrder?.tokenNumber || ''} via [+]!`);
+        }
+        return;
+      }
+
+      // 3. Digit Keys (0-9): Buffer for fast token completion
+      if (e.key >= '0' && e.key <= '9') {
+        tokenKeyBuffer += e.key;
+        clearTimeout(tokenKeyTimer);
+        showKdsToast(`⌨️ Numpad Token: ${tokenKeyBuffer} (Hit Enter to Complete)`);
+        tokenKeyTimer = setTimeout(() => {
+          tokenKeyBuffer = '';
+        }, 2000);
+      }
+    };
+
+    window.addEventListener('keydown', kitchenKeydownHandler);
   }
 
   // 1. Render immediately so screen is NEVER blank
@@ -901,6 +1108,13 @@ export function cleanupKitchenView() {
     try { kitchenAudioCtx.close(); } catch (_) {}
     kitchenAudioCtx = null;
   }
+  if (kitchenKeydownHandler) {
+    window.removeEventListener('keydown', kitchenKeydownHandler);
+    kitchenKeydownHandler = null;
+  }
+  clearTimeout(autoCookTimeout);
+  clearTimeout(tokenKeyTimer);
+  tokenKeyBuffer = '';
   isInitialSyncDone = false;
   currentOrders = [];
 }
