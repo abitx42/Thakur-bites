@@ -306,6 +306,46 @@
     window.addEventListener('flutter-first-frame', hideLoadingSplash);
     // Safety fallback: fade out splash after 3.5s so UI is never permanently blocked
     setTimeout(hideLoadingSplash, 3500);
+
+    // ═══════════════════════════════════════════════════════════════
+    // STUDENT LOCKSCREEN WEB PUSH & SYSTEM NOTIFICATIONS ENGINE
+    // ═══════════════════════════════════════════════════════════════
+    window.requestStudentPushPermission = function () {
+      if (!('Notification' in window)) return Promise.resolve('unsupported');
+      if (Notification.permission === 'granted') return Promise.resolve('granted');
+      if (Notification.permission === 'denied') return Promise.resolve('denied');
+      return Notification.requestPermission().catch(function () { return 'denied'; });
+    };
+
+    window.sendStudentSystemNotification = function (title, body, tag) {
+      if (!('Notification' in window) || Notification.permission !== 'granted') {
+        return false;
+      }
+      try {
+        var options = {
+          body: body || '',
+          icon: 'icons/Icon-192.png',
+          badge: 'icons/Icon-192.png',
+          tag: tag || 'tb-order-status',
+          renotify: true,
+          vibrate: [200, 100, 200],
+          requireInteraction: tag === 'tb-order-ready',
+          data: { url: window.location.origin }
+        };
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.ready.then(function (reg) {
+            reg.showNotification(title, options);
+          }).catch(function () {
+            new Notification(title, options);
+          });
+        } else {
+          new Notification(title, options);
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    };
   </script>
   <script src="flutter_bootstrap.js?v=20260914_0820" async></script>
 </body>

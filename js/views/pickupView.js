@@ -93,6 +93,16 @@ export function renderPickupView(container) {
     keydownListener = null;
   }
 
+  // Deterministic 32-bit FNV-1a Hash (100% binary matching Dart client)
+  function computeFnv1a32(input) {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < input.length; i++) {
+      hash ^= input.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return (hash >>> 0).toString(16).toUpperCase().padStart(8, '0');
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // HARDWARE 2D BARCODE & QR SCANNER ENGINE (HID Keystroke Stream)
   // ═══════════════════════════════════════════════════════════════
@@ -100,18 +110,57 @@ export function renderPickupView(container) {
     const cleanPayload = payload.trim();
     if (!cleanPayload) return;
 
-    // Check if it's a mobile app QR Token (TB:orderId:tokenNumber:pinCode)
+    // 1. Check if it's a mobile app QR Token (TB:orderId:tokenNumber:pinCode[:timeBlock:totpHash])
     if (cleanPayload.startsWith('TB:')) {
       const parts = cleanPayload.split(':');
       const orderId = parts[1];
       const tokenNumber = parts[2] || orderId;
       const pinCode = parts[3] || '';
+      const timeBlock = parts[4] ? parseInt(parts[4], 10) : null;
+      const totpHash = parts[5] || null;
+
+      // Anti-Fraud 30-Second Dynamic Rotating TOTP Verification (Anti-Screenshot)
+      if (timeBlock !== null && totpHash) {
+        const currentTimeBlock = Math.floor(Date.now() / 30000);
+        // Allow +/- 1 window (approx 60s total validity window) to prevent false rejections from slight clock difference
+        if (Math.abs(currentTimeBlock - timeBlock) > 1) {
+          playScanSound(false);
+          const secondsDiff = Math.abs(currentTimeBlock - timeBlock) * 30;
+          scannerFeedbackMessage = `🚨 EXPIRED PASS: Stale QR scanned (~${secondsDiff}s old)! Screenshots are prohibited. Please scan the live app screen.`;
+          scannerFeedbackType = 'error';
+          render();
+          setTimeout(() => { scannerFeedbackMessage = null; render(); }, 6000);
+          return;
+        }
+
+        const expectedHash = computeFnv1a32(`${orderId}:${pinCode}:${timeBlock}`);
+        if (expectedHash !== totpHash) {
+          playScanSound(false);
+          scannerFeedbackMessage = `🚨 SECURITY ALERT: QR Code integrity hash mismatch! Potential counterfeit QR ticket.`;
+          scannerFeedbackType = 'error';
+          render();
+          setTimeout(() => { scannerFeedbackMessage = null; render(); }, 6000);
+          return;
+        }
+      }
+
+      // Optimistic instant feedback (<300ms verification)
+      playScanSound(true);
+      scannerFeedbackMessage = `⚡ Verifying Order ${tokenNumber}...`;
+      scannerFeedbackType = 'success';
+      render();
 
       try {
         const verifyFn = httpsCallable(functions, 'verifyPickup');
         await verifyFn({ orderId, pinCode });
 
-        playScanSound(true);
+        // Update local state immediately
+        const idx = currentOrders.findIndex(o => (o.orderId || o.id) === orderId);
+        if (idx !== -1) {
+          currentOrders[idx].status = 'collected';
+          currentOrders[idx].collectedAt = new Date();
+        }
+
         scannerFeedbackMessage = `✅ Order ${tokenNumber} Verified & Handed Over!`;
         scannerFeedbackType = 'success';
         render();
@@ -124,7 +173,11 @@ export function renderPickupView(container) {
         if (err.code === 'not-found' || err.code === 'unavailable' || String(err.message || '').includes('not found') || String(err.message || '').includes('internal')) {
           try {
             await updateOrderStatus(orderId, 'collected');
-            playScanSound(true);
+            const idx = currentOrders.findIndex(o => (o.orderId || o.id) === orderId);
+            if (idx !== -1) {
+              currentOrders[idx].status = 'collected';
+              currentOrders[idx].collectedAt = new Date();
+            }
             scannerFeedbackMessage = `✅ Order ${tokenNumber} Verified & Handed Over!`;
             scannerFeedbackType = 'success';
             render();
@@ -150,7 +203,7 @@ export function renderPickupView(container) {
       return;
     }
 
-    // Check if it's a signed QR Token (orderId.studentId.nonce.expiresAt.sig)
+    // 2. Check if it's a signed QR Token (orderId.studentId.nonce.expiresAt.sig)
     if (cleanPayload.includes('.')) {
       const parts = cleanPayload.split('.');
       const orderId = parts[0];
@@ -159,6 +212,13 @@ export function renderPickupView(container) {
         const verifyFn = httpsCallable(functions, 'verifyPickup');
         const res = await verifyFn({ orderId, qrToken: cleanPayload });
         playScanSound(true);
+
+        const idx = currentOrders.findIndex(o => (o.orderId || o.id) === orderId);
+        if (idx !== -1) {
+          currentOrders[idx].status = 'collected';
+          currentOrders[idx].collectedAt = new Date();
+        }
+
         scannerFeedbackMessage = `✅ Order ${res.data?.tokenNumber || orderId} Verified & Collected!`;
         scannerFeedbackType = 'success';
         render();
@@ -171,6 +231,11 @@ export function renderPickupView(container) {
         if (err.code === 'not-found' || err.code === 'unavailable' || String(err.message || '').includes('not found') || String(err.message || '').includes('internal')) {
           try {
             await updateOrderStatus(orderId, 'collected');
+            const idx = currentOrders.findIndex(o => (o.orderId || o.id) === orderId);
+            if (idx !== -1) {
+              currentOrders[idx].status = 'collected';
+              currentOrders[idx].collectedAt = new Date();
+            }
             playScanSound(true);
             scannerFeedbackMessage = `✅ Order ${orderId} Verified & Collected!`;
             scannerFeedbackType = 'success';
@@ -199,17 +264,37 @@ export function renderPickupView(container) {
           render();
         }, 6000);
       }
-    } else if (/^\d{4,6}$/.test(cleanPayload)) {
-      // 4 to 6 digit PIN scan / keypress
+      return;
+    }
+
+    // 3. Exact Token Number or Barcode Scan (e.g. "TB-042", "042", "42")
+    const normalizedToken = cleanPayload.replace(/^#/, '').toUpperCase();
+    const matchedReadyOrder = currentOrders.find(o => 
+      o.status === 'ready' && 
+      (o.tokenNumber?.toUpperCase() === normalizedToken || 
+       o.tokenNumber?.toUpperCase() === `TB-${normalizedToken}` ||
+       String(o.tokenNumber || '').endsWith(normalizedToken))
+    );
+    if (matchedReadyOrder) {
+      searchFilter = matchedReadyOrder.tokenNumber || cleanPayload;
+      render();
+      playScanSound(true);
+      return;
+    }
+
+    // 4. 4 to 6 digit PIN scan / keypress
+    if (/^\d{4,6}$/.test(cleanPayload)) {
       searchFilter = cleanPayload;
       render();
     }
   }
 
   keydownListener = (e) => {
-    // Ignore input if user is actively typing in any input, textarea, select or contentEditable element
     const targetTag = e.target?.tagName;
-    if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT' || e.target?.isContentEditable) {
+    const isFilterInput = e.target?.id === 'pickup-filter-input';
+
+    // Ignore input if user is actively typing in another input (like refund modal, textarea, etc.)
+    if ((targetTag === 'INPUT' && !isFilterInput) || targetTag === 'TEXTAREA' || targetTag === 'SELECT' || e.target?.isContentEditable) {
       return;
     }
 
@@ -218,15 +303,23 @@ export function renderPickupView(container) {
     lastKeypressTime = currentTime;
 
     if (e.key === 'Enter') {
-      if (scannerBuffer.length > 2) {
-        const scanned = scannerBuffer;
-        scannerBuffer = '';
-        handleScannedPayload(scanned);
+      let scanned = scannerBuffer.trim();
+      // If focused on filter input and input starts with TB: or was rapid scan
+      if (isFilterInput && e.target && e.target.value) {
+        const val = e.target.value.trim();
+        if (val.startsWith('TB:') || val.includes('.') || (scanned.length > 2 && val.includes(scanned))) {
+          scanned = val;
+          e.target.value = '';
+          searchFilter = '';
+        }
       }
       scannerBuffer = '';
+      if (scanned.length > 2) {
+        handleScannedPayload(scanned);
+      }
     } else if (e.key.length === 1) {
-      // Hardware barcode scanner inter-character latency is typically < 100ms
-      if (interval < 100 || scannerBuffer.length === 0) {
+      // Hardware barcode scanner inter-character latency is typically < 75ms
+      if (interval < 75 || scannerBuffer.length === 0) {
         scannerBuffer += e.key;
       } else {
         // Human typing reset
@@ -766,6 +859,17 @@ export function renderPickupView(container) {
     const filterInput = container.querySelector('#pickup-filter-input');
     let filterDebounceTimer = null;
     if (filterInput) {
+      filterInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          const val = filterInput.value.trim();
+          if (val.startsWith('TB:') || val.includes('.') || val.length >= 2) {
+            e.preventDefault();
+            filterInput.value = '';
+            searchFilter = '';
+            handleScannedPayload(val);
+          }
+        }
+      });
       filterInput.addEventListener('input', (e) => {
         if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
         filterDebounceTimer = setTimeout(() => {

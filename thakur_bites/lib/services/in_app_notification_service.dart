@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'web_push_adapter.dart';
 
 /// In-app notification overlay service for order status updates.
 /// Displays auto-dismissing banner notifications at the top of the screen.
@@ -62,6 +63,13 @@ class InAppNotificationService {
     required String tokenNumber,
     required VoidCallback onTrack,
   }) {
+    requestPushPermission();
+    sendNativeSystemNotification(
+      '🎉 Order Placed! Token $tokenNumber',
+      'Your order is confirmed. Track live status here.',
+      tag: 'tb-order-placed',
+    );
+
     show(
       context: context,
       title: '🎉 Order Placed! Token $tokenNumber',
@@ -113,6 +121,12 @@ class InAppNotificationService {
         icon = Icons.info_rounded;
         color = AppColors.info;
     }
+
+    sendNativeSystemNotification(
+      title,
+      subtitle,
+      tag: newStatus == 'ready' ? 'tb-order-ready' : 'tb-order-$newStatus',
+    );
 
     show(
       context: context,

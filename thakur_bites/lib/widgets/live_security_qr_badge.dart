@@ -62,6 +62,31 @@ class _LiveSecurityQrBadgeState extends State<LiveSecurityQrBadge>
     super.dispose();
   }
 
+  int _fnv1a32(String input) {
+    var hash = 0x811c9dc5;
+    for (var i = 0; i < input.length; i++) {
+      hash ^= input.codeUnitAt(i);
+      hash = (hash * 0x01000193) & 0xFFFFFFFF;
+    }
+    return hash;
+  }
+
+  String _getDynamicQrData() {
+    if (widget.qrData.startsWith('TB:')) {
+      final parts = widget.qrData.split(':');
+      if (parts.length >= 4) {
+        final orderId = parts[1];
+        final tokenNumber = parts[2];
+        final pinCode = parts[3];
+        final timeBlock = DateTime.now().millisecondsSinceEpoch ~/ 30000;
+        final raw = '$orderId:$pinCode:$timeBlock';
+        final hash = _fnv1a32(raw).toRadixString(16).toUpperCase().padLeft(8, '0');
+        return 'TB:$orderId:$tokenNumber:$pinCode:$timeBlock:$hash';
+      }
+    }
+    return widget.qrData;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!widget.isReady) {
@@ -102,6 +127,8 @@ class _LiveSecurityQrBadgeState extends State<LiveSecurityQrBadge>
         builder: (context, child) {
           final glowOpacity = 0.25 + (_pulseAnimation.value * 0.35);
           final borderWidth = 1.8 + (_pulseAnimation.value * 0.8);
+          final secondsRemaining = 30 - (_currentSeconds % 30);
+          final dynamicData = _getDynamicQrData();
 
           return Column(
             mainAxisSize: MainAxisSize.min,
@@ -125,7 +152,7 @@ class _LiveSecurityQrBadgeState extends State<LiveSecurityQrBadge>
                   ],
                 ),
                 child: QrImageView(
-                  data: widget.qrData,
+                  data: dynamicData,
                   version: QrVersions.auto,
                   size: widget.size,
                   backgroundColor: Colors.white,
@@ -174,7 +201,7 @@ class _LiveSecurityQrBadgeState extends State<LiveSecurityQrBadge>
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      'LIVE PASS • :${_currentSeconds.toString().padLeft(2, '0')}',
+                      'LIVE PASS • :${_currentSeconds.toString().padLeft(2, '0')} • ⟳ ${secondsRemaining}s',
                       style: AppFonts.mono(
                         fontSize: 9.5,
                         fontWeight: FontWeight.w800,

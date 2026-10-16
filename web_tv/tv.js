@@ -108,6 +108,80 @@ function initAudio() {
   }
 }
 
+// Voice Announcement Engine (Web Speech API)
+const voiceToggleBtn = document.getElementById('voice-toggle-btn');
+const voiceToggleIcon = document.getElementById('voice-toggle-icon');
+const voiceToggleText = document.getElementById('voice-toggle-text');
+
+let speechEnabled = localStorage.getItem('tb_tv_speech_enabled') !== 'false';
+const recentlyAnnouncedTokens = new Set();
+
+function updateVoiceToggleUI() {
+  if (!voiceToggleBtn) return;
+  if (speechEnabled) {
+    voiceToggleBtn.classList.remove('muted');
+    if (voiceToggleIcon) voiceToggleIcon.textContent = '📢';
+    if (voiceToggleText) voiceToggleText.textContent = 'Voice: ON';
+  } else {
+    voiceToggleBtn.classList.add('muted');
+    if (voiceToggleIcon) voiceToggleIcon.textContent = '🔇';
+    if (voiceToggleText) voiceToggleText.textContent = 'Voice: MUTED';
+  }
+}
+
+if (voiceToggleBtn) {
+  voiceToggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    initAudio();
+    speechEnabled = !speechEnabled;
+    localStorage.setItem('tb_tv_speech_enabled', String(speechEnabled));
+    updateVoiceToggleUI();
+    if (speechEnabled && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const testUtterance = new SpeechSynthesisUtterance('Voice announcements enabled');
+      testUtterance.rate = 1.0;
+      testUtterance.lang = 'en-IN';
+      window.speechSynthesis.speak(testUtterance);
+    }
+  });
+  updateVoiceToggleUI();
+}
+
+/**
+ * Speaks newly ready token numbers aloud via Web Speech API (TTS)
+ */
+function speakReadyTokens(tokens) {
+  if (!speechEnabled || !('speechSynthesis' in window)) return;
+  if (!tokens || tokens.length === 0) return;
+
+  // Wait 650ms for two-tone audio chime to finish before speaking
+  setTimeout(() => {
+    try {
+      window.speechSynthesis.cancel();
+
+      // Format token numbers naturally (e.g. TB-042 -> "Token 42")
+      const spokenTokens = tokens.map(t => {
+        const clean = t.replace(/^TB-?0*/i, '');
+        return `Token ${clean}`;
+      }).join(', and ');
+
+      const message = `${spokenTokens}, please collect at the counter.`;
+      const utterance = new SpeechSynthesisUtterance(message);
+      utterance.rate = 0.95;
+      utterance.pitch = 1.05;
+      utterance.lang = 'en-IN';
+
+      const voices = window.speechSynthesis.getVoices();
+      const inVoice = voices.find(v => v.lang.includes('en-IN') || v.lang.includes('hi-IN')) || voices.find(v => v.lang.startsWith('en'));
+      if (inVoice) utterance.voice = inVoice;
+
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {
+      console.warn("Speech synthesis notice:", e);
+    }
+  }, 650);
+}
+
 ['click', 'keydown', 'touchstart', 'pointerdown'].forEach(evt => {
   window.addEventListener(evt, initAudio, { passive: true });
 });
@@ -241,20 +315,31 @@ function renderQueueData(data) {
   const visibleReady = readyTickets.slice(0, MAX_PER_SECTION);
   const overflowReady = Math.max(0, readyTickets.length - MAX_PER_SECTION);
 
-  // Check for newly ready orders to trigger chime
+  // Check for newly ready orders to trigger chime & voice callout
   let hasNewReady = false;
+  const newlyReadyTokens = [];
   readyTickets.forEach(item => {
     const token = item.token;
     if (token && !knownReadyTokens.has(token)) {
       knownReadyTokens.add(token);
       if (!isFirstLoad) {
         hasNewReady = true;
+        newlyReadyTokens.push(token);
+        recentlyAnnouncedTokens.add(token);
+        setTimeout(() => {
+          recentlyAnnouncedTokens.delete(token);
+          if (readyGrid) {
+            const el = readyGrid.querySelector(`[data-token="${token}"]`);
+            if (el) el.classList.remove('fresh-ready-pulse');
+          }
+        }, 12000);
       }
     }
   });
 
   if (hasNewReady) {
     playReadyChime();
+    speakReadyTokens(newlyReadyTokens);
   }
   isFirstLoad = false;
 
@@ -340,12 +425,15 @@ function renderQueueData(data) {
         </div>
       `;
     } else {
-      let html = visibleReady.map(item => `
-        <div class="token-card ready">
-          <div class="token-number">${escapeHtml(sanitizeToken(item.token))}</div>
-          <div class="token-ready-label">COLLECT AT COUNTER 🟢</div>
-        </div>
-      `).join('');
+      let html = visibleReady.map(item => {
+        const isFresh = recentlyAnnouncedTokens.has(item.token);
+        return `
+          <div class="token-card ready ${isFresh ? 'fresh-ready-pulse' : ''}" data-token="${escapeHtml(sanitizeToken(item.token))}">
+            <div class="token-number">${escapeHtml(sanitizeToken(item.token))}</div>
+            <div class="token-ready-label">${isFresh ? '⚡ JUST READY NOW 🟢' : 'COLLECT AT COUNTER 🟢'}</div>
+          </div>
+        `;
+      }).join('');
 
       if (overflowReady > 0) {
         html += `

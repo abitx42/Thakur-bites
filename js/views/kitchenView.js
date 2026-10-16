@@ -13,7 +13,8 @@ const inFlightOrderIds = new Set();
 let pollInterval = null;
 let unsubscribeOrders = null;
 let currentOrders = [];
-let selectedCategoryFilter = 'all';
+let selectedCategoryFilter = localStorage.getItem('tb_kds_locked_station') || 'all';
+let isStationLocked = Boolean(localStorage.getItem('tb_kds_locked_station') && localStorage.getItem('tb_kds_locked_station') !== 'all');
 let viewMode = 'pipeline'; // 'pipeline' (sequential pile) or 'grid' (all tickets)
 let focusedOrderId = null; // User manual focus override if desired
 let isInitialSyncDone = false;
@@ -185,10 +186,18 @@ export function renderKitchenView(container) {
     // Ready Queue: ready for pickup at counter
     const readyOrders = activeOrders.filter(o => o.status === 'ready');
 
-    // Smart Kitchen Batching Intelligence: Aggregate item totals across tickets
+    // Smart Kitchen Batching Intelligence: Aggregate item totals across tickets (filtered to station if active)
     const batchCounts = {};
     cookOrders.forEach(o => {
       (o.items || []).forEach(i => {
+        const name = (i.name || '').toLowerCase();
+        const cat = (i.category || '').toLowerCase();
+        const sub = (i.subCategory || '').toLowerCase();
+        const station = (i.station || '').toLowerCase();
+        if (selectedCategoryFilter !== 'all') {
+          const matches = name.includes(selectedCategoryFilter) || cat.includes(selectedCategoryFilter) || sub.includes(selectedCategoryFilter) || station === selectedCategoryFilter;
+          if (!matches) return;
+        }
         const key = i.name || 'Item';
         batchCounts[key] = (batchCounts[key] || 0) + (i.quantity || 1);
       });
@@ -301,25 +310,51 @@ export function renderKitchenView(container) {
           </div>
         ` : ''}
 
-        <!-- Filter Chips -->
-        <div style="display: flex; gap: 8px; margin-bottom: 1.3rem; overflow-x: auto; padding-bottom: 4px;">
-          ${[
-            { id: 'all', label: '🍽️ All Stations' },
-            { id: 'dosa', label: '🥞 Dosa Station' },
-            { id: 'sandwich', label: '🥪 Sandwich Grill' },
-            { id: 'chinese', label: '🍜 Chinese & Meals' },
-            { id: 'snack', label: '🥖 Pav & Snacks' },
-            { id: 'beverage', label: '🥤 Beverage Counter' },
-          ].map(cat => `
+        <!-- Filter Chips & Station Lock -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1.2rem;">
+          <div style="display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; align-items: center;">
+            ${[
+              { id: 'all', label: '🍽️ All Stations' },
+              { id: 'dosa', label: '🥞 Dosa Station' },
+              { id: 'sandwich', label: '🥪 Sandwich Grill' },
+              { id: 'chinese', label: '🍜 Chinese & Meals' },
+              { id: 'snack', label: '🥖 Pav & Snacks' },
+              { id: 'beverage', label: '🥤 Beverage Counter' },
+            ].map(cat => `
+              <button 
+                class="kds-filter-btn ${selectedCategoryFilter === cat.id ? 'active' : ''}" 
+                data-cat="${cat.id}"
+                ${isStationLocked && selectedCategoryFilter !== cat.id ? 'disabled' : ''}
+                style="padding: 7px 16px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: ${isStationLocked && selectedCategoryFilter !== cat.id ? 'not-allowed' : 'pointer'}; opacity: ${isStationLocked && selectedCategoryFilter !== cat.id ? '0.45' : '1'}; border: 1.5px solid ${selectedCategoryFilter === cat.id ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedCategoryFilter === cat.id ? 'var(--brand-red)' : '#FFF'}; color: ${selectedCategoryFilter === cat.id ? '#FFF' : 'var(--ink-secondary)'}; transition: all 0.15s ease;"
+              >
+                ${cat.label}
+              </button>
+            `).join('')}
+          </div>
+
+          ${selectedCategoryFilter !== 'all' ? `
             <button 
-              class="kds-filter-btn ${selectedCategoryFilter === cat.id ? 'active' : ''}" 
-              data-cat="${cat.id}"
-              style="padding: 7px 16px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; cursor: pointer; border: 1.5px solid ${selectedCategoryFilter === cat.id ? 'var(--brand-red)' : 'var(--border-light)'}; background: ${selectedCategoryFilter === cat.id ? 'var(--brand-red)' : '#FFF'}; color: ${selectedCategoryFilter === cat.id ? '#FFF' : 'var(--ink-secondary)'}; transition: all 0.15s ease;"
+              id="toggle-station-lock-btn" 
+              style="padding: 7px 16px; border-radius: 999px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; cursor: pointer; border: 1.5px solid ${isStationLocked ? '#D97706' : '#CBD5E1'}; background: ${isStationLocked ? '#FEF3C7' : '#F8FAFC'}; color: ${isStationLocked ? '#92400E' : '#475569'}; display: flex; align-items: center; gap: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);"
+              title="${isStationLocked ? 'Unlock to allow changing station filter' : 'Lock this screen to current station'}"
             >
-              ${cat.label}
+              <span>${isStationLocked ? '🔒 Station Locked' : '🔓 Lock Station'}</span>
             </button>
-          `).join('')}
+          ` : ''}
         </div>
+
+        ${isStationLocked ? `
+          <div style="background: #FEF3C7; border: 1.5px solid #F59E0B; border-radius: 10px; padding: 10px 16px; margin-bottom: 1.2rem; display: flex; align-items: center; justify-content: space-between; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; color: #92400E; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span>🔒 DEDICATED STATION MODE:</span>
+              <span style="background: #FDE68A; padding: 2px 8px; border-radius: 5px;">${selectedCategoryFilter.toUpperCase()}</span>
+              <span style="font-weight: 500; font-size: 0.78rem; color: #B45309;">(Screen only displays orders & batches for this station)</span>
+            </div>
+            <button id="dismiss-station-lock-btn" style="background: transparent; border: none; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; color: #92400E; text-decoration: underline; cursor: pointer;">
+              Unlock Screen
+            </button>
+          </div>
+        ` : ''}
 
         ${!isInitialSyncDone && cookOrders.length === 0 ? `
           <!-- Responsive Loading Skeleton (Never Blank) -->
@@ -791,9 +826,33 @@ export function renderKitchenView(container) {
     // Attach KDS Filter Listeners
     container.querySelectorAll('.kds-filter-btn').forEach(btn => {
       btn.addEventListener('click', () => {
+        if (isStationLocked) {
+          showKdsToast(`🔒 Station is locked to ${selectedCategoryFilter.toUpperCase()}. Unlock first to change.`);
+          return;
+        }
         selectedCategoryFilter = btn.getAttribute('data-cat');
         renderKDS();
       });
+    });
+
+    // Attach Station Lock Listeners
+    container.querySelector('#toggle-station-lock-btn')?.addEventListener('click', () => {
+      isStationLocked = !isStationLocked;
+      if (isStationLocked) {
+        localStorage.setItem('tb_kds_locked_station', selectedCategoryFilter);
+        showKdsToast(`🔒 Screen locked to ${selectedCategoryFilter.toUpperCase()} station`);
+      } else {
+        localStorage.removeItem('tb_kds_locked_station');
+        showKdsToast(`🔓 Station unlocked`);
+      }
+      renderKDS();
+    });
+
+    container.querySelector('#dismiss-station-lock-btn')?.addEventListener('click', () => {
+      isStationLocked = false;
+      localStorage.removeItem('tb_kds_locked_station');
+      showKdsToast(`🔓 Station unlocked`);
+      renderKDS();
     });
 
     // Attach Status Update Listeners (Optimistic UI & Auto-Progression)

@@ -572,3 +572,44 @@ body {
     font-size: 2.2rem;
   }
 }
+
+/* TV Voice Toggle Button */
+.tv-voice-btn {
+  background: #1E293B;
+  color: #F8FAFC;
+  border: 1.5px solid #334155;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+
+.tv-voice-btn:hover {
+  background: #334155;
+  border-color: #475569;
+}
+
+.tv-voice-btn.muted {
+  background: #450A0A;
+  color: #FCA5A5;
+  border-color: #991B1B;
+}
+
+/* Fresh Ready Token Pulse Animation */
+.token-card.ready.fresh-ready-pulse {
+  border: 3.5px solid #16A34A !important;
+  background: #DCFCE7 !important;
+  box-shadow: 0 0 25px rgba(22, 163, 74, 0.6) !important;
+  animation: fresh-flash 1.2s infinite alternate ease-in-out;
+}
+
+@keyframes fresh-flash {
+  0% { transform: scale(1); box-shadow: 0 0 15px rgba(22, 163, 74, 0.4); }
+  100% { transform: scale(1.03); box-shadow: 0 0 32px rgba(22, 163, 74, 0.85); }
+}
