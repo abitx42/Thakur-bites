@@ -337,6 +337,9 @@ const protectedCalls = [
   ['verification review', 'verification.js', 'reviewVerificationApplication', 'manager', { applicationId: 'FAC-TEST', decision: 'APPROVED' }],
   ['version policy update', 'version_policy.js', 'updateAppVersionPolicy', 'admin', { latestVersion: '2.0.0', minimumSupportedVersion: '1.0.0' }],
   ['owner feature flags', 'owner_console.js', 'updateOwnerFeatureFlags', 'manager', { onlineOrderingEnabled: false }],
+  ['workstation invite creation', 'workstation_binding.js', 'createWorkstationInvite', 'manager', { stationType: 'kitchen' }],
+  ['workstation revocation', 'workstation_binding.js', 'revokeWorkstation', 'manager', { workstationId: 'WS-TEST' }],
+  ['workstation directory', 'workstation_binding.js', 'listRegisteredWorkstations', 'manager', {}],
 ];
 
 describe('Administrative current-authority boundaries (real callables)', () => {

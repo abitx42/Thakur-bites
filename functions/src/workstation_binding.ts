@@ -7,6 +7,7 @@ import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
 import { assertCapability, isManagerOrAdmin } from './authorization_policy';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -46,7 +47,7 @@ export const createWorkstationInvite = onCall<CreateWorkstationInviteRequest>(as
 
   await assertNoHoneytokens(request.data, request.auth.uid, 'createWorkstationInvite');
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'manage_shift_pins', 'Only managers or administrators can enroll workstations.');
 
   const { stationType, stationName } = request.data || {};
@@ -189,7 +190,7 @@ export const listRegisteredWorkstations = onCall(async (request) => {
     throw new HttpsError('unauthenticated', 'Staff authentication required.');
   }
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (!isManagerOrAdmin(callerRole)) {
     throw new HttpsError('permission-denied', 'Access denied: Requires administrator or manager privileges.');
   }
@@ -226,7 +227,7 @@ export const revokeWorkstation = onCall(async (request) => {
 
   await assertNoHoneytokens(request.data, request.auth.uid, 'revokeWorkstation');
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'revoke_shift_pin', 'Only managers or administrators can revoke workstations.');
 
   const { workstationId, reason } = request.data || {};
