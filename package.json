@@ -4,11 +4,27 @@
   "description": "Thakur Bites — Next-Gen High-Concurrency Campus Canteen System",
   "private": true,
   "main": "server.js",
+  "engines": { "node": "22.23.3" },
+  "packageManager": "npm@10.9.9",
   "scripts": {
     "start": "node server.js",
     "deploy:antideploy": "./scripts/deploy_antideploy.sh",
-    "build": "test -d functions && (cd functions && npm run build) || echo 'Build complete'",
-    "test": "cd functions && npm test",
-    "security-check": "./scripts/run_all_security_checks.sh"
+    "build": "npm --prefix functions run build",
+    "build:web": "node scripts/build_web.js",
+    "stage:web": "node scripts/stage_web.js",
+    "test": "node scripts/test_offline.js",
+    "pretest:rules": "npm run build",
+    "test:rules": "node scripts/emulator_tests.js",
+    "setup:emulators": "node scripts/emulator_tests.js --download",
+    "test:flutter": "node scripts/flutter_checks.js",
+    "security-check": "node scripts/scan_secrets.js && node scripts/sast_analyzer.js"
+  },
+  "devDependencies": {
+    "firebase-tools": "15.34.0"
+  },
+  "overrides": {
+    "@opentelemetry/core": "2.12.0",
+    "uuid": "11.1.1",
+    "chokidar": "4.0.3"
   }
 }

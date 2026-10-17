@@ -1,52 +1,136 @@
-name: Thakur Bites Platform 2.0 - Production Gated Deployment
+name: Thakur Bites Production Gated Deployment
 
 on:
   release:
-    types: [ published ]
+    types: [published]
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
 
 jobs:
   production-deployment:
     name: Gated Production Deployment
-    runs-on: ubuntu-latest
-    environment: production # Enforces required reviewers approval gate on GitHub
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: production
+    env:
+      CI: 'true'
+      FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true'
+      PUB_CACHE: ${{ github.workspace }}/.cache/pub
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.cache/npm
+      FIREBASE_EMULATORS_PATH: ${{ github.workspace }}/.cache/firebase/emulators
 
     steps:
-      - name: Checkout Source Code
+      - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Setup Node.js (v20)
+      - name: Setup pinned Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
-          cache-dependency-path: functions/package-lock.json
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
 
-      - name: Setup Flutter (v3.29.x)
+      - name: Read Flutter pin and verify npm pin
+        id: pins
+        run: |
+          set -euo pipefail
+          test "$(npm --version)" = '10.9.9'
+          FLUTTER_VERSION="$(< .flutter-version)"
+          [[ "$FLUTTER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          printf 'flutter=%s\n' "$FLUTTER_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pinned Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          flutter-version: ${{ steps.pins.outputs.flutter }}
+          channel: stable
           cache: true
 
-      - name: Install Cloud Functions Dependencies & Build
-        working-directory: functions
-        run: |
-          npm ci
-          npm run build
+      - name: Setup Java 21 for Firebase emulators
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
 
-      - name: Run Master 9-Gate Security & Invariant Verification Runner
+      - name: Install locked Node dependencies in both trees
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix functions ci --no-audit --no-fund
+
+      - name: Install locked Flutter dependencies
+        working-directory: thakur_bites
+        run: flutter pub get --enforce-lockfile
+
+      - name: Run required security and invariant gates
         run: bash scripts/run_all_security_checks.sh
 
-      - name: Production Pre-Flight Governance Check
+      - name: Build production web site into dist/site
+        env:
+          FIREBASE_APP_CHECK_WEB_KEY: ${{ vars.FIREBASE_APP_CHECK_WEB_KEY }}
         run: |
-          node -e "
-            const { validateEnvironmentCredentials } = require('./functions/lib/env_config');
-            process.env.NODE_ENV = 'production';
-            process.env.PROJECT_ID = 'thakur-bites-prod';
-            validateEnvironmentCredentials({ razorpayKeyId: 'rzp_live_sample123', allowSimulation: false });
-            console.log('Production environment credentials passed strict security governance check.');
-          "
+          : "${FIREBASE_APP_CHECK_WEB_KEY:?Set the production FIREBASE_APP_CHECK_WEB_KEY environment variable.}"
+          npm run build:web
 
-      - name: Build Production Flutter Web App Bundle
-        working-directory: thakur_bites
-        run: flutter build web --release
+      - name: Deploy staged Hosting site and Firestore configuration
+        timeout-minutes: 16
+        env:
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          FIREBASE_APP_HOSTING_SITE: ${{ vars.FIREBASE_APP_HOSTING_SITE }}
+          FIREBASE_STAFF_HOSTING_SITE: ${{ vars.FIREBASE_STAFF_HOSTING_SITE }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          : "${FIREBASE_PROJECT_ID:?Set the production FIREBASE_PROJECT_ID environment variable.}"
+          : "${FIREBASE_APP_HOSTING_SITE:?Set the production FIREBASE_APP_HOSTING_SITE environment variable.}"
+          : "${FIREBASE_STAFF_HOSTING_SITE:?Set the production FIREBASE_STAFF_HOSTING_SITE environment variable.}"
+          : "${FIREBASE_SERVICE_ACCOUNT_JSON:?Set the production FIREBASE_SERVICE_ACCOUNT_JSON environment secret.}"
+          [[ "$FIREBASE_PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || { printf '%s\n' 'Invalid Firebase project ID.' >&2; exit 1; }
+          deploy_dir="$(mktemp -d "$RUNNER_TEMP/firebase-deploy.XXXXXXXX")"
+          trap 'rm -rf -- "$deploy_dir"' EXIT
+          credentials_file="$deploy_dir/credentials.json"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > "$credentials_file"
+          unset FIREBASE_SERVICE_ACCOUNT_JSON
+          export GOOGLE_APPLICATION_CREDENTIALS="$credentials_file"
+          node - "$credentials_file" "$FIREBASE_PROJECT_ID" "$deploy_dir/firebase.json" <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          let credentials;
+          try { credentials = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')); }
+          catch { throw new Error('Firebase service account secret is not valid JSON.'); }
+          if (!credentials || credentials.type !== 'service_account' || credentials.project_id !== process.argv[3] ||
+              typeof credentials.client_email !== 'string' || !credentials.client_email.endsWith('.gserviceaccount.com') ||
+              typeof credentials.private_key !== 'string' || !credentials.private_key.startsWith(['-----BEGIN', 'PRIVATE KEY-----'].join(' '))) {
+            throw new Error('A service account for the selected Firebase project is required.');
+          }
+          const sites = { app: process.env.FIREBASE_APP_HOSTING_SITE, staff: process.env.FIREBASE_STAFF_HOSTING_SITE };
+          if (sites.app === sites.staff || Object.values(sites).some(site => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(site))) {
+            throw new Error('Two distinct valid Firebase Hosting site IDs are required.');
+          }
+          const source = JSON.parse(fs.readFileSync('firebase.json', 'utf8'));
+          if (!Array.isArray(source.hosting) || source.hosting.length !== 2 || new Set(source.hosting.map(entry => entry.target)).size !== 2) {
+            throw new Error('Expected the app and staff Hosting configurations.');
+          }
+          const hosting = source.hosting.map(entry => {
+            if (!sites[entry.target] || entry.public !== 'dist/site') throw new Error('Hosting must deploy only the staged dist/site output.');
+            const { target, ...config } = entry;
+            return { ...config, site: sites[target], public: path.resolve('dist/site') };
+          });
+          // Explicit sites prevent the workstation/default .firebaserc targets from selecting production for staging.
+          fs.writeFileSync(process.argv[4], JSON.stringify({
+            firestore: { rules: path.resolve(source.firestore.rules), indexes: path.resolve(source.firestore.indexes) }, hosting,
+          }), { mode: 0o600, flag: 'wx' });
+          NODE
+          timeout --signal=TERM --kill-after=30s 15m ./node_modules/.bin/firebase deploy --config "$deploy_dir/firebase.json" \
+            --only firestore,hosting --project "$FIREBASE_PROJECT_ID" --non-interactive

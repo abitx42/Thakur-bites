@@ -1,99 +1,90 @@
-name: Thakur Bites Platform 2.0 CI & Security Invariant Gates
+name: Thakur Bites CI and Security Gates
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   security-and-invariant-gates:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CI: 'true'
+      FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true'
+      PUB_CACHE: ${{ github.workspace }}/.cache/pub
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.cache/npm
+      FIREBASE_EMULATORS_PATH: ${{ github.workspace }}/.cache/firebase/emulators
 
     steps:
-      - name: Checkout Source Code
+      - name: Checkout source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js (v20)
+      - name: Setup pinned Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
-          cache-dependency-path: functions/package-lock.json
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
 
-      - name: Setup Flutter (v3.29.x)
+      - name: Read Flutter pin and verify npm pin
+        id: pins
+        run: |
+          set -euo pipefail
+          test "$(npm --version)" = '10.9.9'
+          FLUTTER_VERSION="$(< .flutter-version)"
+          [[ "$FLUTTER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          printf 'flutter=%s\n' "$FLUTTER_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pinned Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          flutter-version: ${{ steps.pins.outputs.flutter }}
+          channel: stable
           cache: true
 
-      - name: Install Cloud Functions Dependencies
-        working-directory: functions
-        run: npm ci
-
-      - name: Dependency Vulnerability Security Audit
-        working-directory: functions
-        run: npm audit --audit-level=high
-
-      - name: Scan Codebase for Leaked Secrets & Credentials
-        run: node scripts/scan_secrets.js
-
-      - name: Run SAST Static Application Security Testing
-        run: node scripts/sast_analyzer.js
-
-      - name: Compile Backend TypeScript
-        working-directory: functions
-        run: npm run build
-
-      - name: Run Backend Invariant Security Abuse Suite
-        working-directory: functions
-        run: npm test
-
-      - name: Setup Java 21 (required for Firebase Emulator)
+      - name: Setup Java 21 for Firebase emulators
         uses: actions/setup-java@v5
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '21'
 
-      - name: Install Firebase CLI
-        run: npm install -g firebase-tools
-
-      - name: Run Real Firebase Emulator Test Suite
-        working-directory: functions
+      - name: Install locked Node dependencies in both trees
         run: |
-          set +e
-          firebase emulators:exec --only firestore 'node --test test/emulator/firestore_rules.test.js test/emulator/recovery_approval.test.js test/emulator/transaction_concurrency.test.js' --project thakur-bites-test > emulator.log 2>&1
-          STATUS=$?
-          cat emulator.log
-          if [ $STATUS -ne 0 ]; then
-            FAIL_REASON=$(grep -A 10 -E '(AssertionError|Error:|failing tests:)' emulator.log | tr '\n' ' ' | head -c 200)
-            echo "::error title=Emulator Test Failure::${FAIL_REASON:-Failed with exit code $STATUS}"
-            cat firestore-debug.log 2>/dev/null || true
-            exit $STATUS
-          fi
+          npm ci --no-audit --no-fund
+          npm --prefix functions ci --no-audit --no-fund
 
-      - name: Install Flutter Client Dependencies
+      - name: Install locked Flutter dependencies
         working-directory: thakur_bites
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
-      - name: Run Flutter Static Analysis
-        working-directory: thakur_bites
-        run: dart analyze --fatal-infos
-
-      - name: Run Flutter Client Test Suite
-        working-directory: thakur_bites
-        run: flutter test
-
-      - name: Run Master CI Security Verification Script
+      - name: Run security, offline regression, Flutter and real emulator gates
         run: bash scripts/run_all_security_checks.sh
 
-      - name: Verify Cloud Deployment Dry-Run & Configuration Reality
-        run: |
-          node scripts/audit_deployment_reality.js
-          npx firebase-tools deploy --only firestore,hosting --dry-run --project adi-thakur-bite || echo "Dry-run skipped (unauthenticated CI environment)"
+      - name: Build staged web bundle for inspection
+        env:
+          FIREBASE_APP_CHECK_WEB_KEY: ${{ vars.FIREBASE_APP_CHECK_WEB_KEY }}
+        run: npm run build:web
 
-      - name: Build Flutter Web Production Bundle
-        working-directory: thakur_bites
-        run: flutter build web --release
+      - name: Package public runtime without credentials or deployment
+        run: bash scripts/deploy_antideploy.sh --package-only "$RUNNER_TEMP/thakur-bites-runtime.tar.gz"
+
+      - name: Upload public runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: thakur-bites-public-runtime
+          path: ${{ runner.temp }}/thakur-bites-runtime.tar.gz
+          retention-days: 7
+          if-no-files-found: error

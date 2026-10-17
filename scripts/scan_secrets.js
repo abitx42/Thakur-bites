@@ -21,6 +21,10 @@ const IGNORE_DIRS = new Set([
   '.idea',
   '.vscode',
   '.system_generated',
+  '.tools', // Downloaded, pinned toolchains are not application source.
+  '.cache', // Locked third-party Pub dependencies and emulator binaries.
+  '.omnirush',
+  'dist',
 ]);
 
 const IGNORE_FILES = new Set([

@@ -1,153 +1,175 @@
-# 🍛 Thakur Bites Platform 2.0 — Smart Campus Canteen Operating System
+# Thakur Bites
 
-[![Backend Tests](https://img.shields.io/badge/backend%20invariants-396%20passing-brightgreen.svg)](functions/test/)
-[![Client Tests](https://img.shields.io/badge/flutter%20tests-67%20passing-blue.svg)](thakur_bites/test/)
-[![Emulator Tests](https://img.shields.io/badge/firestore%20emulator-22%20passing-success.svg)](functions/test/emulator/)
-[![Static Analysis](https://img.shields.io/badge/static%20analysis-clean%20(0%20issues)-green.svg)](thakur_bites/)
-[![Firebase](https://img.shields.io/badge/firebase-Cloud%20Functions%20v2-FFCA28.svg)](functions/)
+Campus canteen ordering, kitchen dispatch, counter pickup and TV display. The customer app is Flutter; the staff portals are browser JavaScript; trusted commands run in Firebase Cloud Functions v2 with Firestore and Storage.
 
-**Thakur Bites Platform 2.0** is an enterprise-grade digital canteen pre-ordering, kitchen dispatch (KDS), and counter pickup operating system built specifically for Thakur College of Engineering & Technology (TCET).
+**Security boundary:** clients do not create or settle orders, mutate stock/prices, grant staff roles, or bypass pickup verification. Failures remain failures. Institutional email addresses, local caches and workstation flags are not administrative authority.
 
-It synchronizes three distinct interfaces backed by a single authoritative cloud backend:
-1. **📱 Flutter Customer App**: For students, visitors, and verified teachers/faculty.
-2. **🍳 Staff Operations Hub**: Web workstation portal for Kitchen KDS, Pickup Dispatch, Menu & Inventory Control, Owner Executive Dashboard, and Developer Security Cockpit.
-3. **📺 Standalone 4K TV Board (`web_tv/`)**: Zero-authentication, high-contrast order dispatch monitor for cafeteria wall TVs.
+## Pinned tools and clean Linux setup
 
----
+Run commands from the repository root. No global npm packages are required.
 
-## 🏛️ Platform 2.0 Architecture
+| Tool | Pin / requirement |
+| --- | --- |
+| Node | `22.23.3` (`.nvmrc`) |
+| npm | `10.9.9` (`packageManager`) |
+| Flutter | `3.47.2`, revision `d3b14c876900e553bc736ca19295fc09e3853e8e` |
+| Dart | `3.13.2`, supplied by the Flutter SDK |
+| Firebase CLI | Project-local `firebase-tools@15.34.0` in the root lockfile |
+| Java | 21, for Firestore/Storage emulators |
 
-```mermaid
-flowchart TD
-    subgraph ClientLayer["Client & Operations Layer"]
-        A["📱 Customer App (Flutter Web/Mobile)"] -->|HTTPS / App Check| Gateway["Firebase Cloud Functions v2"]
-        B["🍳 Kitchen KDS Display (Web Hub)"] -->|WebSocket Sync| Firestore[("Authoritative Firestore DB")]
-        C["📦 Pickup Counter Station"] -->|verifyPickup (PIN / QR)| Gateway
-        D["📊 Owner Executive Console"] -->|getOwnerBusinessMetrics| Gateway
-        E["🛡️ Developer Security Cockpit"] -->|executeEmergencyOperationalAction| Gateway
-        F["📺 Standalone TV Board (web_tv/)"] -->|Zero-Auth Read| Firestore
-    end
-
-    subgraph SecurityLayer["Platform 2.0 Invariant Engines"]
-        Gateway --> AU["1. Universal Identity Classifier (Student/Visitor/Teacher)"]
-        Gateway --> PQ["2. Anti-Starvation Priority Queue Scheduler (Fail-Closed)"]
-        Gateway --> SP["3. PBKDF2 Shift PINs & Hardware Device Binding"]
-        Gateway --> RE["4. Authoritative Live Reorder Engine"]
-        Gateway --> IV["5. Two-Phase Inventory Locks (available = onHand - reserved)"]
-        Gateway --> FL["6. Double-Entry Integer Paise Financial Ledgers"]
-        Gateway --> OR["7. Orphaned Payment Reconciler (Zero Cancelled Resurrections)"]
-    end
-
-    subgraph DefenseLayer["Continuous Defense & Automation"]
-        IM["⏰ Hourly Continuous Integrity Monitor"] -->|Checks 15 Invariants| Firestore
-        IM -->|Critical Breach Detected| CB["🚨 Auto-Trip to FINANCIAL_FROZEN"]
-        EOD["⏰ Daily 23:59 Reconciliation Cron"] -->|Rebalances Ledgers| Firestore
-        BK["💾 Cryptographic Backup Restore Validator"] -->|SHA-256 Checksum| Firestore
-    end
-```
-
----
-
-## 🌟 Core Platform 2.0 Innovations
-
-1. **🧑‍🎓 Universal Multi-Role Identity System**:
-   - Google account determines identity hint; backend determines role and priority level.
-   - TCET institutional student emails (`@tcetmumbai.in`) verified automatically. Visitors given safe guest accounts.
-   - In-place faculty verification elevates teachers to Priority Level 2 on the **same UID** without account duplication.
-
-2. **⚡️ Anti-Starvation Priority Queue Scheduling**:
-   - Dynamic Effective Priority formula: $P_{\text{eff}} = P_{\text{base}} + (\text{WaitMinutes} \times 5)$.
-   - Every minute a student ticket waits, it gains $+5$ points, catching up to faculty tickets after 20 minutes to prevent queue stagnation.
-   - Faculty throttled to max 1 concurrent active priority order inside the checkout transaction; subsequent orders drop to standard queue.
-
-3. **🔑 PBKDF2 Shift PINs & Workstation Hardware Binding**:
-   - 6-digit CSPRNG shift PINs derived with PBKDF2 (10,000 iterations + salt) in `shiftPins/{pinId}`.
-   - Binds each PIN to designated counter hardware tablet UUIDs (`tb_workstation_device_id`), blocking unauthorized personal device access.
-   - 5-strike brute-force lockout locks workstation login for 15 minutes.
-
-4. **📺 Standalone 4K TV Display Web App (`web_tv/`)**:
-   - Zero-authentication web app with 3 resilient stream states: 🟢 **Live Stream**, 🟡 **Reconnecting**, and 🔴 **Off-Hours Standby**.
-   - Zero-PII security boundary (strips student names, roll numbers, and payment details).
-   - Synthesized Web Audio API two-tone counter bell chime when tokens enter `READY` state.
-
-5. **📊 Executive Owner Console & Predictive Stockout Forecaster**:
-   - Real-time gross revenue, Digital UPI vs Cash breakdown, AOV, and active ticket distribution.
-   - Run-rate stockout forecaster: $\text{burnRate} = \frac{\text{unitsSold}}{\text{hoursElapsed}}$ and $\text{hoursRemaining} = \frac{\text{availableStock}}{\text{burnRate}}$.
-   - Campus feature flags: Mobile Ordering, Faculty Priority, Cash Counter, and Rush Multiplier (1.0x to 2.5x).
-
-6. **🛡️ Developer Command Cockpit & Four-Eyes Disaster Recovery**:
-   - Real-time security incident stream with deterministic state-machine progression.
-   - Four-eyes approval gate: Unfreezing `FINANCIAL_FROZEN` mode requires two distinct administrators (`requestedBy ≠ approvingAdminUid`) or verified cryptographic SHA-256 break-glass token.
-   - Server-authoritative double-entry ledger whitelist with zero free-text account entries.
-
----
-
-## 📊 Tiered Production-Readiness Verification Matrix
-
-Rather than conflating unit test counts with full production certification, Thakur Bites adheres to an honest multi-tier verification model:
-
-| Verification Tier | Target Area | Status | Evidence / Command |
-| :--- | :--- | :---: | :--- |
-| **Tier 1: Backend Invariants** | Logic, RBAC, ledgers & state machines | ✅ **396 / 396 PASS** | `npm test` in `functions/` (18 test suites) |
-| **Tier 1: Flutter Client** | State, pricing, preferences & UI models | ✅ **67 / 67 PASS** | `flutter test` in `thakur_bites/` (7 test suites) |
-| **Tier 1: Static Code Analysis** | Type safety, secret hygiene & linter | ✅ **0 ISSUES** | `dart analyze --fatal-infos` & `tsc` clean |
-| **Tier 2: Real Firebase Emulator** | Firestore Rules & atomic transactions | ✅ **22 / 22 PASS** | `npm run test:emulator` (Rules, Concurrency, DR) |
-| **Tier 3: Razorpay Test Mode** | Sandbox payment, HMAC & webhook race | ⏳ **In Progress** | Automated harness passing; awaiting manual pilot check |
-| **Tier 4: Physical Device Smoke** | Android release APK & iOS on campus | ⏳ **Awaiting Build** | Real-device installation on TCET Wi-Fi & 4G network |
-| **Pilot 0: TCET Operational Trial**| Canteen staff dry-run with 5 test orders| ⏳ **Staged** | Pilot 0 runbook protocol prepared |
-
----
-
-## 🧪 Master Test & Verification Suite
-
-Run all enterprise security gates sequentially:
+The **Dockerfile is the system-package recipe** for a clean Debian Linux machine: CA certificates, curl, git, make, Python 3, unzip, xz, libGLU and Java 21. Use Docker below if these are not already installed. Native development requires the same prerequisites plus the pinned Node/npm. Do not install npm dependencies globally or change the lockfiles during setup.
 
 ```bash
-# Run Tier 1 unit & invariant suite
-cd functions && npm test
+node --version
+npm --version
+java -version
+make setup
+```
 
-# Run Tier 2 real Firestore emulator suite
-cd functions && npm run test:emulator
+`make setup` performs both `npm ci` installs, clones the pinned Flutter SDK into `.tools/flutter` if absent, checks its exact revision, precaches web/Linux artifacts, runs `flutter pub get --enforce-lockfile`, and downloads both emulator binaries. Initial setup needs Internet access. Node modules, SDK, npm/Pub caches and emulator binaries stay in `node_modules`, `functions/node_modules`, `.tools`, and `.cache` within this project. Generated directories are ignored by git.
 
-# Run Flutter client test suite
-cd thakur_bites && flutter test
+An existing **exactly pinned** SDK can be selected with `FLUTTER_BIN`; otherwise use the project-local SDK. Ensure Java 21 is selected by `JAVA_HOME`/`PATH` before emulator commands.
 
-# Run Master CI Verification Script (9 Gates)
+## Build and run the web app
+
+```bash
+npm run build             # Compile the backend TypeScript
+npm run build:web         # Rebuild Flutter release output and stage public files
+npm start                # http://localhost:8080
+```
+
+Routes: customer `/`, staff `/staff`, administration `/admin`, developer `/developer`, TV `/tv` or `/web_tv`, privacy `/privacy`.
+
+The server binds `127.0.0.1` by default. Set `HOST=0.0.0.0` only when intentionally exposing it; `PORT` defaults to `8080`. `PUBLIC_DIR` defaults to `dist/site`. The compatibility Python launcher serves the same hardened server on loopback port `8081`.
+
+**Publish only `dist/site`, never the repository root or the historical generated bundles checked into it.** Staging overlays rebuilt Flutter output with allowlisted portal assets, rejects symlinks and excludes private configuration/source, dependencies and sourcemaps. A failed staging validation preserves the previous good bundle. Node serving and Firebase Hosting use matching App Check-compatible security headers.
+
+### Firebase / App Check configuration
+
+The checked-in Firebase app identifiers are public configuration, not server credentials. Choose your intended Firebase project and authorized domains before signing in or placing real orders; a localhost static preview does not automatically redirect Firebase requests to emulators.
+
+For authenticated web use, register the app/domains in Firebase App Check with **reCAPTCHA v3** and supply its **public site key**:
+
+```bash
+export FIREBASE_APP_CHECK_WEB_KEY='YOUR_PUBLIC_RECAPTCHA_V3_SITE_KEY'
+npm run build:web
+npm start
+```
+
+The build passes this value to Flutter and generates matching staff `js/publicConfig.js` inside `dist/site`. Without it, a build is for inspection only; the staff bootstrap fails closed and production backend attestation remains mandatory. No debug-token or staff bypass is enabled.
+
+Staff Functions emulator routing is off by default. For explicit local-only development, edit the **public** source `js/publicConfig.js` to use `{ host: '127.0.0.1', port: 5001 }` for `functionsEmulator`; the browser must also be on loopback. That port must serve the real Functions emulator, not this static server. Do not commit an emulator opt-in for production. The automated tests below manage isolated demo emulators themselves and do not require this edit.
+
+## Tests
+
+After setup, the single offline regression command is:
+
+```bash
+make test
+```
+
+This runs HTTP/staging/deploy-script tests, compiles TypeScript and runs backend/client-boundary regressions. The runner isolates its credential home, removes deployment secrets from child environments, and preloads a test-only external TCP/DNS blocker; loopback fixtures remain enabled. It does not install packages, fetch advisories or require Firebase/gateway credentials. This is a regression safeguard, not a sandbox for malicious test code.
+
+Additional checks:
+
+```bash
+npm run test:flutter     # Actual Flutter analyze + unit/widget tests, --no-pub
+npm run test:rules       # Actual Firestore + Storage rules/transaction emulators
+make test-all            # All three suites, after SDK/emulator caches are hydrated
+make audit               # ONLINE npm audits in both trees + local source/history scans
 bash scripts/run_all_security_checks.sh
 ```
 
-| Verification Gate | Test Count | Status | Description |
-| :--- | :---: | :---: | :--- |
-| **Backend Invariant & Security Suite** | 396 | `100% PASS` | Canonical RBAC, distributed refund idempotency, delta accounting rollbacks, TV data minimization, orphaned payments, and four-eyes DR approval. |
-| **Flutter Client Unit & Widget Suite** | 67 | `100% PASS` | Pricing models, UserProfile parser, UserPreferences, ETA Rush scaling, CartProvider, operational banners, and offline recovery. |
-| **Flutter Static Analysis** | — | `0 Errors` | `dart analyze --fatal-infos` passing cleanly with 0 warnings or infos. |
-| **Real Firestore Emulator Suite** | 22 | `100% PASS` | Real Firestore Security Rules enforcement (12 tests), transaction concurrency & overselling prevention (4 tests), and multi-admin DR approval transactions (6 tests). |
-| **Automated Backup & Restore Engine** | 4 | `VERIFIED` | Cryptographic SHA-256 checksum and ledger balance verification. |
-| **100-Order Peak Lunch Rush Simulator** | 100 | `100% PASS` | 100 parallel checkout requests with 0 dropped orders and 0 oversold units. |
-| **Security Invariant Assertion Suite** | 18 | `100% PASS` | 10 attack classes tested against live cloud function signatures (100% defended). |
+`test:rules` compiles the backend first and uses demo projects on ports `8080` (Firestore) and `9199` (Storage); stop another local instance before running. Mocked gateway/Auth tests are not live provider certification. Some older tests are structural assertions or duplicated models, not executions of production handlers. New regressions identify which real modules/callables they exercise; Flutter structural checks do not replace the actual Flutter suite.
 
----
+Current observed results and deployment limitations are recorded in [`reports/security-review.md`](reports/security-review.md), not hard-coded passing badges. The master runner fails on a failed command and reports actual runner results without fabricated fallback counts.
 
-## 🚀 Quick Start & Development Launcher
+## Docker build, run and offline checks
 
-### Interactive Multi-Service Launcher
+Build a static runtime image (backend APIs remain Firebase-hosted):
+
 ```bash
-./scripts/dev_runner.sh
+# Optional: export the PUBLIC App Check key first as shown above.
+docker build --build-arg FIREBASE_APP_CHECK_WEB_KEY -t thakur-bites .
+docker run --rm -p 127.0.0.1:8080:8080 thakur-bites
 ```
-- **`[A]`**: Run Master Security CI Verification Suite (187 Tests)
-- **`[B]`**: Start Staff Hub & TV Display HTTP Server (Port 3000)
-- **`[C]`**: Launch Flutter Web Client (Port 8080)
-- **`[D]`**: Seed Realistic Demo Campus Data into Firestore
 
-### Key Port Matrix
-| Interface | Local URL | Authentication |
-|:---|:---|:---|
-| **Customer Web App** | `http://localhost:8080` | Google Sign-In / Student Login |
-| **Staff Operations Hub** | `http://localhost:3000` | Dynamic Shift PIN (CSPRNG generated) or Email |
-| **Cafeteria 4K TV Board** | `http://localhost:3000/web_tv` | Zero-Auth (Public Read-Only) |
+The multi-stage build installs pinned project dependencies and SDK, runs Node and Flutter checks, builds the web app, then copies **only** public output and the dependency-free HTTP runtime into a non-root final image. Payment/QR credentials must not be build arguments or image files.
 
----
+For an offline, hydrated test image:
 
-## 📄 License & Compliance
+```bash
+docker build --target checks -t thakur-bites-checks .
+docker run --rm --network none thakur-bites-checks
+```
 
-Thakur Bites Platform 2.0 is licensed under the MIT License for Thakur College of Engineering & Technology (TCET).
+The `checks` target includes source and cached tools; do not publish it as the production runtime. Image builds require network access. **Docker was unavailable in the audit sandbox: these container commands are provided but have not been executed there.** Native setup, tests and release web build were executed.
+
+## Required backend deployment configuration
+
+Use `.env.example` as a **name/schema reference only**. The HTTP/build tools do not automatically load it. Inject actual values through the Functions runtime's secure environment/secret-binding configuration; never add a populated env, service-account key or gateway credential to git, a web bundle or an image.
+
+| Variable | Purpose |
+| --- | --- |
+| `QR_SIGNING_SECRET` | Fresh high-entropy secret for pickup credentials; rotate the retired source-default key |
+| `PAYMENT_GATEWAY_KEY_ID` | Correct Razorpay account key ID (`rzp_live_…` in production) |
+| `PAYMENT_GATEWAY_SECRET` | Gateway API/payment signature secret |
+| `RAZORPAY_WEBHOOK_SECRET` | **Separate** webhook signing secret; not the API secret |
+| `ENFORCE_APP_CHECK` | Set to `true`; production enforces attestation regardless of bypass flags |
+| `SIMULATE_PAYMENTS` | `false`; simulation is restricted to explicit isolated test/emulator contexts |
+
+Creating a secret-manager entry alone does not expose it to a function: verify the consuming runtime's bindings. Missing/placeholder credentials deliberately block payment/QR operations. This repository does not provision a cloud account, payment account, secret bindings or initial administrative identity.
+
+### Authorized Firebase deployment
+
+Only a suitably authorized operator should execute deployment commands. Select and verify the project/site variables; do not rely on the workstation's default project or production-only target mapping. Authenticate the **local** CLI through your approved account/service identity first.
+
+```bash
+# Set FIREBASE_PROJECT_ID, FIREBASE_APP_HOSTING_SITE and FIREBASE_STAFF_HOSTING_SITE
+# to the intended project and its TWO distinct Hosting site IDs.
+make test-all
+make audit
+npm run build:web
+./node_modules/.bin/firebase target:apply hosting app "$FIREBASE_APP_HOSTING_SITE" --project "$FIREBASE_PROJECT_ID"
+./node_modules/.bin/firebase target:apply hosting staff "$FIREBASE_STAFF_HOSTING_SITE" --project "$FIREBASE_PROJECT_ID"
+# Review the resulting .firebaserc mapping before this consequential command:
+./node_modules/.bin/firebase deploy --only functions,firestore,storage,hosting --project "$FIREBASE_PROJECT_ID"
+```
+
+Configure the App Check key and runtime secrets **before** exposing authenticated flows. Coordinate backend, rules and client rollout during an appropriate maintenance window; the new rules intentionally reject legacy direct writes. Reauthenticate staff on enrolled hardware, verify fresh role claims/MFA, and test real provider capture/refund/webhook behavior with a test account before production money moves. Do not blindly retry uncertain gateway/refund outcomes or unblock pending reservations: reconcile against the provider through a trusted operator first.
+
+GitHub staging/production workflows use pinned tools, all gates, explicit Hosting sites, temporary restricted credentials and environment-specific approval. Configure each GitHub environment with:
+
+- Variables: `FIREBASE_APP_CHECK_WEB_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_APP_HOSTING_SITE`, `FIREBASE_STAFF_HOSTING_SITE`.
+- Secret: `FIREBASE_SERVICE_ACCOUNT_JSON` for that selected project; apply least-privilege IAM.
+- Production environment protection/reviewer rules in GitHub itself.
+
+**Workflow scope is Firestore and Hosting only.** Functions and Storage rollout still require the separate authorized deployment above. The CI inspection artifact is not a deployed service; publishing a release can trigger the production workflow once it is configured. GitHub Actions/provider authentication and real deployments were not executed during the local audit. Android/iOS release signing and physical-device attestation remain separate checks.
+
+### Optional Antideploy runtime
+
+Package an already-built site without credentials, a build or any network deployment:
+
+```bash
+mkdir -p dist/packages
+bash scripts/deploy_antideploy.sh --package-only dist/packages/thakur-bites-runtime.tar.gz
+```
+
+Output must not exist already. `--dry-run OUTPUT.tar.gz` is the same package-only mode. Archives contain only allowlisted `dist/site` files, `server.js`, `web-public.js`, and generated dependency-free runtime manifests/pins. Unsafe files, symlinks and hardlinks are rejected; archive ordering/ownership/timestamps are normalized.
+
+For a **deliberate live deployment**, inject `ANTIDEPLOY_APPLICATION_ID` and `ANTIDEPLOY_TOKEN` through your approved secret mechanism, set the public App Check key, then run `npm run deploy:antideploy`. The script performs one bounded build/upload and bounded status polling, never reads a home-directory credential config, and never claims success on a timeout/unknown result. Inspect the remote task before retrying an uncertain upload. Live Antideploy behavior was not exercised; script tests use local stubs only.
+
+## Repository map
+
+- `functions/src/`: authoritative checkout, inventory, payments/refunds, pickup, role/session and operational commands.
+- `firestore/firestore.rules`: canonical client-access rules; `thakur_bites/firestore.rules` references the same ruleset.
+- `storage.rules`: private proof and public menu-image access, MIME/size limits and administrative deletion.
+- `js/`: staff portal services/views; `thakur_bites/lib/`: Flutter customer UI/services.
+- `test/`, `functions/test/`, `functions/test/emulator/`, `thakur_bites/test/`: runtime, isolated and emulator regressions.
+- `web-public.js`: shared serving/staging allowlist and Node security policy.
+- `scripts/`: locked setup/build/test/packaging helpers. `scripts/dev_runner.sh` offers local checks/serving only, not implicit deployment/seeding.
+- `dist/site`: generated deployment output, ignored by git.
+
+## License and compliance
+
+Thakur Bites Platform 2.0 retains its existing MIT License notice for Thakur College of Engineering & Technology (TCET).

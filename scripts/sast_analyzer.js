@@ -19,6 +19,10 @@ const IGNORE_DIRS = new Set([
   '.idea',
   '.vscode',
   '.system_generated',
+  '.tools',
+  '.cache',
+  '.omnirush',
+  'dist',
 ]);
 
 const IGNORE_FILES = new Set([
@@ -31,7 +35,8 @@ const SAST_RULES = [
     name: 'Dangerous Dynamic Code Execution (eval / new Function)',
     regex: /\b(?:eval|Function)\s*\(.*?\)/,
     severity: 'CRITICAL',
-    fileExts: ['.js', '.ts', '.dart'],
+    // Dart's `bool Function()` is a type, not JavaScript's dynamic constructor.
+    fileExts: ['.js', '.ts'],
   },
   {
     id: 'SEC-SAST-02',

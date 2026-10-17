@@ -1,0 +1,32 @@
+{
+  "planning": "replan",
+  "context_depth": "dependency",
+  "verification_depth": "impact",
+  "delegation": "two-bounded-implementation-followups",
+  "reason_codes": ["security-boundaries", "remaining-transaction-rollback", "integration-verification", "clean-linux-rebuild"],
+  "write_scope": ["server.js", "web-public.js", "server_no_cache.py", "js/", "functions/", "firestore/", "storage.rules", "firebase.json", "thakur_bites/", "scripts/", "test/", "reports/", "README.md", "package.json", "package-lock.json", "Dockerfile", ".dockerignore", ".nvmrc", ".flutter-version", ".gitignore", ".env.example", "Makefile", ".github/workflows/"],
+  "acceptance_criteria": [
+    "Institutional emails and workstation flags cannot grant administrative Firestore access.",
+    "Client mutations cannot bypass trusted checkout, inventory, payment, refund or pickup handlers.",
+    "Pickup failures persist attempts and cannot bypass credential or readiness checks.",
+    "Privileged and workstation sessions fail closed on revocation, disabled users and invalid timing.",
+    "Public HTTP serving rejects malformed paths and private repository content without crashing.",
+    "Pinned project setup and a container support clean Linux rebuilds with an offline test command."
+  ],
+  "baseline": {"backend_passed": 446, "backend_failed": 2, "npm_known_vulnerabilities": 0},
+  "verification": ["make setup", "make test", "npm run test:flutter", "npm run test:rules", "npm run build:web", "bash scripts/run_all_security_checks.sh", "git diff --check"],
+  "observed_results": {
+    "root_tests": { "passed": 106, "failed": 0, "skipped": 0 },
+    "backend_tests": { "passed": 835, "failed": 0, "skipped": 0 },
+    "flutter_tests": { "passed": 139, "analysis": "No issues found" },
+    "emulator_tests": { "passed": 99, "failed": 0, "skipped": 0, "services": ["firestore", "storage"] },
+    "npm_known_advisories": { "root": 0, "functions": 0 },
+    "native_setup": "passed-linux-aarch64",
+    "web_release_build": "passed-inspection-only-public-App-Check-key-unset",
+    "actual_public_http_smoke": { "passed": 6, "failed": 0 },
+    "public_runtime_package": "dist/packages/thakur-bites-runtime.tar.gz",
+    "docker_build_and_offline_container": "blocked-no-docker-executable-or-daemon",
+    "live_provider_or_deployment_verification": "not-performed"
+  },
+  "evidence_report": "reports/security-review.md"
+}

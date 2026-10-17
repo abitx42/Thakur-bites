@@ -11,11 +11,12 @@
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
     "pretest": "npm run build",
-    "test": "node --test test/*.test.js",
-    "test:emulator": "firebase emulators:exec --only firestore 'node --test test/emulator/*.test.js'"
+    "test": "node --test --test-reporter=spec test/*.test.js",
+    "test:emulator": "npm --prefix .. run test:rules",
+    "test:rules:local": "node --test --test-reporter=spec test/emulator/*.test.js"
   },
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",

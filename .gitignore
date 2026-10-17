@@ -18,3 +18,9 @@ apks/
 *.keystore
 *.jks
 *.p12
+!/.env.example
+node_modules/
+.tools/
+.omnirush/
+dist/
+.cache/
