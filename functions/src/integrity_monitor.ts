@@ -4,8 +4,9 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import * as admin from 'firebase-admin';
 import { logSecurityEvent } from './security_logger';
-import { UserRole, CircuitBreakerLevel, IntegrityAnomalyDoc } from './types';
+import { CircuitBreakerLevel, IntegrityAnomalyDoc } from './types';
 import { enforceAppCheck } from './app_check';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -383,7 +384,7 @@ export const runSecurityIntegrityScan = onCall<void, Promise<IntegrityScanResult
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
-  const role = (request.auth.token.role as UserRole) || 'student';
+  const role = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (role !== 'security_admin' && role !== 'admin' && (role as string) !== 'developer') {
     throw new HttpsError('permission-denied', 'Permission denied: Security Admin, Developer, or Admin role required.');
   }

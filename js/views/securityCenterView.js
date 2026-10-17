@@ -3,8 +3,8 @@
 // 15-Point Invariant Scanner, Menu Catalog Health, RBAC Simulator,
 // Dynamic Security Rate Limits, Step-Up Verification, and Incident Streaming.
 
-import { db, auth, functions } from '../firebase.js?v=5';
-import { doc, collection, onSnapshot, query, limit, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { db, functions } from '../firebase.js?v=5';
+import { doc, collection, onSnapshot, query, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 
 let unsubscribeSecurity = null;
@@ -148,7 +148,7 @@ export function renderSecurityCenterView(container) {
                   SYSTEM OPERATIONAL COCKPIT
                 </h3>
                 <span style="background: ${currentOperationalMode === 'NORMAL' ? '#16A34A' : (currentOperationalMode === 'DEGRADED' ? '#D97706' : '#DC2626')}; color: #FFF; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 800; padding: 3px 10px; border-radius: 999px;">
-                  ● ${currentOperationalMode}
+                   ● ${escapeHtml(currentOperationalMode)}
                 </span>
               </div>
               <p style="font-family: var(--font-sans); font-size: 0.85rem; color: #94A3B8; margin: 4px 0 0 0;">
@@ -180,31 +180,31 @@ export function renderSecurityCenterView(container) {
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; border-top: 1px solid #334155; padding-top: 1rem;">
             <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
               <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">RUNTIME ENGINE</div>
-              <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #38BDF8;">Node.js ${telemetryData ? telemetryData.nodeVersion : 'v24.19.0'}</div>
+               <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #38BDF8;">Node.js ${escapeHtml(telemetryData ? telemetryData.nodeVersion : 'v24.19.0')}</div>
             </div>
             <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
               <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">PROCESS UPTIME</div>
-              <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #4ADE80;">${telemetryData ? Math.floor(telemetryData.uptimeSeconds / 60) + ' mins' : 'Live Active'}</div>
+               <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #4ADE80;">${escapeHtml(telemetryData ? Math.floor(telemetryData.uptimeSeconds / 60) + ' mins' : 'Live Active')}</div>
             </div>
             <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
               <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">MEMORY HEAP</div>
-              <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #FCD34D;">${telemetryData ? telemetryData.memoryUsageMB + ' MB' : '< 128 MB'}</div>
+               <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #FCD34D;">${escapeHtml(telemetryData ? telemetryData.memoryUsageMB + ' MB' : '< 128 MB')}</div>
             </div>
             <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
               <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">SECURITY INCIDENTS</div>
-              <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: ${critCount > 0 ? '#EF4444' : '#4ADE80'};">${telemetryData ? telemetryData.activeSecurityIncidents : critCount} Active</div>
+               <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: ${critCount > 0 ? '#EF4444' : '#4ADE80'};">${escapeHtml(telemetryData ? telemetryData.activeSecurityIncidents : critCount)} Active</div>
             </div>
             <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
               <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">CHECKOUT SUCCESS</div>
-              <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #4ADE80;">${systemTelemetryData && systemTelemetryData.healthIndicators ? (systemTelemetryData.healthIndicators.checkoutSuccessRate * 100).toFixed(0) + '%' : '100%'}</div>
+               <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #4ADE80;">${escapeHtml(systemTelemetryData && systemTelemetryData.healthIndicators ? (systemTelemetryData.healthIndicators.checkoutSuccessRate * 100).toFixed(0) + '%' : '100%')}</div>
             </div>
             <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
               <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">CIRCUIT TRIPS</div>
-              <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: ${systemTelemetryData && systemTelemetryData.counters && systemTelemetryData.counters.circuitBreakerActivations > 0 ? '#F59E0B' : '#4ADE80'};">${systemTelemetryData && systemTelemetryData.counters ? systemTelemetryData.counters.circuitBreakerActivations : 0} Trips</div>
+               <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: ${systemTelemetryData && systemTelemetryData.counters && systemTelemetryData.counters.circuitBreakerActivations > 0 ? '#F59E0B' : '#4ADE80'};">${escapeHtml(systemTelemetryData && systemTelemetryData.counters ? systemTelemetryData.counters.circuitBreakerActivations : 0)} Trips</div>
             </div>
             <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
               <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">AVG PREP TIME</div>
-              <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #38BDF8;">${systemTelemetryData && systemTelemetryData.latencies ? Math.round(systemTelemetryData.latencies.avgPrepTimeMs / 1000) + 's' : '45s'}</div>
+               <div style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: #38BDF8;">${escapeHtml(systemTelemetryData && systemTelemetryData.latencies ? Math.round(systemTelemetryData.latencies.avgPrepTimeMs / 1000) + 's' : '45s')}</div>
             </div>
             <div style="background: #0F172A; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155; display: flex; align-items: center; justify-content: center;">
               <button id="refresh-telemetry-btn" ${telemetryLoading ? 'disabled' : ''} style="background: #1E293B; border: 1px solid #475569; color: #E2E8F0; padding: 8px 12px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer; width: 100%;">
@@ -218,13 +218,13 @@ export function renderSecurityCenterView(container) {
             <div style="margin-top: 1rem; background: #0F172A; border: 1.5px solid #6366F1; border-radius: 10px; padding: 1rem; font-family: var(--font-mono); font-size: 0.8rem;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <span style="color: #A5B4FC; font-weight: 700;">🔐 EPHEMERAL STEP-UP NONCE CHALLENGE ACTIVE</span>
-                <span style="color: #FCD34D;">Expires: ${new Date(stepUpChallenge.expiresAt).toLocaleTimeString()}</span>
+                 <span style="color: #FCD34D;">Expires: ${escapeHtml(new Date(stepUpChallenge.expiresAt).toLocaleTimeString())}</span>
               </div>
-              <div style="color: #CBD5E1; margin-bottom: 6px;">Challenge ID: <code>${stepUpChallenge.challengeId}</code></div>
-              <div style="color: #CBD5E1; margin-bottom: 10px; word-break: break-all;">Nonce: <code>${stepUpChallenge.challengeNonce}</code></div>
+               <div style="color: #CBD5E1; margin-bottom: 6px;">Challenge ID: <code>${escapeHtml(stepUpChallenge.challengeId)}</code></div>
+               <div style="color: #CBD5E1; margin-bottom: 10px; word-break: break-all;">Nonce: <code>${escapeHtml(stepUpChallenge.challengeNonce)}</code></div>
               <div style="display: flex; gap: 8px;">
                 <button id="execute-step-up-btn" class="btn btn--danger btn--sm" ${stepUpExecuting ? 'disabled' : ''}>
-                  ${stepUpExecuting ? 'Executing...' : `Execute Action (${stepUpChallenge.action}) →`}
+                   ${stepUpExecuting ? 'Executing...' : `Execute Action (${escapeHtml(stepUpChallenge.action)}) →`}
                 </button>
                 <button id="dismiss-step-up-btn" class="btn btn--secondary btn--sm">
                   Dismiss
@@ -237,11 +237,11 @@ export function renderSecurityCenterView(container) {
         ${lastScanResult ? `
           <div style="background: ${lastScanResult.status === 'HEALTHY' ? '#064E3B' : (lastScanResult.status === 'CRITICAL_BREACH' ? '#7F1D1D' : '#78350F')}; border: 1.5px solid ${lastScanResult.status === 'HEALTHY' ? '#10B981' : (lastScanResult.status === 'CRITICAL_BREACH' ? '#EF4444' : '#F59E0B')}; border-radius: 12px; padding: 1rem; margin-bottom: 1.5rem; font-family: var(--font-mono); font-size: 0.85rem; color: #FFF;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-              <strong>🛡️ 15-POINT INTEGRITY SCAN RESULT: ${lastScanResult.status}</strong>
-              <span>${new Date(lastScanResult.timestamp).toLocaleTimeString()}</span>
+               <strong>🛡️ 15-POINT INTEGRITY SCAN RESULT: ${escapeHtml(lastScanResult.status)}</strong>
+               <span>${escapeHtml(new Date(lastScanResult.timestamp).toLocaleTimeString())}</span>
             </div>
             <div style="margin-top: 6px; opacity: 0.9;">
-              Anomalies: ${lastScanResult.anomaliesDetected} | Action Taken: <strong>${lastScanResult.actionTaken}</strong>
+               Anomalies: ${escapeHtml(lastScanResult.anomaliesDetected)} | Action Taken: <strong>${escapeHtml(lastScanResult.actionTaken)}</strong>
             </div>
           </div>
         ` : ''}
@@ -258,7 +258,7 @@ export function renderSecurityCenterView(container) {
                   <span>AUTOMATED DISASTER RESTORE DRILL ENGINE</span>
                 </h3>
                 <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; background: ${lastDrillResult && lastDrillResult.status === 'PASSED' ? '#064E3B' : '#334155'}; color: ${lastDrillResult && lastDrillResult.status === 'PASSED' ? '#34D399' : '#CBD5E1'};">
-                  ${lastDrillResult ? lastDrillResult.status : 'DRILL READY'}
+                   ${escapeHtml(lastDrillResult ? lastDrillResult.status : 'DRILL READY')}
                 </span>
               </div>
               <p style="font-family: var(--font-sans); font-size: 0.85rem; color: #94A3B8; margin-top: 4px; margin-bottom: 0;">
@@ -287,7 +287,7 @@ export function renderSecurityCenterView(container) {
                 <span style="font-weight: 800; font-size: 1rem; color: ${lastDrillResult.status === 'PASSED' ? '#4ADE80' : '#F87171'};">
                   ✓ DRILL REPORT: ${escapeHtml(lastDrillResult.drillId)}
                 </span>
-                <span style="color: #94A3B8;">Executed: ${new Date(lastDrillResult.executedAt || Date.now()).toLocaleTimeString()}</span>
+                 <span style="color: #94A3B8;">Executed: ${escapeHtml(new Date(lastDrillResult.executedAt || Date.now()).toLocaleTimeString())}</span>
               </div>
               <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-bottom: 10px;">
                 <div style="background: #1E293B; padding: 8px; border-radius: 6px;">
@@ -343,7 +343,7 @@ export function renderSecurityCenterView(container) {
               return `
                 <div style="background: ${bg}; border: 1px solid ${color}80; border-radius: 8px; padding: 8px 12px; font-family: var(--font-mono); font-size: 0.8rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
                   <div>
-                    <span style="background: ${color}; color: #FFF; padding: 2px 6px; border-radius: 4px; font-weight: 800; font-size: 0.7rem; margin-right: 6px;">${sev}</span>
+                    <span style="background: ${color}; color: #FFF; padding: 2px 6px; border-radius: 4px; font-weight: 800; font-size: 0.7rem; margin-right: 6px;">${escapeHtml(sev)}</span>
                     <strong style="color: #FFF;">${escapeHtml(a.title || 'Alert')}</strong>: <span style="color: #CBD5E1;">${escapeHtml(a.message || '')}</span>
                   </div>
                   <div style="color: #94A3B8; font-size: 0.72rem;">${new Date(a.createdAt || Date.now()).toLocaleTimeString()}</div>
@@ -365,7 +365,7 @@ export function renderSecurityCenterView(container) {
                   <span>MENU CATALOG INTEGRITY & 3-TIER VISUAL COVERAGE</span>
                 </h3>
                 <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; background: ${menuHealthResult && menuHealthResult.status === 'HEALTHY' ? '#064E3B' : (menuHealthResult ? '#7F1D1D' : '#334155')}; color: ${menuHealthResult && menuHealthResult.status === 'HEALTHY' ? '#34D399' : (menuHealthResult ? '#FCA5A5' : '#CBD5E1')};">
-                  ${menuHealthResult ? menuHealthResult.status : 'DIAGNOSTIC READY'}
+                   ${escapeHtml(menuHealthResult ? menuHealthResult.status : 'DIAGNOSTIC READY')}
                 </span>
               </div>
               <p style="font-family: var(--font-sans); font-size: 0.85rem; color: #94A3B8; margin-top: 4px; margin-bottom: 0;">
@@ -386,23 +386,23 @@ export function renderSecurityCenterView(container) {
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 1rem;">
               <div style="background: #0F172A; padding: 10px; border-radius: 8px; border: 1px solid #334155;">
                 <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8;">TOTAL ITEMS</div>
-                <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #FFF;">${menuHealthResult.totalItems}</div>
+                 <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #FFF;">${escapeHtml(menuHealthResult.totalItems)}</div>
               </div>
               <div style="background: #0F172A; padding: 10px; border-radius: 8px; border: 1px solid #334155;">
                 <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #4ADE80;">ACTIVE CATALOG</div>
-                <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #4ADE80;">${menuHealthResult.activeItems}</div>
+                 <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #4ADE80;">${escapeHtml(menuHealthResult.activeItems)}</div>
               </div>
               <div style="background: #0F172A; padding: 10px; border-radius: 8px; border: 1px solid #334155;">
                 <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8;">REAL PHOTOS</div>
-                <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #FFF;">📷 ${menuHealthResult.itemsWithDirectPhotos}</div>
+                 <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #FFF;">📷 ${escapeHtml(menuHealthResult.itemsWithDirectPhotos)}</div>
               </div>
               <div style="background: #0F172A; padding: 10px; border-radius: 8px; border: 1px solid #334155;">
                 <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #FCD34D;">VISUAL KEYS</div>
-                <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #FCD34D;">🎨 ${menuHealthResult.itemsWithVisualKeys}</div>
+                 <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #FCD34D;">🎨 ${escapeHtml(menuHealthResult.itemsWithVisualKeys)}</div>
               </div>
               <div style="background: #0F172A; padding: 10px; border-radius: 8px; border: 1px solid #334155;">
                 <div style="font-family: var(--font-mono); font-size: 0.7rem; color: #94A3B8;">CATEGORIES</div>
-                <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #FFF;">${menuHealthResult.categoriesCount} / ${menuHealthResult.subcategoriesCount}</div>
+                 <div style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; color: #FFF;">${escapeHtml(menuHealthResult.categoriesCount)} / ${escapeHtml(menuHealthResult.subcategoriesCount)}</div>
               </div>
             </div>
 
@@ -489,14 +489,14 @@ export function renderSecurityCenterView(container) {
                   ${simulationResult.allowed ? '✅ AUTHORIZED (200 OK)' : '🚫 REJECTED (403 FORBIDDEN)'}
                 </span>
                 <span style="font-weight: 700; color: #FFF;">
-                  Role: ${simulationResult.simulatedRole} → Operation: ${simulationResult.operation}
+                   Role: ${escapeHtml(simulationResult.simulatedRole)} → Operation: ${escapeHtml(simulationResult.operation)}
                 </span>
               </div>
               <div style="color: #CBD5E1; margin-top: 4px;">
-                ${simulationResult.reason}
+                 ${escapeHtml(simulationResult.reason)}
               </div>
               <div style="font-size: 0.75rem; color: #94A3B8; margin-top: 4px;">
-                Required Capabilities: [${(simulationResult.requiredRoles || []).join(', ')}]
+                 Required Capabilities: [${(simulationResult.requiredRoles || []).map(role => escapeHtml(role)).join(', ')}]
               </div>
             </div>
           ` : ''}
@@ -584,8 +584,8 @@ export function renderSecurityCenterView(container) {
                 const isOverridden = Boolean(rateLimitsData.overrides && rateLimitsData.overrides[ep]);
                 return `
                   <div style="padding: 6px 10px; border-radius: 6px; background: ${isOverridden ? '#78350F' : '#0F172A'}; border: 1px solid ${isOverridden ? '#F59E0B' : '#334155'}; font-family: var(--font-mono); font-size: 0.72rem;">
-                    <strong style="color: #FFF;">${ep}</strong>: 
-                    <span style="font-weight: 700; color: ${isOverridden ? '#FDE68A' : '#38BDF8'};">${cfg.maxRequests} req / ${cfg.windowSeconds}s</span>
+                     <strong style="color: #FFF;">${escapeHtml(ep)}</strong>:
+                     <span style="font-weight: 700; color: ${isOverridden ? '#FDE68A' : '#38BDF8'};">${escapeHtml(cfg.maxRequests)} req / ${escapeHtml(cfg.windowSeconds)}s</span>
                     ${isOverridden ? `<span style="font-size: 0.65rem; background: #F59E0B; color: #000; padding: 1px 4px; border-radius: 3px; margin-left: 4px; font-weight: 800;">DYNAMIC</span>` : ''}
                   </div>
                 `;
@@ -684,7 +684,7 @@ export function renderSecurityCenterView(container) {
                 <div style="background: #0F172A; border: 1px solid #334155; border-radius: 10px; padding: 12px 14px; font-family: var(--font-mono); font-size: 0.82rem;">
                   <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 6px;">
                     <div>
-                      <span style="background: ${sevColor}; color: #FFF; padding: 2px 6px; border-radius: 4px; font-weight: 800; font-size: 0.7rem; margin-right: 6px;">${sev}</span>
+                       <span style="background: ${sevColor}; color: #FFF; padding: 2px 6px; border-radius: 4px; font-weight: 800; font-size: 0.7rem; margin-right: 6px;">${escapeHtml(sev)}</span>
                       <strong style="color: #FFF; font-size: 0.9rem;">${escapeHtml(inc.title || inc.id)}</strong>
                       <span style="color: #94A3B8; font-size: 0.75rem; margin-left: 6px;">[${escapeHtml(inc.id)}]</span>
                     </div>
@@ -833,34 +833,10 @@ export function renderSecurityCenterView(container) {
           devOpLoading = false;
           await loadDeveloperTelemetry();
         } catch (err) {
-          console.warn("Developer setSystemOperationalMode notice (falling back to direct Firestore update):", err);
-          try {
-            const now = serverTimestamp();
-            const statusRef = doc(db, 'publicSystemStatus', 'global');
-            await setDoc(statusRef, {
-              mode: targetDevOpMode,
-              orderingAvailable: targetDevOpMode === 'NORMAL',
-              updatedAt: now
-            }, { merge: true });
-
-            const configRef = doc(db, 'systemConfig', 'global');
-            await setDoc(configRef, {
-              mode: targetDevOpMode,
-              reason: reason,
-              updatedAt: now,
-              updatedBy: auth.currentUser?.uid || 'developer'
-            }, { merge: true });
-
-            currentOperationalMode = targetDevOpMode;
-            showDevOpModal = false;
-            devOpLoading = false;
-            render();
-          } catch (fsErr) {
-            console.error("Direct developer setSystemOperationalMode failed:", fsErr);
-            devOpError = fsErr.message || 'Failed to update system operational status.';
-            devOpLoading = false;
-            render();
-          }
+          console.warn('Developer setSystemOperationalMode failed; authoritative callable remains required:', err);
+          devOpError = err.message || 'Failed to update system operational status.';
+          devOpLoading = false;
+          render();
         }
       });
     }
@@ -1192,4 +1168,3 @@ export function renderSecurityCenterView(container) {
     console.warn('Could not attach incidents listener:', err);
   }
 }
-

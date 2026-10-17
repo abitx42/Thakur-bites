@@ -5,6 +5,7 @@ import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { assertCapability } from './authorization_policy';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -135,7 +136,7 @@ export const submitPilotStaffFeedback = onCall<PilotStaffFeedbackRequest>(async 
   await enforceRateLimit(staffUid, 'rating');
 
   // Verify staff capability / role (BUG-08)
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (!['kitchen', 'pickup', 'cashier', 'manager', 'admin'].includes(callerRole)) {
     throw new HttpsError('permission-denied', 'Staff authorization with valid operational role is required.');
   }
@@ -175,7 +176,7 @@ export const getPilotFeedbackSummary = onCall(async (request): Promise<PilotFeed
     throw new HttpsError('unauthenticated', 'Staff authentication required.');
   }
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'view_business_analytics', 'Insufficient permissions for pilot feedback.');
 
   const [studentSnap, staffSnap] = await Promise.all([

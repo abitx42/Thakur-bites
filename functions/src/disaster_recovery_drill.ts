@@ -2,9 +2,10 @@ import { randomUUID, createHash } from 'crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { UserRole, DisasterDrillReportDoc } from './types';
+import { DisasterDrillReportDoc } from './types';
 import { enforceAppCheck } from './app_check';
 import { logSecurityEvent } from './security_logger';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -33,7 +34,7 @@ export const executeDisasterRecoveryDrill = onCall<{
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (callerRole !== 'security_admin' && callerRole !== 'admin' && (callerRole as string) !== 'developer') {
     throw new HttpsError(
       'permission-denied',

@@ -8,9 +8,18 @@ let environment;
 before(async () => {
   const address = new URL(`http://${process.env.FIREBASE_STORAGE_EMULATOR_HOST || '127.0.0.1:9199'}`);
   assert.ok(['127.0.0.1', 'localhost', '[::1]'].includes(address.hostname), 'Only a local Storage emulator is allowed');
-  environment = await initializeTestEnvironment({ projectId: 'demo-storage-security', storage: {
-    host: address.hostname, port: Number(address.port), rules: fs.readFileSync(path.resolve(__dirname, '../../../storage.rules'), 'utf8'),
-  } });
+  environment = await initializeTestEnvironment({ projectId: 'demo-thakur-bites',
+    firestore: { host: address.hostname, port: 8080, rules: fs.readFileSync(path.resolve(__dirname, '../../../firestore/firestore.rules'), 'utf8') },
+    storage: { host: address.hostname, port: Number(address.port), rules: fs.readFileSync(path.resolve(__dirname, '../../../storage.rules'), 'utf8') },
+  });
+  await environment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await Promise.all([
+      db.doc('staffUsers/admin').set({ uid: 'admin', role: 'admin' }),
+      db.doc('staffUsers/reviewer').set({ uid: 'reviewer', role: 'manager' }),
+      db.doc('staffUsers/manager').set({ uid: 'manager', role: 'manager' }),
+    ]);
+  });
 });
 after(async () => { if (environment) await environment.cleanup(); });
 const reference = (uid, role, name) => (uid ? environment.authenticatedContext(uid, { role }) : environment.unauthenticatedContext()).storage().ref(name);
@@ -59,4 +68,13 @@ test('email addresses, workstation markers and unknown paths cannot grant Storag
   const context = environment.authenticatedContext('pretend-admin', { email: 'admin.person@tcetmumbai.in', isWorkstationSession: true });
   await assertFails(upload(context.storage().ref('menu_images/forged.png')));
   await assertFails(upload(reference('admin', 'admin', 'private/unknown.png')));
+});
+test('stale or mismatched staff claims cannot write Storage after server role changes', async () => {
+  const admin = environment.authenticatedContext('admin', { role: 'admin' }).storage().ref('menu_images/stale.png');
+  await assertSucceeds(upload(admin));
+  await environment.withSecurityRulesDisabled(async context => {
+    await context.firestore().doc('staffUsers/admin').set({ uid: 'admin', role: 'student' });
+  });
+  await assertFails(upload(admin, 12, 'image/webp'));
+  await assertFails(admin.delete());
 });

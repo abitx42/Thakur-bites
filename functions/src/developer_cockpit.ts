@@ -8,6 +8,7 @@ import { logSecurityEvent } from './security_logger';
 import { assertCapability, hasCapability, ROLE_CAPABILITY_MATRIX, SystemCapability } from './authorization_policy';
 import { assertPrivilegedSession } from './privileged_guard';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -113,7 +114,7 @@ export const getDeveloperTelemetry = onCall(async (request) => {
 
   await enforceRateLimit(request.auth.uid, 'developer_telemetry');
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'view_telemetry', 'Only developers or administrators can access developer telemetry.');
 
   if ((request.data as any)?.privilegedSessionId) {
@@ -168,7 +169,7 @@ export const simulatePermissionCheck = onCall<SimulatePermissionRequest>(async (
 
   await enforceRateLimit(request.auth.uid, 'permission_simulation');
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (!['manager', 'admin', 'security_admin'].includes(callerRole)) {
     throw new HttpsError('permission-denied', 'Only staff can execute the permission simulator.');
   }
@@ -248,7 +249,7 @@ export const requestEmergencyStepUpChallenge = onCall<RequestStepUpChallengeData
 
   await enforceRateLimit(request.auth.uid, 'step_up_challenge');
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'emergency_freeze', 'Separation of Duties: Step-up challenges restricted strictly to authorized engineering administrators (developer / security_admin).');
 
   const { action, reason, privilegedSessionId } = request.data || {};
@@ -312,7 +313,7 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
   await enforceRateLimit(request.auth.uid, 'emergency_action');
 
   const authUid = request.auth.uid;
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'emergency_freeze', 'Separation of Duties: Emergency actions restricted strictly to authorized engineering administrators (developer / security_admin).');
 
   const { action, challengeId, challengeNonce, reason, privilegedSessionId } = request.data || {};
@@ -475,5 +476,4 @@ export const executeEmergencyOperationalAction = onCall<EmergencyActionRequest>(
     executedAt: new Date().toISOString(),
   };
 });
-
 

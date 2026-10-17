@@ -16,6 +16,7 @@ import { enforceAppCheck } from './app_check';
 import { assertCapability } from './authorization_policy';
 import { enforceRateLimit } from './rate_limiter';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertCurrentStaffAuthority } from './staff_authority';
 import { logSecurityEvent } from './security_logger';
 import {
   AnalyticsPeriod,
@@ -312,7 +313,7 @@ export const getAiBusinessSnapshot = onCall<{ period?: AnalyticsPeriod }>(async 
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'view_ai_business_insights', 'Only authorized managers or administrators can access business analytics.');
 
   await enforceRateLimit(request.auth.uid, 'ai_business_snapshot');
@@ -335,7 +336,7 @@ export const aiBusinessChat = onCall<{ question: string; period?: AnalyticsPerio
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'view_ai_business_insights', 'Only authorized managers or administrators can query the AI Business Copilot.');
 
   // Honeytoken & injection check on input payload

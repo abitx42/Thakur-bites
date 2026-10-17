@@ -3,7 +3,6 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import {
-  UserRole,
   IntegrityAnomalyDoc,
   DisasterRecoveryLogDoc,
   IntegrityRepairRequest,
@@ -21,6 +20,7 @@ import { assertCapability } from './authorization_policy';
 import { executeIntegrityScan } from './integrity_monitor';
 import { SystemOperationalMode } from './kill_switch';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -62,7 +62,7 @@ export const getIntegrityAnomalies = onCall<{
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(
     callerRole,
     'view_business_analytics',
@@ -107,7 +107,7 @@ export const executeIntegrityRepair = onCall<IntegrityRepairRequest, Promise<Int
       throw new HttpsError('unauthenticated', 'User must be authenticated.');
     }
 
-    const callerRole = (request.auth.token.role as UserRole) || 'student';
+    const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
     if (callerRole !== 'security_admin' && callerRole !== 'admin' && (callerRole as string) !== 'developer') {
       throw new HttpsError(
         'permission-denied',
@@ -294,7 +294,7 @@ export const requestRecoveryApproval = onCall<{
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (callerRole !== 'security_admin' && callerRole !== 'admin' && (callerRole as string) !== 'developer') {
     throw new HttpsError(
       'permission-denied',
@@ -371,7 +371,7 @@ export const generateBreakGlassToken = onCall<{
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (callerRole !== 'security_admin') {
     throw new HttpsError(
       'permission-denied',
@@ -452,7 +452,7 @@ export const adminRestoreOperationalMode = onCall<{
   }
 
   const approvingAdminUid = request.auth.uid;
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (callerRole !== 'security_admin' && callerRole !== 'admin' && (callerRole as string) !== 'developer') {
     throw new HttpsError(
       'permission-denied',
@@ -759,7 +759,7 @@ export const recordCompensatingFinancialEntry = onCall<CompensatingEntryRequest,
       throw new HttpsError('unauthenticated', 'User must be authenticated.');
     }
 
-    const callerRole = (request.auth.token.role as UserRole) || 'student';
+    const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
     if (callerRole !== 'security_admin' && callerRole !== 'admin' && (callerRole as string) !== 'developer') {
       throw new HttpsError(
         'permission-denied',

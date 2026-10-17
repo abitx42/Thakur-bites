@@ -8,6 +8,7 @@ import { logSecurityEvent } from './security_logger';
 import { syncUserCustomClaims } from './claims_manager';
 import { enforceAppVersionPolicy } from './version_policy';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 const db = admin.firestore();
 
@@ -47,7 +48,14 @@ export const provisionUserProfile = onCall<ProvisionUserRequest>(async (request)
   const signInProvider = request.auth.token.firebase?.sign_in_provider;
   const isGoogle = signInProvider === 'google.com';
   const callerRole = (request.auth.token.role as string | undefined)?.toLowerCase();
-  const isPrivileged = callerRole && ['developer', 'admin', 'manager', 'security_admin', 'system'].includes(callerRole);
+  const isPrivileged = Boolean(callerRole && ['developer', 'admin', 'manager', 'security_admin', 'system'].includes(callerRole));
+
+  // A role claim is only a hint until the current Auth account is checked.
+  // This path relaxes the customer-provider policy for staff, so a stale
+  // unexpired admin/developer token must not be enough to use that exception.
+  if (isPrivileged) {
+    await assertCurrentStaffAuthority(userId, request.auth.token);
+  }
 
   // Enforce Google-only customer authentication architecture:
   // Customers must authenticate via Google Sign-In (google.com) or Anonymous guest mode. Non-Google sign-in attempts

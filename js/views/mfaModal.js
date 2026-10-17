@@ -216,7 +216,7 @@ export function renderMfaEnrollmentModal(container, { onEnrolled, onCancel }) {
                 Choose <em>"Enter a setup key"</em> in your Authenticator app and paste this secret:
               </div>
               <div style="background: #FFF; border: 1.5px dashed var(--border-light); padding: 8px 12px; border-radius: 6px; font-family: var(--font-mono); font-size: 1.1rem; font-weight: 800; color: #0F172A; letter-spacing: 0.15em; word-break: break-all; text-align: center;">
-                ${enrollmentData.secret}
+                 ${escapeHtml(enrollmentData.secret)}
               </div>
             </div>
 
@@ -230,7 +230,7 @@ export function renderMfaEnrollmentModal(container, { onEnrolled, onCancel }) {
               </div>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: #92400E;">
                 ${(enrollmentData.recoveryCodes || []).map(code => `
-                  <div style="background: #FFF; padding: 4px 8px; border-radius: 4px; border: 1px solid #FCD34D;">${code}</div>
+                   <div style="background: #FFF; padding: 4px 8px; border-radius: 4px; border: 1px solid #FCD34D;">${escapeHtml(code)}</div>
                 `).join('')}
               </div>
             </div>

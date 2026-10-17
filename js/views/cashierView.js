@@ -13,6 +13,11 @@ let isProcessingPayment = false;
 let feedbackMessage = null;
 let cashierAudioCtx = null;
 
+function displayQuantity(value) {
+  const quantity = Number(value);
+  return Number.isSafeInteger(quantity) && quantity > 0 && quantity <= 100 ? quantity : 1;
+}
+
 function getCashierAudioContext() {
   if (!cashierAudioCtx || cashierAudioCtx.state === 'closed') {
     cashierAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -236,7 +241,7 @@ export function renderCashierView(container) {
       const orderId = o.id || o.orderId;
       const isSelected = Boolean(selectedId && orderId === selectedId);
       const total = Number(o.totalAmount) || (o.totalAmountPaise ? o.totalAmountPaise / 100 : 0);
-      const itemsCount = Array.isArray(o.items) ? o.items.reduce((sum, it) => sum + (it.quantity || 1), 0) : 0;
+       const itemsCount = Array.isArray(o.items) ? o.items.reduce((sum, it) => sum + displayQuantity(it.quantity), 0) : 0;
       const timeDisplay = formatOrderDateTime(o.createdAt);
 
       return `
@@ -399,12 +404,15 @@ export function renderCashierView(container) {
                     ORDER ITEMS:
                   </div>
                   <div style="background: var(--bg-surface); border-radius: 10px; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto;">
-                    ${(activeSelected.items || []).map(i => `
-                      <div style="display: flex; justify-content: space-between; font-family: var(--font-sans); font-size: 0.88rem; font-weight: 600;">
-                        <span>${i.quantity || 1}x ${escapeHtml(i.name)}</span>
-                        <span style="font-family: var(--font-mono);">₹${((Number(i.price) || 0) * (i.quantity || 1)).toFixed(2)}</span>
-                      </div>
-                    `).join('')}
+                     ${(activeSelected.items || []).map(i => {
+                       const quantity = displayQuantity(i.quantity);
+                       return `
+                       <div style="display: flex; justify-content: space-between; font-family: var(--font-sans); font-size: 0.88rem; font-weight: 600;">
+                         <span>${quantity}x ${escapeHtml(i.name)}</span>
+                         <span style="font-family: var(--font-mono);">₹${((Number(i.price) || 0) * quantity).toFixed(2)}</span>
+                       </div>
+                     `;
+                     }).join('')}
                   </div>
                 </div>
 

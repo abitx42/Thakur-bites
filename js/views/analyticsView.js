@@ -31,6 +31,11 @@ function escapeHtml(str) {
   }[m]));
 }
 
+function displayQuantity(value) {
+  const quantity = Number(value);
+  return Number.isSafeInteger(quantity) && quantity > 0 && quantity <= 100 ? quantity : 1;
+}
+
 export function renderAnalyticsView(container) {
   if (unsubscribeOrders) unsubscribeOrders();
   if (unsubscribeMenu) unsubscribeMenu();
@@ -73,7 +78,7 @@ export function renderAnalyticsView(container) {
       (order.items || []).forEach(it => {
         const id = it.id || it.itemId || it.name;
         if (id) {
-          itemSalesCount[id] = (itemSalesCount[id] || 0) + (it.quantity || 1);
+           itemSalesCount[id] = (itemSalesCount[id] || 0) + displayQuantity(it.quantity);
         }
       });
     });
@@ -609,7 +614,7 @@ export function renderAnalyticsView(container) {
               </span>
             </div>
             <div style="font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.6; max-height: 200px; overflow-y: auto; color: #E2E8F0;">
-              ${simulationLogs.map(l => `<div>${l}</div>`).join('')}
+               ${simulationLogs.map(l => `<div>${escapeHtml(l)}</div>`).join('')}
             </div>
           </div>
         ` : ''}

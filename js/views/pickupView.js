@@ -18,6 +18,11 @@ let scannerFeedbackType = 'success'; // 'success' | 'error'
 let keydownListener = null;
 let pickupAudioCtx = null;
 
+function displayQuantity(value) {
+  const quantity = Number(value);
+  return Number.isSafeInteger(quantity) && quantity > 0 && quantity <= 100 ? quantity : 1;
+}
+
 function isOrderReadyForPickup(order) {
   const isPaid = order.paymentStatus === 'paid' || order.paymentStatus === 'captured';
   return isPaid && (order.status === 'ready' ||
@@ -885,7 +890,7 @@ export function renderPickupView(container) {
 function renderOrderCard(order, isReady) {
   const isLocked = order.isLockedForInvestigation || (order.failedPinAttempts >= 3);
   const items = order.items || [];
-  const totalQty = items.reduce((s, i) => s + (i.quantity || 1), 0);
+  const totalQty = items.reduce((s, i) => s + displayQuantity(i.quantity), 0);
 
   return `
     <div class="pickup-order-card" style="background: #FFF; border: 1.5px solid ${isReady ? '#86EFAC' : 'var(--border-light)'}; border-radius: 14px; padding: 1.2rem; box-shadow: 0 2px 6px rgba(0,0,0,0.03); display: flex; flex-direction: column; justify-content: space-between;">
@@ -931,9 +936,10 @@ function renderOrderCard(order, isReady) {
           </div>
           ${items.map(item => {
             const isInstant = item.type === 'instant' || (!item.type && ((item.category || '').toLowerCase().includes('drink') || (item.category || '').toLowerCase().includes('bottle')));
+            const quantity = displayQuantity(item.quantity);
             return `
             <div style="display: flex; justify-content: space-between; align-items: center; font-family: var(--font-sans); font-size: 0.85rem; margin-bottom: 3px;">
-              <span><strong>${item.quantity}x</strong> ${escapeHtml(item.name || item.itemId)}${item.customization ? ` <span style="font-size: 0.75rem; font-weight: 700; color: #D97706;">(${escapeHtml(item.customization)})</span>` : ''}</span>
+              <span><strong>${quantity}x</strong> ${escapeHtml(item.name || item.itemId)}${item.customization ? ` <span style="font-size: 0.75rem; font-weight: 700; color: #D97706;">(${escapeHtml(item.customization)})</span>` : ''}</span>
               ${isInstant ? `<span style="font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700; color: #0284C7; background: #E0F2FE; padding: 1px 6px; border-radius: 4px;">📦 Packaged</span>` : ''}
             </div>
           `;

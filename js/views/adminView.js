@@ -1,7 +1,6 @@
 // Phase 11 — Live Menu & Stock Management View with Distinct Cooked vs Store Item Logic
 import { 
   db,
-  auth,
   functions,
   subscribeMenuItems, 
   toggleItemAvailability, 
@@ -14,7 +13,7 @@ import {
 } from '../firebase.js?v=5';
 import { renderMenuVisualHtml, VISUAL_FAMILIES } from '../menuVisualResolver.js';
 import { staffAuth } from '../auth.js?v=8';
-import { doc, getDoc, Timestamp, onSnapshot, collection, query, where, setDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { doc, onSnapshot, collection, query, where } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
 import { renderDailyBoardModal } from './dailyBoardModal.js?v=1';
@@ -366,12 +365,12 @@ export function renderAdminView(container, options = {}) {
                       ${pin.role === 'kitchen' ? '👨‍🍳 KITCHEN' : (pin.role === 'pickup' ? '🛍️ PICKUP' : '💵 CASHIER')}
                     </span>
                     <span style="font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: ${pin.status === 'ACTIVE' ? '#DCFCE7' : '#FEE2E2'}; color: ${pin.status === 'ACTIVE' ? '#166534' : '#991B1B'};">
-                      ${pin.status}
+                       ${escapeHtml(pin.status)}
                     </span>
                   </div>
 
                   <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-top: 4px;">
-                    Window: <strong>${pin.shiftWindow}</strong> · Date: <strong>${pin.shiftDate}</strong>
+                     Window: <strong>${escapeHtml(pin.shiftWindow)}</strong> · Date: <strong>${escapeHtml(pin.shiftDate)}</strong>
                   </div>
 
                   <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-secondary); margin-top: 4px;">
@@ -381,7 +380,7 @@ export function renderAdminView(container, options = {}) {
                   <div style="display: flex; gap: 8px; margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--border-light);">
                     <button 
                       class="revoke-shift-pin-btn" 
-                      data-pin-id="${pin.pinId || pin.id}"
+                       data-pin-id="${escapeHtml(pin.pinId || pin.id)}"
                       ${pin.status !== 'ACTIVE' ? 'disabled' : ''}
                       style="flex: 1; padding: 6px; border-radius: 6px; border: 1px solid #DC2626; background: #FFF; color: #DC2626; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; cursor: pointer;"
                     >
@@ -537,7 +536,7 @@ export function renderAdminView(container, options = {}) {
                                   </span>
                                 ` : ''}
                                 <span style="font-family: var(--font-mono); font-size: 0.75rem; background: #FBE7BE; color: #6B4408; padding: 2px 8px; border-radius: 4px; font-weight: 700;">
-                                  ~${item.prepMinutes || 5} min
+                                 ~${escapeHtml(item.prepMinutes || 5)} min
                                 </span>
                                 <span style="font-family: var(--font-mono); font-size: 0.75rem; background: var(--bg-surface); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-light);">
                                   ${escapeHtml(item.subCategory || item.category || '')}
@@ -547,7 +546,7 @@ export function renderAdminView(container, options = {}) {
 
                             <div style="text-align: right; flex-shrink: 0;">
                               <div style="font-family: var(--font-mono); font-size: 1.25rem; font-weight: 800; color: var(--ink-primary);">
-                                ₹${item.price}
+                                 ₹${escapeHtml(item.price)}
                               </div>
                             </div>
                           </div>
@@ -640,7 +639,7 @@ export function renderAdminView(container, options = {}) {
 
                             <div style="text-align: right; flex-shrink: 0;">
                               <div style="font-family: var(--font-mono); font-size: 1.25rem; font-weight: 800; color: var(--ink-primary);">
-                                ₹${item.price}
+                                 ₹${escapeHtml(item.price)}
                               </div>
                               <span style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; color: ${isInStock ? '#16A34A' : '#DC2626'};">
                                 ${isInStock ? `${stock} in stock` : '0 (Sold Out)'}
@@ -758,7 +757,7 @@ export function renderAdminView(container, options = {}) {
                     EDIT DISH DETAILS
                   </h3>
                   <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-secondary);">
-                    Item ID: ${editingItem.id}
+                     Item ID: ${escapeHtml(editingItem.id)}
                   </span>
                 </div>
                 <button id="close-edit-modal-btn" style="background: transparent; border: none; font-size: 1.4rem; cursor: pointer; color: var(--ink-secondary);">✕</button>
@@ -824,12 +823,12 @@ export function renderAdminView(container, options = {}) {
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">
                       Price (₹) ${!canEditPrice ? '<span style="color:#DC2626; font-size:0.7rem;">(🔒 Manager/Admin only)</span>' : ''}
                     </label>
-                    <input type="number" id="edit-price" value="${editingItem.price}" required ${!canEditPrice ? 'disabled title="Price edits restricted to Manager or Admin"' : ''} style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; box-sizing: border-box; ${!canEditPrice ? 'background: #F3F4F6; cursor: not-allowed;' : ''}" />
+                   <input type="number" id="edit-price" value="${escapeHtml(editingItem.price)}" required ${!canEditPrice ? 'disabled title="Price edits restricted to Manager or Admin"' : ''} style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; box-sizing: border-box; ${!canEditPrice ? 'background: #F3F4F6; cursor: not-allowed;' : ''}" />
                   </div>
 
                   <div>
                     <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Prep Time (mins)</label>
-                    <input type="number" id="edit-prep" value="${editingItem.prepMinutes || 0}" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1rem; box-sizing: border-box;" />
+                   <input type="number" id="edit-prep" value="${escapeHtml(editingItem.prepMinutes || 0)}" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 1rem; box-sizing: border-box;" />
                   </div>
                 </div>
 
@@ -885,7 +884,7 @@ export function renderAdminView(container, options = {}) {
                 <!-- Batch Date (for store items) -->
                 <div style="margin-bottom: 1.8rem;">
                   <label style="display: block; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin-bottom: 4px;">Stock Batch / Arrival Date (Optional)</label>
-                  <input type="text" id="edit-batch" value="${editingItem.batchDate || ''}" placeholder="e.g. 31-Aug / Lot #4" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.95rem; box-sizing: border-box;" />
+                   <input type="text" id="edit-batch" value="${escapeHtml(editingItem.batchDate || '')}" placeholder="e.g. 31-Aug / Lot #4" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid var(--border-light); font-family: var(--font-mono); font-size: 0.95rem; box-sizing: border-box;" />
                 </div>
 
                 <!-- Actions -->
@@ -1071,8 +1070,8 @@ export function renderAdminView(container, options = {}) {
                   </div>
                   <p style="font-family: var(--font-sans); font-size: 0.8rem; color: #166534; margin: 10px 0 0 0;">
                     ${credModalResult.type === 'pin' 
-                      ? `Role: <strong>${credModalResult.role.toUpperCase()}</strong> · Window: <strong>${credModalResult.window}</strong><br>Write this PIN down or provide to staff. Counter tablets can unlock with this PIN.`
-                      : `Station: <strong>${credModalResult.stationName} (${credModalResult.stationType.toUpperCase()})</strong><br>Valid for 15 minutes. Enter this code on the tablet under Staff Workstation -> Enroll Terminal tab.`}
+                       ? `Role: <strong>${escapeHtml(String(credModalResult.role || '').toUpperCase())}</strong> · Window: <strong>${escapeHtml(credModalResult.window)}</strong><br>Write this PIN down or provide to staff. Counter tablets can unlock with this PIN.`
+                       : `Station: <strong>${escapeHtml(credModalResult.stationName)} (${escapeHtml(String(credModalResult.stationType || '').toUpperCase())})</strong><br>Valid for 15 minutes. Enter this code on the tablet under Staff Workstation -> Enroll Terminal tab.`}
                   </p>
                 </div>
               ` : ''}
@@ -1721,34 +1720,10 @@ export function renderAdminView(container, options = {}) {
           operationalModeLoading = false;
           render();
         } catch (err) {
-          console.warn("setSystemOperationalMode notice (falling back to direct Firestore update):", err);
-          try {
-            const now = serverTimestamp();
-            const statusRef = doc(db, 'publicSystemStatus', 'global');
-            await setDoc(statusRef, {
-              mode: targetOperationalMode,
-              orderingAvailable: targetOperationalMode === 'NORMAL',
-              updatedAt: now
-            }, { merge: true });
-
-            const configRef = doc(db, 'systemConfig', 'global');
-            await setDoc(configRef, {
-              mode: targetOperationalMode,
-              reason: reason,
-              updatedAt: now,
-              updatedBy: auth.currentUser?.uid || 'admin'
-            }, { merge: true });
-
-            currentMode = targetOperationalMode;
-            showOperationalModal = false;
-            operationalModeLoading = false;
-            render();
-          } catch (fsErr) {
-            console.error("Direct setSystemOperationalMode failed:", fsErr);
-            operationalModeError = fsErr.message || 'Failed to update system operational status.';
-            operationalModeLoading = false;
-            render();
-          }
+          console.warn('setSystemOperationalMode failed; authoritative callable remains required:', err);
+          operationalModeError = err.message || 'Failed to update system operational status.';
+          operationalModeLoading = false;
+          render();
         }
       });
     }
@@ -1760,40 +1735,14 @@ export function renderAdminView(container, options = {}) {
 
         btn.disabled = true;
         btn.textContent = 'Approving...';
-        let handled = false;
         try {
           const reviewFn = httpsCallable(functions, 'reviewVerificationApplication');
           await reviewFn({ applicationId: appId, decision: 'APPROVED' });
-          handled = true;
         } catch (fnErr) {
-          console.warn("reviewVerificationApplication function failed, falling back to direct Firestore update:", fnErr);
-        }
-
-        if (!handled) {
-          try {
-            const appRef = doc(db, 'verificationApplications', appId);
-            const appSnap = await getDoc(appRef);
-            if (appSnap.exists()) {
-              const appData = appSnap.data();
-              await updateDoc(appRef, {
-                status: 'APPROVED',
-                reviewedAt: Timestamp.now(),
-              });
-              if (appData.userId) {
-                await updateDoc(doc(db, 'users', appData.userId), {
-                  accountType: appData.applicationType || 'TEACHER',
-                  verificationStatus: 'VERIFIED',
-                  priorityLevel: 1,
-                  isVerified: true,
-                  updatedAt: Timestamp.now(),
-                });
-              }
-            }
-          } catch (fsErr) {
-            alert('Approval Error: ' + (fsErr.message || fsErr));
-            btn.disabled = false;
-            btn.textContent = '✓ Approve Faculty';
-          }
+          console.warn('reviewVerificationApplication failed; authoritative callable remains required:', fnErr);
+          alert('Approval Error: ' + (fnErr.message || fnErr));
+          btn.disabled = false;
+          btn.textContent = '✓ Approve Faculty';
         }
       });
     });
@@ -1806,38 +1755,14 @@ export function renderAdminView(container, options = {}) {
 
         btn.disabled = true;
         btn.textContent = 'Rejecting...';
-        let handled = false;
         try {
           const reviewFn = httpsCallable(functions, 'reviewVerificationApplication');
           await reviewFn({ applicationId: appId, decision: 'REJECTED', reviewNotes: reason });
-          handled = true;
         } catch (fnErr) {
-          console.warn("reviewVerificationApplication reject function failed, falling back to direct Firestore update:", fnErr);
-        }
-
-        if (!handled) {
-          try {
-            const appRef = doc(db, 'verificationApplications', appId);
-            const appSnap = await getDoc(appRef);
-            if (appSnap.exists()) {
-              const appData = appSnap.data();
-              await updateDoc(appRef, {
-                status: 'REJECTED',
-                reviewNotes: reason,
-                reviewedAt: Timestamp.now(),
-              });
-              if (appData.userId) {
-                await updateDoc(doc(db, 'users', appData.userId), {
-                  verificationStatus: 'REJECTED',
-                  updatedAt: Timestamp.now(),
-                });
-              }
-            }
-          } catch (fsErr) {
-            alert('Rejection Error: ' + (fsErr.message || fsErr));
-            btn.disabled = false;
-            btn.textContent = '✕ Reject';
-          }
+          console.warn('reviewVerificationApplication failed; authoritative callable remains required:', fnErr);
+          alert('Rejection Error: ' + (fnErr.message || fnErr));
+          btn.disabled = false;
+          btn.textContent = '✕ Reject';
         }
       });
     });
@@ -2040,5 +1965,3 @@ export function cleanupAdminView() {
   currentApplications = [];
   currentShiftPins = [];
 }
-
-

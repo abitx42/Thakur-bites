@@ -373,7 +373,7 @@ export const getPendingVerificationApplications = onCall(async (request) => {
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const reviewerRole = (request.auth.token.role as string | undefined) || '';
+  const reviewerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (!['manager', 'admin', 'security_admin'].includes(reviewerRole)) {
     throw new HttpsError('permission-denied', 'Staff permissions required to view applications.');
   }

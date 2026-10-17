@@ -101,10 +101,10 @@ export function renderWorkstationView(container) {
                 <div style="background: #FEF3C7; border: 1.5px solid #FDE68A; border-radius: 8px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                   <div>
                     <span style="font-family: var(--font-mono); font-size: 1.2rem; font-weight: 800; color: #B45309; letter-spacing: 0.1em; background: #FFF; padding: 2px 8px; border-radius: 4px; border: 1px solid #F59E0B;">
-                      ${inv.inviteCode}
+                       ${escapeHtml(inv.inviteCode)}
                     </span>
                     <span style="font-family: var(--font-sans); font-size: 0.85rem; font-weight: 600; margin-left: 10px; color: var(--ink-primary);">
-                      ${escapeHtml(inv.stationName)} (${inv.stationType.toUpperCase()})
+                       ${escapeHtml(inv.stationName)} (${escapeHtml(String(inv.stationType || '').toUpperCase())})
                     </span>
                   </div>
                   <div style="font-family: var(--font-mono); font-size: 0.75rem; color: #92400E;">
@@ -167,7 +167,7 @@ export function renderWorkstationView(container) {
                         </td>
                         <td style="padding: 12px 10px; text-align: right;">
                           ${!isRevoked ? `
-                            <button class="btn btn--outline-danger btn--sm revoke-ws-btn" data-id="${ws.workstationId}">
+                             <button class="btn btn--outline-danger btn--sm revoke-ws-btn" data-id="${escapeHtml(ws.workstationId)}">
                               Revoke Access
                             </button>
                           ` : '<span style="color: #94A3B8;">Revoked</span>'}

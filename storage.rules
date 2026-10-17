@@ -9,13 +9,18 @@ service firebase.storage {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function currentStaffRoleIn(roles) {
+      // Storage rules otherwise trust an old ID-token role forever. Bind every
+      // administrative object operation to the server-owned staffUsers record
+      // and require the token role to agree with it.
+      return isAuthenticated()
+        && firestore.exists(/databases/(default)/documents/staffUsers/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/staffUsers/$(request.auth.uid)).data.role in roles
+        && request.auth.token.role == firestore.get(/databases/(default)/documents/staffUsers/$(request.auth.uid)).data.role;
+    }
+
     function hasAdministrativeAccess() {
-      return isAuthenticated() && 'role' in request.auth.token && (
-        request.auth.token.role == 'admin' ||
-        request.auth.token.role == 'developer' ||
-        request.auth.token.role == 'manager' ||
-        request.auth.token.role == 'security_admin'
-      );
+      return currentStaffRoleIn(['admin', 'developer', 'manager', 'security_admin', 'system']);
     }
 
     function isManagerOrAdmin() {

@@ -72,6 +72,12 @@ function harness() {
         },
         set(docRef, data, options) { writes.push(() => docRef.set(data, options)); },
         update(docRef, data) { writes.push(() => docRef.update(data)); },
+        create(docRef, data) {
+          writes.push(async () => {
+            assert.equal(docs.has(docRef.path), false, `Cannot create existing ${docRef.path}`);
+            await docRef.set(data);
+          });
+        },
       });
       for (const write of writes) await write();
       return result;
@@ -259,7 +265,7 @@ describe('T3 current privileged authority (real helper)', () => {
     const secret = mfa.base32Encode(Buffer.alloc(20, 7));
     h.put('mfaEnrollments', 'admin-caller', { mfaEnabled: true, secretBase32: secret });
     const issued = await mfa.createPrivilegedSession.run({
-      auth: { uid: 'admin-caller', token: { role: 'admin' } }, app: { appId: 'local-test' },
+      auth: h.staffAuth('admin-caller', 'admin'), app: { appId: 'local-test' },
       data: { totpCode: mfa.generateTotp(secret, Math.floor(Date.now() / 30000)) },
     });
     assert.equal(issued.success, true);

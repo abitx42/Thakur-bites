@@ -7,6 +7,7 @@ import { enforceRateLimit } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
 import { isAdministrativeRole, isDeveloperRole } from './authorization_policy';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -135,8 +136,9 @@ export const enrollMfaTotp = onCall(async (request) => {
   }
 
   const userId = request.auth.uid;
+  const currentRole = await assertCurrentStaffAuthority(userId, request.auth.token);
   const userEmail = (request.auth.token.email as string | undefined)?.toLowerCase().trim() || 'user';
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = currentRole as string;
 
   if (!isAdministrativeRole(callerRole) && !isDeveloperRole(callerRole)) {
     throw new HttpsError('permission-denied', 'MFA enrollment is currently restricted to Administrative & Developer accounts.');
@@ -187,6 +189,7 @@ export const verifyAndEnableMfaTotp = onCall(async (request) => {
   }
 
   const userId = request.auth.uid;
+  await assertCurrentStaffAuthority(userId, request.auth.token);
   await enforceRateLimit(userId, 'mfa_activation');
 
   const { code } = request.data || {};
@@ -239,7 +242,7 @@ export const createPrivilegedSession = onCall(async (request) => {
   }
 
   const userId = request.auth.uid;
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(userId, request.auth.token);
 
   if (!isAdministrativeRole(callerRole) && !isDeveloperRole(callerRole)) {
     throw new HttpsError('permission-denied', 'Privileged sessions are only available to administrative and engineering roles.');
@@ -248,66 +251,16 @@ export const createPrivilegedSession = onCall(async (request) => {
   await enforceRateLimit(userId, 'privileged_session_auth');
 
   const { totpCode, recoveryCode } = request.data || {};
-  const mfaDoc = await db.collection('mfaEnrollments').doc(userId).get();
-
-  if (!mfaDoc.exists || !mfaDoc.data()?.mfaEnabled) {
-    throw new HttpsError('failed-precondition', 'MFA_ENROLLMENT_REQUIRED: You must configure an Authenticator App to access privileged portals.');
-  }
-
-  const mfaData = mfaDoc.data()!;
-  let mfaMethod: 'TOTP' | 'RECOVERY_CODE' = 'TOTP';
-
-  if (totpCode) {
-    const verification = verifyTotpToken(mfaData.secretBase32, String(totpCode), 1);
-    if (!verification.valid) {
-      await logSecurityEvent({
-        eventType: 'PRIVILEGED_AUTH_FAILED_BAD_TOTP',
-        severity: 'MEDIUM',
-        actorUid: userId,
-        details: { role: callerRole },
-      });
-      throw new HttpsError('unauthenticated', 'Incorrect authenticator code. Please enter the current 6-digit code.');
-    }
-
-    // Replay defense
-    if (mfaData.lastUsedStep && verification.matchedStep && verification.matchedStep <= mfaData.lastUsedStep) {
-      throw new HttpsError('invalid-argument', 'Authenticator code already consumed. Please wait for the next 30-second token.');
-    }
-
-    await db.collection('mfaEnrollments').doc(userId).update({
-      lastUsedStep: verification.matchedStep,
-    });
-  } else if (recoveryCode) {
-    // Check single-use recovery code
-    const cleanRecovery = String(recoveryCode).trim().toUpperCase();
-    const codeHash = crypto.createHash('sha256').update(cleanRecovery).digest('hex');
-    const existingHashes: string[] = Array.isArray(mfaData.recoveryCodeHashes) ? mfaData.recoveryCodeHashes : [];
-
-    const matchedIndex = existingHashes.indexOf(codeHash);
-    if (matchedIndex === -1) {
-      throw new HttpsError('unauthenticated', 'Invalid backup recovery code.');
-    }
-
-    // Consume single-use code immediately
-    existingHashes.splice(matchedIndex, 1);
-    await db.collection('mfaEnrollments').doc(userId).update({
-      recoveryCodeHashes: existingHashes,
-    });
-    mfaMethod = 'RECOVERY_CODE';
-
-    await logSecurityEvent({
-      eventType: 'MFA_RECOVERY_CODE_CONSUMED',
-      severity: 'HIGH',
-      actorUid: userId,
-      details: { remainingCodes: existingHashes.length },
-    });
-  } else {
+  const hasTotp = typeof totpCode === 'string' && totpCode.length > 0;
+  const hasRecovery = typeof recoveryCode === 'string' && recoveryCode.length > 0;
+  if (hasTotp === hasRecovery) {
     throw new HttpsError('invalid-argument', 'Either 6-digit totpCode or emergency recoveryCode must be provided.');
   }
 
   const now = Timestamp.now();
   const expiresAt = Timestamp.fromMillis(now.toMillis() + PRIVILEGED_SESSION_LIFETIME_MS);
   const sessionId = `psess_${crypto.randomBytes(18).toString('hex')}`;
+  let mfaMethod: 'TOTP' | 'RECOVERY_CODE' = hasTotp ? 'TOTP' : 'RECOVERY_CODE';
 
   const sessionData = {
     sessionId,
@@ -322,7 +275,57 @@ export const createPrivilegedSession = onCall(async (request) => {
     status: 'ACTIVE',
   };
 
-  await db.collection('privilegedSessions').doc(sessionId).set(sessionData);
+  // Credential consumption and privileged-session issuance must share one
+  // transaction. A read/update pair outside a transaction lets two concurrent
+  // requests reuse the same TOTP step or recovery code.
+  await db.runTransaction(async (transaction) => {
+    const mfaRef = db.collection('mfaEnrollments').doc(userId);
+    const sessionRef = db.collection('privilegedSessions').doc(sessionId);
+    const mfaDoc = await transaction.get(mfaRef);
+    if (!mfaDoc.exists || !mfaDoc.data()?.mfaEnabled) {
+      throw new HttpsError('failed-precondition', 'MFA_ENROLLMENT_REQUIRED: You must configure an Authenticator App to access privileged portals.');
+    }
+
+    const mfaData = mfaDoc.data()!;
+    if (hasTotp) {
+      const cleanTotp = totpCode as string;
+      if (!/^\d{6}$/.test(cleanTotp)) {
+        throw new HttpsError('invalid-argument', 'A 6-digit TOTP code is required.');
+      }
+      const verification = verifyTotpToken(mfaData.secretBase32, cleanTotp, 1);
+      if (!verification.valid) {
+        throw new HttpsError('unauthenticated', 'Incorrect authenticator code. Please enter the current 6-digit code.');
+      }
+      if (mfaData.lastUsedStep && verification.matchedStep && verification.matchedStep <= mfaData.lastUsedStep) {
+        throw new HttpsError('invalid-argument', 'Authenticator code already consumed. Please wait for the next 30-second token.');
+      }
+      transaction.update(mfaRef, { lastUsedStep: verification.matchedStep });
+    } else {
+      const cleanRecovery = (recoveryCode as string).trim().toUpperCase();
+      if (cleanRecovery.length < 4 || cleanRecovery.length > 128) {
+        throw new HttpsError('invalid-argument', 'Recovery code has an invalid length.');
+      }
+      const codeHash = crypto.createHash('sha256').update(cleanRecovery).digest('hex');
+      const existingHashes: string[] = Array.isArray(mfaData.recoveryCodeHashes) ? [...mfaData.recoveryCodeHashes] : [];
+      const matchedIndex = existingHashes.indexOf(codeHash);
+      if (matchedIndex === -1) {
+        throw new HttpsError('unauthenticated', 'Invalid backup recovery code.');
+      }
+      existingHashes.splice(matchedIndex, 1);
+      transaction.update(mfaRef, { recoveryCodeHashes: existingHashes });
+      mfaMethod = 'RECOVERY_CODE';
+    }
+    transaction.create(sessionRef, sessionData);
+  });
+
+  if (mfaMethod === 'RECOVERY_CODE') {
+    await logSecurityEvent({
+      eventType: 'MFA_RECOVERY_CODE_CONSUMED',
+      severity: 'HIGH',
+      actorUid: userId,
+      details: { remainingCodes: 'redacted' },
+    });
+  }
 
   await logSecurityEvent({
     eventType: 'PRIVILEGED_SESSION_CREATED',

@@ -207,7 +207,7 @@ export function renderTvDisplayView(container) {
                         ${escapeHtml(o.token || o.tokenNumber)}
                       </div>
                       <div style="font-family: var(--font-mono, monospace); font-size: 0.75rem; color: #FB923C; margin-top: 6px; font-weight: 600;">
-                        ${o.estimatedMinutes ? `Est. ~${o.estimatedMinutes}m 🔥` : 'Cooking 🔥'}
+                         ${o.estimatedMinutes ? `Est. ~${escapeHtml(o.estimatedMinutes)}m 🔥` : 'Cooking 🔥'}
                       </div>
                     </div>
                   `).join('')}
@@ -357,4 +357,3 @@ export function cleanupTvDisplayView() {
   preparingTickets = [];
   readyTickets = [];
 }
-

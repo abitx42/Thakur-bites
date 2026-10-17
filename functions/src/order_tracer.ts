@@ -6,6 +6,7 @@ import { enforceAppCheck } from './app_check';
 import { assertCapability } from './authorization_policy';
 import { enforceRateLimit } from './rate_limiter';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -118,7 +119,7 @@ export const getOrderLifecycleTrace = onCall<{ identifier: string }>(async (requ
 
   await enforceRateLimit(request.auth.uid, 'developer_telemetry');
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'view_business_analytics', 'Insufficient permissions to inspect forensic order traces.');
 
   const identifier = (request.data?.identifier || '').trim();

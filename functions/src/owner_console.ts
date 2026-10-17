@@ -79,7 +79,7 @@ export const getOwnerBusinessMetrics = onCall(async (request): Promise<OwnerBusi
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'view_business_analytics', 'Only managers or administrators can access owner analytics.');
 
   const todayStart = getTodayStartTimestamp();
@@ -313,7 +313,7 @@ export const getAdminOperationsDashboard = onCall<void, Promise<AdminOperationsD
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'view_business_analytics', 'Only managers or administrators can access the operations dashboard.');
 
   const now = new Date();
@@ -581,4 +581,3 @@ export const getAdminOperationsDashboard = onCall<void, Promise<AdminOperationsD
     productionKpis,
   };
 });
-

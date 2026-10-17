@@ -2,10 +2,10 @@ import { randomUUID } from 'crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { UserRole } from './types';
 import { enforceAppCheck } from './app_check';
 import { assertCapability } from './authorization_policy';
 import { logSecurityEvent } from './security_logger';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -70,7 +70,7 @@ export const getStaffAlertsFeed = onCall<{ limit?: number }>(async (request) => 
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(
     callerRole,
     'view_business_analytics',

@@ -3,7 +3,6 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import {
-  UserRole,
   IncidentDoc,
   IncidentSeverity,
   IncidentStatus,
@@ -14,6 +13,7 @@ import {
 import { enforceAppCheck } from './app_check';
 import { assertCapability } from './authorization_policy';
 import { logSecurityEvent } from './security_logger';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -40,7 +40,7 @@ export const createProductionIncident = onCall<{
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(
     callerRole,
     'view_business_analytics',
@@ -104,7 +104,7 @@ export const updateIncidentStatus = onCall<{
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (callerRole !== 'security_admin' && callerRole !== 'admin' && (callerRole as string) !== 'developer') {
     throw new HttpsError('permission-denied', 'Permission denied: Only Security Admins can advance incident status.');
   }
@@ -190,7 +190,7 @@ export const recordPostmortemReview = onCall<{
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (callerRole !== 'security_admin' && callerRole !== 'admin') {
     throw new HttpsError('permission-denied', 'Permission denied: Only Admins can submit postmortem reviews.');
   }

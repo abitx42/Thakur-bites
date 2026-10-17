@@ -3,6 +3,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { enforceAppCheck } from './app_check';
 import { assertCapability } from './authorization_policy';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -180,7 +181,7 @@ export const getOrderSuccessFunnel = onCall(async (request): Promise<OrderFunnel
     throw new HttpsError('unauthenticated', 'Staff authentication required.');
   }
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'view_business_analytics', 'Insufficient permissions to view conversion funnel.');
 
   const { timestamp: todayStart, dateStr } = getTodayIstStart();

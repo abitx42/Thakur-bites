@@ -3,6 +3,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { enforceAppCheck } from './app_check';
 import { assertCapability } from './authorization_policy';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -299,7 +300,7 @@ export const getSmartCanteenIntelligence = onCall(async (request): Promise<Smart
     throw new HttpsError('unauthenticated', 'Staff authentication required.');
   }
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'view_business_analytics', 'Insufficient permissions for smart canteen intelligence.');
 
   // Fetch today's orders and active menu (Asia/Kolkata IST start of day)

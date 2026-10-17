@@ -247,7 +247,7 @@ export function renderAiCopilotView(container, { orders = [], menuItems = [] } =
                     
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-family: var(--font-mono); font-size: 0.7rem; color: ${isUser ? '#A1A1AA' : 'var(--ink-secondary)'};">
                       <span>${isUser ? '👤 YOU' : '🤖 THAKUR BITES AI'}</span>
-                      <span>${msg.timestamp}</span>
+                       <span>${escapeHtml(msg.timestamp)}</span>
                     </div>
 
                     <div style="font-family: var(--font-sans); font-size: 0.88rem; line-height: 1.5;">
@@ -266,15 +266,15 @@ export function renderAiCopilotView(container, { orders = [], menuItems = [] } =
                           <div style="margin-top: 0.6rem; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 0.8rem; font-family: var(--font-mono); font-size: 0.75rem; color: #334155;">
                             <div style="font-weight: 800; color: #0F172A; margin-bottom: 6px;">VERIFIED EVIDENCE METRICS</div>
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 8px;">
-                              <div>Orders Analyzed: <strong>${msg.evidence.ordersAnalyzed}</strong></div>
-                              <div>Data Quality: <strong>${msg.evidence.dataQuality}</strong></div>
-                              <div>Gross Revenue: <strong>${msg.evidence.keyMetrics.grossRevenue}</strong></div>
-                              <div>Net Revenue: <strong>${msg.evidence.keyMetrics.netRevenue}</strong></div>
-                              <div>Refunds: <strong>${msg.evidence.keyMetrics.refunds}</strong></div>
-                              <div>Cash Share: <strong>${msg.evidence.keyMetrics.cashSharePercent}%</strong></div>
+                               <div>Orders Analyzed: <strong>${escapeHtml(msg.evidence.ordersAnalyzed)}</strong></div>
+                               <div>Data Quality: <strong>${escapeHtml(msg.evidence.dataQuality)}</strong></div>
+                               <div>Gross Revenue: <strong>${escapeHtml(msg.evidence.keyMetrics.grossRevenue)}</strong></div>
+                               <div>Net Revenue: <strong>${escapeHtml(msg.evidence.keyMetrics.netRevenue)}</strong></div>
+                               <div>Refunds: <strong>${escapeHtml(msg.evidence.keyMetrics.refunds)}</strong></div>
+                               <div>Cash Share: <strong>${escapeHtml(msg.evidence.keyMetrics.cashSharePercent)}%</strong></div>
                             </div>
                             <div style="border-top: 1px solid #E2E8F0; padding-top: 6px; font-size: 0.7rem; color: #64748B;">
-                              <div>Provider: <strong>${msg.evidence.providerUsed}</strong> (${msg.evidence.executionLatencyMs}ms)</div>
+                               <div>Provider: <strong>${escapeHtml(msg.evidence.providerUsed)}</strong> (${escapeHtml(msg.evidence.executionLatencyMs)}ms)</div>
                               ${(msg.evidence.disclaimers || []).map(d => `<div style="margin-top: 2px;">• ${escapeHtml(d)}</div>`).join('')}
                             </div>
                           </div>

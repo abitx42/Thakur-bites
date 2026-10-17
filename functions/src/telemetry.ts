@@ -1,10 +1,11 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { UserRole, TelemetryOverviewResponse } from './types';
+import { TelemetryOverviewResponse } from './types';
 import { enforceAppCheck } from './app_check';
 import { assertCapability } from './authorization_policy';
 import { detectEnvironment } from './env_config';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -56,7 +57,7 @@ export const getSystemTelemetryOverview = onCall<void, Promise<TelemetryOverview
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(
     callerRole,
     'view_business_analytics',

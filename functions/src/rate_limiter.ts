@@ -5,6 +5,7 @@ import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { assertCapability, hasCapability } from './authorization_policy';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 function getDb(): admin.firestore.Firestore {
   if (!admin.apps.length) {
@@ -328,7 +329,7 @@ export const getSecurityRateLimits = onCall(async (request) => {
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   if (!hasCapability(callerRole, 'view_telemetry') && !hasCapability(callerRole, 'manage_platform_flags')) {
     throw new HttpsError('permission-denied', 'Access denied: Requires administrator or engineering telemetry permissions.');
   }
@@ -359,7 +360,7 @@ export const updateSecurityRateLimits = onCall(async (request) => {
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'manage_platform_flags', 'Only managers or administrators can modify rate limit policies.');
 
   const { limits, reason } = request.data || {};
@@ -419,5 +420,4 @@ export const updateSecurityRateLimits = onCall(async (request) => {
     overrides: validatedOverrides,
   };
 });
-
 
