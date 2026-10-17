@@ -10,6 +10,7 @@ import { AccountType, VerificationStatus, PriorityLevel, VerificationApplication
 import { assertCapability } from './authorization_policy';
 import { validateAndQuarantineFile } from './upload_validator';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -183,7 +184,7 @@ export const reviewVerificationApplication = onCall<ReviewVerificationRequest>(a
   }
 
   const reviewerUid = request.auth.uid;
-  const reviewerRole = (request.auth.token.role as string | undefined) || '';
+  const reviewerRole = await assertCurrentStaffAuthority(reviewerUid, request.auth.token);
 
   try {
     assertCapability(reviewerRole, 'review_verification');

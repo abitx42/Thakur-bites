@@ -1,8 +1,30 @@
 // Staff Firebase Authentication & Role-Based Access Control (RBAC) with Shift PINs & Device Binding
 import { auth, staffLogin, staffLogout, subscribeStaffAuth, functions } from './firebase.js?v=5';
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
-import { signInWithCustomToken, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import { getFriendlyErrorMessage } from './networkSentinel.js';
+
+const SHIFT_ROLES = ['kitchen', 'pickup', 'cashier'];
+const STAFF_ROLES = [...SHIFT_ROLES, 'manager', 'admin', 'developer', 'security_admin', 'system'];
+let loginSequence = 0;
+let activeLoginAttempt = null;
+
+function validHardwareCredentials(id, token, role) {
+  return SHIFT_ROLES.includes(role) && typeof id === 'string'
+    && new RegExp(`^TB_WS_${role.toUpperCase()}_[A-F0-9]{8}$`).test(id)
+    && typeof token === 'string' && /^wstok_[a-f0-9]{48}$/.test(token);
+}
+
+function validWorkstationClaims(user, claims, workstation) {
+  return workstation && !user.isAnonymous && SHIFT_ROLES.includes(claims.role)
+    && claims.role === workstation.role && claims.isWorkstationSession === true
+    && claims.deviceId === workstation.id
+    && typeof claims.shiftDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(claims.shiftDate)
+    && ['MORNING', 'AFTERNOON', 'FULL_DAY'].includes(claims.shiftWindow)
+    && claims.pinId === `${claims.role}_${claims.shiftDate}_${claims.shiftWindow}`
+    && typeof claims.sessionGeneration === 'string' && /^[a-f0-9]{32}$/.test(claims.sessionGeneration)
+    && user.uid.startsWith(`staff_${claims.role}_${claims.shiftDate}_`);
+}
 
 // Clear any stale demo localStorage keys
 try {
@@ -26,8 +48,8 @@ export function getOrCreateDeviceId() {
 }
 
 /**
- * Computes a hardware- and browser-bound cryptographic tamper signature
- * preventing token exfiltration and replay across devices.
+ * Local storage consistency checksum. Only the backend can validate hardware
+ * credentials or privileged session authority; this checksum grants no access.
  */
 function computeDeviceBoundStorageDigest(payloadString) {
   try {
@@ -58,7 +80,7 @@ export function getRegisteredWorkstation() {
   const name = localStorage.getItem('tb_registered_workstation_name');
   const sig = localStorage.getItem('tb_registered_workstation_sig');
 
-  if (!id || !token) return null;
+  if (!validHardwareCredentials(id, token, role)) return null;
 
   // Verify hardware and device binding signature
   if (sig) {
@@ -85,6 +107,9 @@ export function getRegisteredWorkstation() {
 }
 
 export function saveRegisteredWorkstation(id, token, role, name) {
+  if (!validHardwareCredentials(id, token, role)) {
+    throw new Error('The server did not return valid enrolled workstation credentials.');
+  }
   const payload = JSON.stringify({ id, token, role, name });
   const sig = computeDeviceBoundStorageDigest(payload);
   localStorage.setItem('tb_registered_workstation_id', id);
@@ -127,8 +152,11 @@ export function getPrivilegedSession() {
 
   try {
     const sess = JSON.parse(sessStr);
-    const now = Date.now();
-    if (new Date(sess.expiresAt).getTime() < now) {
+    const expiresAt = new Date(sess.expiresAt).getTime();
+    if (!auth.currentUser || sess.userId !== auth.currentUser.uid
+        || typeof sess.sessionId !== 'string' || !sess.sessionId || sess.sessionId.length > 128
+        || sess.sessionId.includes('/') || !STAFF_ROLES.slice(3).includes(sess.role)
+        || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
       clearPrivilegedSession();
       return null;
     }
@@ -140,7 +168,8 @@ export function getPrivilegedSession() {
 }
 
 export function savePrivilegedSession(sessionData) {
-  const payload = JSON.stringify(sessionData);
+  if (!auth.currentUser) throw new Error('Sign in before establishing an MFA session.');
+  const payload = JSON.stringify({ ...sessionData, userId: auth.currentUser.uid });
   localStorage.setItem('tb_privileged_session', payload);
   localStorage.setItem('tb_privileged_session_sig', computeDeviceBoundStorageDigest(payload));
 }
@@ -159,6 +188,14 @@ let currentStaffState = {
 
 const authSubscribers = [];
 
+function setStaffState(user = null, role = null, deviceId = getOrCreateDeviceId()) {
+  const valid = user && auth.currentUser?.uid === user.uid && STAFF_ROLES.includes(role);
+  currentStaffState = { user: valid ? user : null, role: valid ? role : null, isAuthenticated: Boolean(valid), deviceId };
+  authSubscribers.forEach(callback => {
+    try { callback(currentStaffState); } catch (_) {}
+  });
+}
+
 export function onStaffAuthStateChanged(callback) {
   authSubscribers.push(callback);
   if (currentStaffState.isAuthenticated) {
@@ -172,24 +209,25 @@ export function onStaffAuthStateChanged(callback) {
 
 // Listen to authoritative Firebase Auth state
 subscribeStaffAuth((state) => {
-  if (state.isAuthenticated && auth.currentUser) {
-    currentStaffState = { ...state, deviceId: getOrCreateDeviceId() };
-  } else {
-    currentStaffState = {
-      user: null,
-      role: null,
-      isAuthenticated: false,
-      deviceId: getOrCreateDeviceId(),
-    };
+  // A custom-token sign-in is provisional until its refreshed claims are checked.
+  if (activeLoginAttempt !== null && state.isAuthenticated) return;
+  if (currentStaffState.user?.uid !== state.user?.uid) clearPrivilegedSession();
+  const workstation = state.user?.uid.startsWith('staff_') ? getRegisteredWorkstation() : null;
+  if (state.isAuthenticated && state.user?.uid.startsWith('staff_')
+      && (!workstation || workstation.role !== state.role)) {
+    setStaffState();
+    return;
   }
-  authSubscribers.forEach(cb => {
-    try { cb(currentStaffState); } catch (_) {}
-  });
+  setStaffState(state.isAuthenticated ? state.user : null, state.role, workstation?.id || getOrCreateDeviceId());
 });
 
 export const staffAuth = {
   isAuthenticated() {
-    return Boolean(currentStaffState.isAuthenticated && currentStaffState.role && auth.currentUser);
+    const isWorkstation = currentStaffState.user?.uid.startsWith('staff_');
+    const workstation = isWorkstation ? getRegisteredWorkstation() : null;
+    return Boolean(currentStaffState.isAuthenticated && STAFF_ROLES.includes(currentStaffState.role)
+      && currentStaffState.user?.uid === auth.currentUser?.uid
+      && (!isWorkstation || (workstation?.id === currentStaffState.deviceId && workstation?.role === currentStaffState.role)));
   },
 
   getRole() {
@@ -203,80 +241,101 @@ export const staffAuth = {
     if (!cleanEmail || !cleanPass) {
       return { success: false, error: 'Please provide both staff email and password.' };
     }
-
+    if (activeLoginAttempt !== null) return { success: false, error: 'Authentication is already in progress.' };
+    const attempt = ++loginSequence;
+    activeLoginAttempt = attempt;
+    clearPrivilegedSession();
+    setStaffState();
     try {
       const { user, role } = await staffLogin(cleanEmail, cleanPass);
-      currentStaffState = { user, role, isAuthenticated: true, deviceId: getOrCreateDeviceId() };
+      if (attempt !== loginSequence || auth.currentUser?.uid !== user?.uid || !STAFF_ROLES.includes(role)) {
+        throw new Error('Staff authorization changed. Please sign in again.');
+      }
+      setStaffState(user, role);
       return { success: true, role };
     } catch (e) {
       console.error("Staff auth error:", e);
+      if (attempt === loginSequence) setStaffState();
       return { success: false, error: getFriendlyErrorMessage(e, 'Authentication failed. Please verify credentials.') };
+    } finally {
+      if (activeLoginAttempt === attempt) activeLoginAttempt = null;
     }
   },
 
   async loginWithShiftPin(pin, role) {
     const registeredWs = getRegisteredWorkstation();
-    const deviceId = registeredWs ? registeredWs.id : getOrCreateDeviceId();
-    const workstationToken = registeredWs ? registeredWs.token : undefined;
-    const requestedRole = role || (registeredWs?.role || 'kitchen');
+    const requestedRole = role || registeredWs?.role;
 
     // Security Invariant: Shift PINs can NEVER be used for administrative access
-    const allowedShiftRoles = ['kitchen', 'pickup', 'cashier'];
-    if (!allowedShiftRoles.includes(requestedRole)) {
+    if (!SHIFT_ROLES.includes(requestedRole)) {
       return { success: false, error: 'Shift PIN authentication is strictly restricted to operational roles (Kitchen, Pickup, Cashier).' };
     }
 
-    if (!pin || typeof pin !== 'string' || pin.trim().length !== 6) {
+    if (!registeredWs || registeredWs.role !== requestedRole) {
+      setStaffState();
+      return { success: false, error: 'Enroll this terminal for the selected station before using a shift PIN.' };
+    }
+    if (typeof pin !== 'string' || !/^\d{6}$/.test(pin.trim())) {
       return { success: false, error: 'A valid 6-digit shift PIN is required.' };
     }
-
+    if (activeLoginAttempt !== null) return { success: false, error: 'Authentication is already in progress.' };
+    const attempt = ++loginSequence;
+    activeLoginAttempt = attempt;
+    const previousUid = auth.currentUser?.uid;
+    let signedInUser = null;
+    clearPrivilegedSession();
+    setStaffState();
     try {
       const verifyFn = httpsCallable(functions, 'verifyShiftPin');
 
       const res = await verifyFn({
         pin: pin.trim(),
         role: requestedRole,
-        deviceId,
-        workstationToken,
-        deviceName: registeredWs ? registeredWs.name : (navigator.userAgent.includes('Mobile') ? 'Counter Tablet' : 'Staff Workstation'),
+        deviceId: registeredWs.id,
+        workstationToken: registeredWs.token,
+        deviceName: registeredWs.name || 'Staff Workstation',
       });
 
-      if (res.data?.token) {
-        const userCred = await signInWithCustomToken(auth, res.data.token);
-        const serverRole = res.data.role || requestedRole;
-        currentStaffState = { user: userCred.user, role: serverRole, isAuthenticated: true, deviceId };
-        return { success: true, role: serverRole };
+      const data = res.data;
+      if (data?.success !== true || typeof data.token !== 'string' || !data.token.trim()
+          || data.role !== requestedRole || typeof data.workstationUid !== 'string'
+          || !Array.isArray(data.boundDevices) || !data.boundDevices.includes(registeredWs.id)) {
+        throw new Error('The server did not confirm a valid workstation session. Please retry.');
       }
-      return { success: false, error: 'Failed to verify shift credentials. Please retry.' };
+      if (attempt !== loginSequence) throw new Error('Authentication was cancelled. Please sign in again.');
+      const userCred = await signInWithCustomToken(auth, data.token);
+      signedInUser = userCred.user;
+      if (!signedInUser || signedInUser.uid !== data.workstationUid) {
+        throw new Error('The workstation identity did not match the server response.');
+      }
+      const tokenResult = await signedInUser.getIdTokenResult(true);
+      if (attempt !== loginSequence || auth.currentUser?.uid !== signedInUser.uid
+          || !validWorkstationClaims(signedInUser, tokenResult.claims || {}, registeredWs)) {
+        throw new Error('Workstation authorization could not be confirmed. Please sign in again.');
+      }
+      setStaffState(signedInUser, tokenResult.claims.role, registeredWs.id);
+      return { success: true, role: tokenResult.claims.role };
     } catch (e) {
-      console.warn("Shift PIN Cloud Function notice:", e);
-      const isUndeployed = e?.code === 'functions/not-found' || e?.message?.includes('not-found') || e?.code === 'not-found';
-      if (isUndeployed) {
-        // Spark plan / Cloud Functions unavailable: allow verified workstation unlock
-        try {
-          let staffUser = auth.currentUser;
-          if (!staffUser) {
-            const anonCred = await signInAnonymously(auth);
-            staffUser = anonCred.user;
-          }
-          currentStaffState = { user: staffUser, role: requestedRole, isAuthenticated: true, deviceId };
-          try { sessionStorage.setItem('tb_session_role', requestedRole); } catch (_) {}
-          return { success: true, role: requestedRole };
-        } catch (anonErr) {
-          console.warn("Fallback station auth notice:", anonErr);
-        }
+      if (auth.currentUser && (auth.currentUser.uid === signedInUser?.uid
+          || (attempt === loginSequence && auth.currentUser.uid === previousUid))) {
+        await staffLogout().catch(() => {});
       }
-      return { success: false, error: getFriendlyErrorMessage(e, 'Incorrect shift PIN or workstation authorization failed.') };
+      if (attempt === loginSequence) setStaffState();
+      return { success: false, code: e?.code, error: getFriendlyErrorMessage(e, 'Incorrect shift PIN or workstation authorization failed.') };
+    } finally {
+      if (activeLoginAttempt === attempt) activeLoginAttempt = null;
     }
   },
 
   async authenticatePrivilegedSession(totpCode, recoveryCode) {
+    const userId = auth.currentUser?.uid;
     try {
       const createSessionFn = httpsCallable(functions, 'createPrivilegedSession');
       const res = await createSessionFn({ totpCode, recoveryCode });
-      if (res.data?.sessionId) {
+      if (res.data?.success === true && userId && auth.currentUser?.uid === userId) {
         savePrivilegedSession(res.data);
-        return { success: true, session: res.data };
+        const session = getPrivilegedSession();
+        if (session) return { success: true, session };
       }
       return { success: false, error: 'Failed to establish privileged session.' };
     } catch (err) {
@@ -284,26 +343,31 @@ export const staffAuth = {
     }
   },
 
-  getRole() {
-    return currentStaffState.role;
-  },
-
   getDeviceId() {
     return currentStaffState.deviceId;
   },
 
   async refreshTokenClaims() {
-    if (auth.currentUser) {
-      try {
-        const tokenResult = await auth.currentUser.getIdTokenResult(true);
-        if (tokenResult.claims && tokenResult.claims.role) {
-          currentStaffState.role = tokenResult.claims.role;
-        }
-      } catch (e) {
-        console.warn("Token refresh warning:", e);
+    const user = auth.currentUser;
+    try {
+      if (!user) throw new Error('Staff authentication is required.');
+      const tokenResult = await user.getIdTokenResult(true);
+      const claims = tokenResult.claims || {};
+      if (!STAFF_ROLES.includes(claims.role) || auth.currentUser?.uid !== user.uid
+          || ((claims.isWorkstationSession === true || user.uid.startsWith('staff_'))
+            && !validWorkstationClaims(user, claims, getRegisteredWorkstation()))) {
+        throw new Error('Staff authorization is no longer valid. Please sign in again.');
       }
+      if (claims.role !== currentStaffState.role) clearPrivilegedSession();
+      setStaffState(user, claims.role, claims.deviceId || getOrCreateDeviceId());
+      return claims.role;
+    } catch (error) {
+      if (auth.currentUser?.uid === user?.uid) {
+        clearPrivilegedSession();
+        setStaffState();
+      }
+      throw error;
     }
-    return currentStaffState.role;
   },
 
   async quickAuth() {
@@ -311,6 +375,8 @@ export const staffAuth = {
   },
 
   async logout() {
+    ++loginSequence;
+    setStaffState();
     try {
       localStorage.removeItem('tb_staff_authenticated');
       sessionStorage.removeItem('tb_session_role');
@@ -318,7 +384,6 @@ export const staffAuth = {
       clearPrivilegedSession();
     } catch (_) {}
     await staffLogout().catch(() => {});
-    currentStaffState = { user: null, role: null, isAuthenticated: false, deviceId: getOrCreateDeviceId() };
   }
 };
 
@@ -334,11 +399,12 @@ export async function enrollWorkstationClient(inviteCode, label = 'Terminal', st
       label: label.trim(),
       stationRole,
     });
-    if (res.data?.success) {
+    if (res.data?.success === true) {
+      const serverRole = res.data.stationType || res.data.workstationRole;
       saveRegisteredWorkstation(
         res.data.workstationId,
         res.data.workstationToken,
-        res.data.stationType || res.data.workstationRole || stationRole,
+        serverRole,
         res.data.stationName || res.data.label || res.data.deviceName || label
       );
       return { success: true, data: res.data };
@@ -354,7 +420,7 @@ export async function enrollWorkstationClient(inviteCode, label = 'Terminal', st
  */
 export function renderPinPadModal(container, onUnlocked) {
   let activeTab = 'pin'; // 'pin' | 'email' | 'enroll'
-  let selectedPinRole = 'kitchen';
+  let selectedPinRole = getRegisteredWorkstation()?.role || 'kitchen';
   let enteredPin = '';
 
   function render() {
@@ -411,7 +477,7 @@ export function renderPinPadModal(container, onUnlocked) {
                 SELECT ROLE:
               </label>
               <div style="display: flex; gap: 6px; margin-bottom: 12px; width: 100%;">
-                ${['kitchen', 'pickup', 'cashier', 'admin'].map(r => `
+                ${SHIFT_ROLES.map(r => `
                   <button class="btn ${selectedPinRole === r ? 'btn--primary' : 'btn--secondary'} btn--sm shift-role-btn" data-role="${r}" style="flex: 1; min-width: 0; padding: 7px 4px; text-transform: uppercase;">
                     ${r}
                   </button>
@@ -566,6 +632,7 @@ export function renderPinPadModal(container, onUnlocked) {
 
         const res = await enrollWorkstationClient(inviteCode, label, selectedPinRole);
         if (res.success) {
+          selectedPinRole = res.data.stationType || res.data.workstationRole;
           activeTab = 'pin';
           render();
           const succBox = container.querySelector('#auth-success-box');

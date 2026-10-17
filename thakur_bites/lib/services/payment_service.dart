@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 import 'functions_service.dart';
@@ -33,14 +35,41 @@ class PaymentResult {
   }) : timestamp = timestamp ?? DateTime.now();
 }
 
-/// Server-authoritative payment orchestration service with resilient client confirmation.
+/// Gateway UI is launched only for a complete, server-bound payment session.
+/// A gateway callback is never treated as server payment verification.
 class PaymentService {
   final FunctionsService _functions;
+  final FirebaseAuth _auth;
+  final FirebaseFirestore _db;
 
-  PaymentService({FunctionsService? functions})
-      : _functions = functions ?? FunctionsService();
+  PaymentService({FunctionsService? functions, FirebaseAuth? auth, FirebaseFirestore? firestore})
+      : _functions = functions ?? FunctionsService(),
+        _auth = auth ?? FirebaseAuth.instance,
+        _db = firestore ?? FirebaseFirestore.instance;
 
-  /// Initiates an online payment for a confirmed order.
+  int _validatedAmountPaise(double totalAmountRs) {
+    final rawPaise = totalAmountRs * 100;
+    if (!totalAmountRs.isFinite || !rawPaise.isFinite || rawPaise <= 0 || rawPaise > 9007199254740991) {
+      throw const PaymentException('A positive, finite payment amount is required.');
+    }
+    final paise = rawPaise.round();
+    if (paise <= 0 || (rawPaise - paise).abs() > 0.000001) {
+      throw const PaymentException('The payment amount must be an exact number of paise.');
+    }
+    return paise;
+  }
+
+  bool _validOrderId(String orderId) => orderId.isNotEmpty && orderId.length <= 128
+      && orderId.trim() == orderId && orderId != '.' && orderId != '..'
+      && !RegExp(r'[/\x00-\x1f\x7f]').hasMatch(orderId);
+
+  void _assertActivePayment(String uid, int generation) {
+    if (generation != _paymentGeneration || _auth.currentUser?.uid != uid) {
+      throw const PaymentException('This payment session was cancelled or your sign-in changed. Check the existing order before retrying.');
+    }
+  }
+
+  /// Initiates an online payment for a server-reserved, unpaid online order.
   ///
   /// Returns a [PaymentResult] after the full payment flow completes.
   /// Throws [PaymentException] on any failure or cancellation.
@@ -50,100 +79,90 @@ class PaymentService {
     required String studentName,
     required String studentEmail,
   }) async {
-    final now = DateTime.now();
-    final amountPaise = (totalAmountRs * 100).round();
-
-    // F-016 Remediation: The key ID SHOULD always come from the server (createPaymentSession).
-    // The compile-time default is a test key — acceptable only for development builds.
-    // In release builds, the server MUST provide the key via sessionData['keyId'].
-    String razorpayOrderId = '';
-    String keyId = const String.fromEnvironment(
-      'RAZORPAY_KEY_ID',
-      defaultValue: 'rzp_test_TcNKt0X7OsnsXu',
-    );
-
-    // Step 1: Attempt server-side Razorpay order creation if Cloud Functions are deployed
+    final amountPaise = _validatedAmountPaise(totalAmountRs);
+    final user = _auth.currentUser;
+    if (!_validOrderId(orderId) || user == null || user.isAnonymous) {
+      throw const PaymentException('Sign in with your account and select a valid order before paying.');
+    }
+    final uid = user.uid;
+    cancelActivePayment('A new payment session was started.');
+    final generation = _paymentGeneration;
+    var phase = 'session';
     try {
       final sessionData = await _functions.createPaymentSession(orderId: orderId);
-      razorpayOrderId = (sessionData['gatewayOrderId'] ?? sessionData['razorpayOrderId'] ?? '') as String;
-      keyId = (sessionData['keyId'] as String?) ?? keyId;
-    } on FirebaseFunctionsException catch (e) {
-      // When Cloud Functions are not deployed (Spark Plan) or unreachable,
-      // Firebase throws 'not-found', 'internal', or 'unavailable'.
-      // Fall back seamlessly to direct client-side gateway checkout.
-      final isUndeployedOrUnavailable = e.code == 'not-found' ||
-          e.code == 'internal' ||
-          e.code == 'unavailable' ||
-          (e.message ?? '').toLowerCase().contains('internal');
-
-      if (!isUndeployedOrUnavailable) {
-        // Active server-side rejection (e.g. permission-denied, failed-precondition)
-        throw PaymentException('Payment session creation failed: ${e.message}');
+      _assertActivePayment(uid, generation);
+      final razorpayOrderId = sessionData['gatewayOrderId'];
+      final keyId = sessionData['keyId'];
+      final sessionPaise = sessionData['amountPaise'];
+      final sessionAmount = sessionData['amount'];
+      final currency = sessionData['currency'];
+      final notes = sessionData['notes'];
+      if (sessionData['success'] == false || sessionData['orderId'] != orderId
+          || razorpayOrderId is! String || !RegExp(r'^order_[A-Za-z0-9]{1,58}$').hasMatch(razorpayOrderId)
+          || (sessionData['razorpayOrderId'] != null && sessionData['razorpayOrderId'] != razorpayOrderId)
+          || keyId is! String || !RegExp(r'^rzp_(test|live)_[A-Za-z0-9]{1,100}$').hasMatch(keyId)
+          || sessionPaise is! int || sessionPaise != amountPaise
+          || sessionAmount is! num || !sessionAmount.isFinite || sessionAmount != amountPaise / 100.0
+          || currency != 'INR' || sessionData['adapterMode'] != 'PRODUCTION_GATEWAY'
+          || notes is! Map || notes['orderId'] != orderId || notes['studentId'] != uid) {
+        throw const PaymentException('The server did not return a complete, matching payment session. Checkout was not opened.');
       }
-      debugPrint('[PaymentService] Backend function notice (${e.code}): ${e.message}. Launching direct gateway.');
-    } catch (e) {
-      if (e is PaymentException) rethrow;
-      debugPrint('[PaymentService] Backend function error ($e). Launching direct gateway.');
-    }
-
-    // F-016 Release guard: Warn if test key is being used (server should have overwritten it)
-    if (kReleaseMode && keyId.startsWith('rzp_test_')) {
-      debugPrint('[PaymentService] ⚠️ WARNING: Using test Razorpay key in release build. Server did not provide live key.');
-    }
-
-    // Step 2: Launch Razorpay SDK and collect payment confirmation
-    final paymentDetails = await _launchRazorpayCheckout(
-      orderId: orderId,
-      razorpayOrderId: razorpayOrderId,
-      amountPaise: amountPaise,
-      keyId: keyId,
-      studentName: studentName,
-      studentEmail: studentEmail,
-    );
-
-    final paymentId = (paymentDetails['razorpay_payment_id'] as String?)?.trim() ?? '';
-    final confirmedOrderId = (paymentDetails['razorpay_order_id'] as String?) ?? razorpayOrderId;
-    final signature = (paymentDetails['razorpay_signature'] as String?) ?? '';
-
-    // Invariant: paymentId MUST be a valid non-empty string received from gateway
-    if (paymentId.isEmpty || paymentId.length < 6) {
-      throw const PaymentException('Payment was incomplete: invalid or missing gateway payment ID.');
-    }
-
-    // Step 3: Attempt server-side HMAC verification if Cloud Functions deployed
-    try {
-      await _functions.verifyPayment(
+      phase = 'gateway';
+      final paymentDetails = await _launchRazorpayCheckout(
+        orderId: orderId,
+        razorpayOrderId: razorpayOrderId,
+        amountPaise: sessionPaise,
+        currency: currency as String,
+        keyId: keyId,
+        studentName: studentName,
+        studentEmail: studentEmail,
+      );
+      _assertActivePayment(uid, generation);
+      final paymentId = paymentDetails['razorpay_payment_id'];
+      final confirmedOrderId = paymentDetails['razorpay_order_id'];
+      final signature = paymentDetails['razorpay_signature'];
+      if (paymentId is! String || !RegExp(r'^pay_[A-Za-z0-9]{1,60}$').hasMatch(paymentId)
+          || confirmedOrderId != razorpayOrderId
+          || signature is! String || !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(signature)) {
+        throw const PaymentException('The gateway response is incomplete or does not match this session. Check the existing order before paying again.');
+      }
+      phase = 'verification';
+      final verified = await _functions.verifyPayment(
         orderId: orderId,
         razorpayPaymentId: paymentId,
-        razorpayOrderId: confirmedOrderId,
+        razorpayOrderId: razorpayOrderId,
         razorpaySignature: signature,
       );
-    } on FirebaseFunctionsException catch (e) {
-      final isUndeployedOrUnavailable = e.code == 'not-found' ||
-          e.code == 'internal' ||
-          e.code == 'unavailable' ||
-          (e.message ?? '').toLowerCase().contains('internal');
-
-      if (!isUndeployedOrUnavailable) {
-        // Backend actively rejected HMAC verification
-        throw PaymentException('Payment verification rejected by server: ${e.message}');
+      _assertActivePayment(uid, generation);
+      // The real finalizer also returns success for orphaned captures on closed
+      // orders. Those receipts are not successful customer order confirmations.
+      if (verified['success'] != true || verified['orderId'] != orderId
+          || verified['amountPaise'] is! int || verified['amountPaise'] != amountPaise
+          || verified['alreadyCaptured'] is! bool || verified['orphaned'] == true
+          || (verified['orphaned'] != null && verified['orphaned'] is! bool)
+          || verified['tokenNumber'] is! String || (verified['tokenNumber'] as String).isEmpty
+          || !const ['confirmed', 'ready'].contains(verified['status'])
+          || (verified['currency'] != null && verified['currency'] != currency)) {
+        throw const PaymentException('The server did not confirm a paid, active order. Check the existing order and any refund before paying again.');
       }
-      debugPrint('[PaymentService] Server verifyPayment notice (${e.code}): ${e.message}');
-    } catch (e) {
-      debugPrint('[PaymentService] Payment verification check notice: $e');
+      return PaymentResult(
+        isSuccess: true,
+        orderId: orderId,
+        amount: amountPaise / 100.0,
+        method: PaymentMethod.razorpayOnline,
+        paymentId: paymentId,
+      );
+    } on FirebaseFunctionsException catch (e) {
+      throw PaymentException(phase == 'verification'
+          ? 'The server could not verify this payment (${e.code}). Check the existing order before paying again.'
+          : 'The server could not create a payment session (${e.code}). Please retry.');
+    } on PaymentException {
+      rethrow;
+    } catch (_) {
+      throw PaymentException(phase == 'session'
+          ? 'Unable to confirm a server payment session. Checkout was not opened. Please retry.'
+          : 'Payment completion could not be confirmed. Check the existing order before paying again.');
     }
-
-    // Step 4: Verification completed. Payment state, inventory commitment, and double-entry
-    // ledger are authoritatively managed by backend verifyPayment / finalizeSuccessfulPayment.
-
-    return PaymentResult(
-      isSuccess: true,
-      orderId: orderId,
-      amount: totalAmountRs,
-      method: PaymentMethod.razorpayOnline,
-      paymentId: paymentId,
-      timestamp: now,
-    );
   }
 
   /// Records a cash payment for a counter_cash order.
@@ -153,20 +172,40 @@ class PaymentService {
     required double totalAmountRs,
   }) async {
     final now = DateTime.now();
-    final amountPaise = (totalAmountRs * 100).round();
-
     try {
+      final amountPaise = _validatedAmountPaise(totalAmountRs);
+      final uid = _auth.currentUser?.uid;
+      if (uid == null || !_validOrderId(orderId)) {
+        throw const PaymentException('An authorized sign-in and valid order are required.');
+      }
       final result = await _functions.recordCashPayment(
         orderId: orderId,
         amountPaise: amountPaise,
       );
-
+      if (_auth.currentUser?.uid != uid || result['success'] != true || result['orderId'] != orderId
+          || result['orphaned'] == true
+          || !const ['confirmed', 'placed', 'preparing', 'ready', 'collected'].contains(result['status'])) {
+        throw const PaymentException('The server did not confirm cash settlement. Check the existing order before retrying.');
+      }
+      // The idempotent cash response omits amount/paymentId. Read the committed
+      // order rather than inventing either value or treating a partial map as paid.
+      final snap = await _db.collection('orders').doc(orderId).get(const GetOptions(source: Source.server));
+      final data = snap.data();
+      if (_auth.currentUser?.uid != uid || !snap.exists || data == null
+          || snap.metadata.isFromCache || snap.metadata.hasPendingWrites
+          || data['paymentMethod'] != 'counter_cash' || data['currency'] != 'INR'
+          || data['totalAmountPaise'] is! int || data['totalAmountPaise'] != amountPaise
+          || !const ['paid', 'captured'].contains(data['paymentStatus'])
+          || !const ['confirmed', 'placed', 'preparing', 'ready', 'collected'].contains(data['status'])
+          || data['gatewayPaymentId'] is! String || (data['gatewayPaymentId'] as String).isEmpty) {
+        throw const PaymentException('Cash payment is not confirmed by the server. Check the existing order before retrying.');
+      }
       return PaymentResult(
         isSuccess: true,
         orderId: orderId,
-        amount: totalAmountRs,
+        amount: amountPaise / 100.0,
         method: PaymentMethod.cashAtCounter,
-        paymentId: result['paymentId'] as String? ?? 'CASH_$orderId',
+        paymentId: data['gatewayPaymentId'] as String,
         timestamp: now,
       );
     } on FirebaseFunctionsException catch (e) {
@@ -175,7 +214,6 @@ class PaymentService {
       //   • Payment verification & financial ledger posting
       //   • Inventory reservation commitment
       //   • Audit trail (orderEvents) creation
-      debugPrint('[PaymentService] recordCashPayment failed: ${e.code} — ${e.message}');
       return PaymentResult(
         isSuccess: false,
         orderId: orderId,
@@ -188,13 +226,12 @@ class PaymentService {
       );
     } catch (e) {
       // F-017 Remediation: Generic errors also must NOT bypass server authority.
-      debugPrint('[PaymentService] recordCashPayment unexpected error: $e');
       return PaymentResult(
         isSuccess: false,
         orderId: orderId,
         amount: totalAmountRs,
         method: PaymentMethod.cashAtCounter,
-        errorMessage: 'Cash payment recording failed. Please retry or contact a manager.',
+        errorMessage: e is PaymentException ? e.message : 'Cash payment recording was not confirmed. Check the order or contact a manager.',
         timestamp: now,
       );
     }
@@ -202,9 +239,11 @@ class PaymentService {
 
   static _PaymentCompleter? _activeCompleter;
   static Razorpay? _activeRazorpay;
+  static int _paymentGeneration = 0;
 
   /// Cancels any currently pending in-app payment session (e.g. if user returned from external UPI app and wishes to cancel or retry)
   static void cancelActivePayment([String reason = 'Payment session was cancelled.']) {
+    ++_paymentGeneration;
     try {
       _activeRazorpay?.clear();
     } catch (_) {}
@@ -224,6 +263,7 @@ class PaymentService {
     required String orderId,
     required String razorpayOrderId,
     required int amountPaise,
+    required String currency,
     required String keyId,
     required String studentName,
     required String studentEmail,
@@ -231,7 +271,8 @@ class PaymentService {
     final options = <String, dynamic>{
       'key': keyId,
       'amount': amountPaise,
-      if (razorpayOrderId.isNotEmpty) 'order_id': razorpayOrderId,
+      'currency': currency,
+      'order_id': razorpayOrderId,
       'name': 'Thakur Bites',
       'description': 'Campus Canteen Order',
       'theme': {'color': '#1A1A2E'},
@@ -241,13 +282,16 @@ class PaymentService {
       },
       'notes': {
         'order_id': orderId,
-        if (razorpayOrderId.isNotEmpty) 'gateway_order_id': razorpayOrderId,
+        'gateway_order_id': razorpayOrderId,
       },
     };
 
     // On Flutter Web, use official JS checkout bridge (checkout.js)
     if (kIsWeb) {
-      return await launchRazorpayWebCheckout(options: options);
+      return await launchRazorpayWebCheckout(options: options).timeout(
+        const Duration(minutes: 5),
+        onTimeout: () => throw const PaymentException('Payment session timed out. Check the order before retrying.'),
+      );
     }
 
     // On native mobile (Android / iOS), invoke native Razorpay Flutter plugin
@@ -259,7 +303,7 @@ class PaymentService {
     razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, (PaymentSuccessResponse response) {
       completer.complete({
         'razorpay_payment_id': response.paymentId ?? '',
-        'razorpay_order_id': response.orderId ?? razorpayOrderId,
+        'razorpay_order_id': response.orderId ?? '',
         'razorpay_signature': response.signature ?? '',
       });
     });
@@ -284,9 +328,8 @@ class PaymentService {
       );
     });
 
-    razorpay.open(options);
-
     try {
+      razorpay.open(options);
       return await completer.future.timeout(
         const Duration(minutes: 5),
         onTimeout: () => throw const PaymentException('Payment session timed out. Please retry.'),

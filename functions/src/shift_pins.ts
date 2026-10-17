@@ -10,9 +10,11 @@ import {
   recordAuthSuccess,
 } from './rate_limiter';
 import { logSecurityEvent } from './security_logger';
-import { assertCapability } from './authorization_policy';
-import { verifyWorkstationCredentials } from './workstation_binding';
+import { assertCapability, isOperationalStaffRole } from './authorization_policy';
+import { hashWorkstationToken, verifyWorkstationCredentials } from './workstation_binding';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { normalizeTimestampToMillis } from './privileged_guard';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -26,6 +28,7 @@ export interface GenerateShiftPinRequest {
   role: 'kitchen' | 'pickup' | 'cashier';
   shiftWindow: ShiftWindow;
   shiftDate?: string; // YYYY-MM-DD (defaults to Asia/Kolkata today)
+  forceRegenerate?: boolean;
 }
 
 export interface VerifyShiftPinRequest {
@@ -46,6 +49,7 @@ const ROLE_MAX_DEVICES: Record<string, number> = {
   pickup: 3,
   cashier: 2,
 };
+const WORKSTATION_SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000;
 
 /**
  * Derives a salted cryptographic hash of a 6-digit shift PIN using PBKDF2 (20,000 iterations).
@@ -67,6 +71,63 @@ export function getMumbaiDateStr(date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', options).format(date);
 }
 
+function isWorkstationRole(role: unknown): role is VerifyShiftPinRequest['role'] {
+  return typeof role === 'string' && ['kitchen', 'pickup', 'cashier'].includes(role);
+}
+
+function isDeviceId(deviceId: unknown): deviceId is string {
+  return typeof deviceId === 'string' && /^[A-Za-z0-9_-]{4,100}$/.test(deviceId);
+}
+
+function shiftExpiryMillis(shiftDate: unknown, shiftWindow: unknown): number {
+  if (typeof shiftDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(shiftDate) ||
+      !['MORNING', 'AFTERNOON', 'FULL_DAY'].includes(shiftWindow as string)) return 0;
+  const day = new Date(`${shiftDate}T00:00:00+05:30`);
+  if (!Number.isFinite(day.getTime()) || getMumbaiDateStr(day) !== shiftDate) return 0;
+  const endTime = shiftWindow === 'MORNING' ? '15:30:00.000' : shiftWindow === 'AFTERNOON' ? '22:00:00.000' : '23:59:59.999';
+  return new Date(`${shiftDate}T${endTime}+05:30`).getTime();
+}
+
+function equalHashes(left: unknown, right: unknown): boolean {
+  return typeof left === 'string' && typeof right === 'string' && /^[a-fA-F0-9]{64}$/.test(left) &&
+    /^[a-fA-F0-9]{64}$/.test(right) && crypto.timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
+}
+
+/** A session is bound to this PIN issuance, not just its reusable document ID. */
+function activePinState(
+  data: admin.firestore.DocumentData,
+  pinId: string,
+  role: string,
+  nowMs: number,
+  requireUnlocked = false
+): { createdMs: number; expiresMs: number; generation: string } | null {
+  const createdMs = normalizeTimestampToMillis(data.createdAt);
+  const expiresMs = normalizeTimestampToMillis(data.expiresAt);
+  const shiftEndMs = shiftExpiryMillis(data.shiftDate, data.shiftWindow);
+  if (!isWorkstationRole(role) || data.pinId !== pinId || data.status !== 'ACTIVE' || data.role !== role ||
+      data.shiftDate !== getMumbaiDateStr(new Date(nowMs)) || !shiftEndMs ||
+      pinId !== `${role}_${data.shiftDate}_${data.shiftWindow}` || !createdMs || createdMs > nowMs ||
+      !expiresMs || expiresMs <= nowMs || expiresMs <= createdMs || expiresMs > shiftEndMs ||
+      typeof data.salt !== 'string' || !/^[a-fA-F0-9]{32}$/.test(data.salt) ||
+      typeof data.pinHash !== 'string' || !/^[a-fA-F0-9]{64}$/.test(data.pinHash) ||
+      !Array.isArray(data.boundDevices) || !data.boundDevices.every(isDeviceId) ||
+      new Set(data.boundDevices).size !== data.boundDevices.length ||
+      !Number.isSafeInteger(data.maxDevices) || data.maxDevices < 1 || data.maxDevices > ROLE_MAX_DEVICES[role] ||
+      data.boundDevices.length > data.maxDevices) return null;
+  if (data.lockedUntil !== undefined && data.lockedUntil !== null) {
+    const lockedMs = normalizeTimestampToMillis(data.lockedUntil);
+    if (!lockedMs || (requireUnlocked && lockedMs > nowMs)) return null;
+  }
+  const generation = crypto.createHash('sha256')
+    .update(JSON.stringify([pinId, data.pinHash, data.salt, createdMs])).digest('hex');
+  return { createdMs, expiresMs, generation };
+}
+
+function isActiveRegisteredWorkstation(data: admin.firestore.DocumentData, deviceId: string, role: string): boolean {
+  return data.workstationId === deviceId && data.status === 'ACTIVE' && data.stationType === role &&
+    typeof data.tokenHash === 'string' && /^[a-fA-F0-9]{64}$/.test(data.tokenHash);
+}
+
 /**
  * Platform 2.0 — Generate Shift PIN
  * 
@@ -82,10 +143,10 @@ export const generateShiftPin = onCall<GenerateShiftPinRequest>(async (request) 
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'generate_shift_pin', 'Only managers or admins can generate shift PINs.');
 
-  const { role, shiftWindow, shiftDate = getMumbaiDateStr() } = request.data || {};
+  const { role, shiftWindow, shiftDate = getMumbaiDateStr(), forceRegenerate = false } = request.data || {};
 
   if (!role || !['kitchen', 'pickup', 'cashier'].includes(role)) {
     throw new HttpsError('invalid-argument', 'Valid staff role (kitchen, pickup, cashier) is required.');
@@ -95,12 +156,16 @@ export const generateShiftPin = onCall<GenerateShiftPinRequest>(async (request) 
     throw new HttpsError('invalid-argument', 'Valid shiftWindow is required.');
   }
 
+  const expiresMs = shiftExpiryMillis(shiftDate, shiftWindow);
+  if (!expiresMs || expiresMs <= Date.now() || typeof forceRegenerate !== 'boolean') {
+    throw new HttpsError('invalid-argument', 'A valid unexpired YYYY-MM-DD shift date and boolean forceRegenerate are required.');
+  }
+
   const pinId = `${role}_${shiftDate}_${shiftWindow}`;
   const pinRef = db.collection('shiftPins').doc(pinId);
 
   // Check if active PIN already exists to prevent accidental override
   const existingDoc = await pinRef.get();
-  const forceRegenerate = Boolean((request.data as any)?.forceRegenerate);
   if (existingDoc.exists && existingDoc.data()?.status === 'ACTIVE') {
     if (!forceRegenerate) {
       throw new HttpsError(
@@ -116,14 +181,7 @@ export const generateShiftPin = onCall<GenerateShiftPinRequest>(async (request) 
   const pinHash = derivePinHash(rawPin, salt);
   const maxDevices = ROLE_MAX_DEVICES[role] || 2;
 
-  // Calculate expiration time strictly according to Asia/Kolkata (IST: UTC+5:30)
-  let timeStr = '23:59:59.999';
-  if (shiftWindow === 'MORNING') {
-    timeStr = '15:30:00.000'; // 3:30 PM IST
-  } else if (shiftWindow === 'AFTERNOON') {
-    timeStr = '22:00:00.000'; // 10:00 PM IST
-  }
-  const expiresAt = new Date(`${shiftDate}T${timeStr}+05:30`);
+  const expiresAt = new Date(expiresMs);
 
   const now = Timestamp.now();
 
@@ -181,31 +239,32 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
 
   const { pin, role, deviceId, workstationToken } = request.data || {};
 
-  if (!pin || typeof pin !== 'string' || pin.trim().length !== 6) {
+  if (typeof pin !== 'string' || !/^\d{6}$/.test(pin)) {
     throw new HttpsError('invalid-argument', 'Valid 6-digit shift PIN is required.');
   }
 
-  if (!role || !['kitchen', 'pickup', 'cashier'].includes(role)) {
+  if (!isWorkstationRole(role)) {
     throw new HttpsError('invalid-argument', 'Valid staff role is required.');
   }
 
-  const cleanDeviceId = String(deviceId || 'unknown_device').trim().slice(0, 100);
-  if (cleanDeviceId.length < 4) {
+  if (!isDeviceId(deviceId)) {
     throw new HttpsError('invalid-argument', 'Valid device identifier is required for workstation binding.');
+  }
+  const cleanDeviceId = deviceId;
+  if (typeof workstationToken !== 'string' || !workstationToken || workstationToken.length > 200 || workstationToken !== workstationToken.trim()) {
+    throw new HttpsError('permission-denied', 'Registered workstation credentials are required. Enroll this terminal before signing in.');
   }
 
   // Authoritative Workstation Hardware Binding: Verify registered workstation token
-  if (cleanDeviceId.startsWith('TB_WS_') || workstationToken) {
-    const wsResult = await verifyWorkstationCredentials(cleanDeviceId, String(workstationToken || ''), role);
-    if (!wsResult.valid) {
-      await logSecurityEvent({
-        eventType: 'UNREGISTERED_WORKSTATION_BLOCKED',
-        severity: 'HIGH',
-        actorUid: cleanDeviceId,
-        details: { role, reason: wsResult.reason },
-      });
-      throw new HttpsError('permission-denied', wsResult.reason || 'Workstation hardware authorization failed.');
-    }
+  const wsResult = await verifyWorkstationCredentials(cleanDeviceId, workstationToken, role);
+  if (!wsResult.valid) {
+    await logSecurityEvent({
+      eventType: 'UNREGISTERED_WORKSTATION_BLOCKED',
+      severity: 'HIGH',
+      actorUid: cleanDeviceId,
+      details: { role, reason: wsResult.reason },
+    });
+    throw new HttpsError('permission-denied', wsResult.reason || 'Workstation hardware authorization failed.');
   }
 
   const hashedDeviceId = crypto.createHash('sha256').update(`DEVICE_${cleanDeviceId}`).digest('hex').slice(0, 16);
@@ -222,7 +281,6 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
   await enforceRateLimit(ipBucket, 'shift_pin_verification', { isIpBased: true, natMultiplier: 3 });
 
   const todayStr = getMumbaiDateStr();
-  const now = new Date();
 
   // Find active candidate PINs for this role today
   const pinsSnap = await db
@@ -250,18 +308,13 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
 
   for (const doc of pinsSnap.docs) {
     const data = doc.data();
-    // Skip expired or locked windows
-    if (data.expiresAt && data.expiresAt.toDate() < now) continue;
-    if (data.lockedUntil && data.lockedUntil.toDate() > now) continue;
-    if (!data.salt || !data.pinHash) continue;
+    if (!activePinState(data, doc.id, role, Date.now(), true)) continue;
 
     const testHash = derivePinHash(pin, data.salt);
-    try {
-      if (crypto.timingSafeEqual(Buffer.from(testHash, 'hex'), Buffer.from(data.pinHash, 'hex'))) {
-        candidateDoc = doc;
-        break;
-      }
-    } catch (_) {}
+    if (equalHashes(testHash, data.pinHash)) {
+      candidateDoc = doc;
+      break;
+    }
   }
 
   // If no active candidate matched the PIN, record failed attempt and fail closed
@@ -292,33 +345,36 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
   }
 
   const pinRef = candidateDoc.ref;
-
-  let customToken: string;
-  let finalRole: string;
-  let boundDeviceList: string[];
+  const selectedGeneration = activePinState(candidateDoc.data(), candidateDoc.id, role, Date.now(), true)?.generation;
+  const workstationUid = `staff_${role}_${todayStr}_${hashedDeviceId}`;
+  const sessionGeneration = crypto.randomBytes(16).toString('hex');
+  const sessionDocRef = db.collection('workstationSessions').doc(workstationUid);
+  const workstationRef = db.collection('registeredWorkstations').doc(cleanDeviceId);
+  const providedWorkstationHash = hashWorkstationToken(workstationToken);
+  let boundDeviceList: string[] = [];
+  let finalShiftWindow: ShiftWindow;
 
   try {
-    await db.runTransaction(async (transaction) => {
+    const verified = await db.runTransaction(async (transaction) => {
       const freshSnap = await transaction.get(pinRef);
-      if (!freshSnap.exists) {
+      const workstationSnap = await transaction.get(workstationRef);
+      if (!freshSnap.exists || !workstationSnap.exists) {
         throw new HttpsError('unauthenticated', 'Invalid staff credentials.');
       }
 
       const data = freshSnap.data()!;
-
-      // Check expiration
-      if (data.expiresAt && data.expiresAt.toDate() < now) {
-        throw new HttpsError('unauthenticated', 'Invalid staff credentials.');
-      }
-
-      // Check account lockout
-      if (data.lockedUntil && data.lockedUntil.toDate() > now) {
+      const workstation = workstationSnap.data()!;
+      const nowMs = Date.now();
+      const pinState = activePinState(data, freshSnap.id, role, nowMs, true);
+      if (!pinState || !selectedGeneration || pinState.generation !== selectedGeneration ||
+          !isActiveRegisteredWorkstation(workstation, cleanDeviceId, role) ||
+          !equalHashes(providedWorkstationHash, workstation.tokenHash)) {
         throw new HttpsError('unauthenticated', 'Invalid staff credentials.');
       }
 
       // Verify PBKDF2 hash
       const testHash = derivePinHash(pin, data.salt);
-      const isMatch = crypto.timingSafeEqual(Buffer.from(testHash, 'hex'), Buffer.from(data.pinHash, 'hex'));
+      const isMatch = equalHashes(testHash, data.pinHash);
 
       if (!isMatch) {
         const newFails = (data.failedAttempts || 0) + 1;
@@ -327,12 +383,13 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
           updates.lockedUntil = Timestamp.fromDate(new Date(Date.now() + 15 * 60000));
         }
         transaction.update(pinRef, updates);
-        throw new HttpsError('unauthenticated', 'Invalid staff credentials.');
+        // Resolve so the failure commits; throwing here would roll it back.
+        return false;
       }
 
       // Enforce Device Binding
-      const boundDevices: string[] = data.boundDevices || [];
-      const maxDevices = data.maxDevices || ROLE_MAX_DEVICES[role] || 2;
+      const boundDevices: string[] = [...data.boundDevices];
+      const maxDevices = data.maxDevices;
 
       if (!boundDevices.includes(cleanDeviceId)) {
         if (boundDevices.length >= maxDevices) {
@@ -348,9 +405,31 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
         lastLoginAt: FieldValue.serverTimestamp(),
       });
 
-      finalRole = data.role;
+      // PIN consumption, hardware binding and session issuance share one fresh
+      // transaction. Regeneration/revocation cannot race a later session set.
+      transaction.set(sessionDocRef, {
+        sessionId: workstationUid,
+        sessionGeneration,
+        pinId: freshSnap.id,
+        pinGeneration: pinState.generation,
+        role,
+        staffUid: request.auth?.uid || workstationUid,
+        deviceId: cleanDeviceId,
+        deviceHash: hashedDeviceId,
+        workstationTokenHash: workstation.tokenHash,
+        shiftDate: data.shiftDate,
+        shiftWindow: data.shiftWindow,
+        status: 'ACTIVE',
+        createdAt: Timestamp.fromMillis(nowMs),
+        expiresAt: Timestamp.fromMillis(Math.min(nowMs + WORKSTATION_SESSION_LIFETIME_MS, pinState.expiresMs)),
+      });
+      finalShiftWindow = data.shiftWindow;
       boundDeviceList = boundDevices;
+      return true;
     });
+    if (!verified) {
+      throw new HttpsError('unauthenticated', 'Invalid staff credentials.');
+    }
   } catch (err: any) {
     await recordAuthFailure(hashedDeviceId, 'staff_pin');
     await recordAuthFailure(ipBucket, 'staff_pin');
@@ -363,29 +442,14 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
     throw err instanceof HttpsError ? err : new HttpsError('unauthenticated', 'Invalid staff credentials.');
   }
 
-  // Create ephemeral staff UID and Auth session
-  const workstationUid = `staff_${role}_${todayStr}_${hashedDeviceId}`;
-
-  // 1. Record active workstation session (TB-NEW-004 Remediation & BUG-10)
-  const sessionDocRef = db.collection('workstationSessions').doc(workstationUid);
-  await sessionDocRef.set({
-    sessionId: workstationUid,
-    pinId: candidateDoc.id,
-    role: finalRole!,
-    staffUid: request.auth?.uid || (candidateDoc.data()?.generatedBy || workstationUid),
-    deviceId: cleanDeviceId,
-    deviceHash: hashedDeviceId,
-    shiftDate: todayStr,
-    status: 'ACTIVE',
-    createdAt: FieldValue.serverTimestamp(),
-    expiresAt: Timestamp.fromMillis(Date.now() + 8 * 60 * 60 * 1000), // 8 hours
-  });
-
-  customToken = await admin.auth().createCustomToken(workstationUid, {
-    role: finalRole!,
+  const customToken = await admin.auth().createCustomToken(workstationUid, {
+    role,
     isWorkstationSession: true,
+    sessionGeneration,
+    pinId: candidateDoc.id,
     deviceId: cleanDeviceId,
     shiftDate: todayStr,
+    shiftWindow: finalShiftWindow!,
     permissionsVersion: 2,
   });
 
@@ -395,7 +459,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
     actorUid: workstationUid,
     details: {
       pinId: candidateDoc.id,
-      role: finalRole!,
+      role,
       deviceHash: hashedDeviceId,
       boundDevicesCount: boundDeviceList!.length,
       actorType: 'WORKSTATION_DEVICE',
@@ -407,7 +471,7 @@ export const verifyShiftPin = onCall<VerifyShiftPinRequest>(async (request) => {
   return {
     success: true,
     token: customToken,
-    role: finalRole!,
+    role,
     workstationUid,
     boundDevices: boundDeviceList!,
   };
@@ -425,11 +489,12 @@ export const revokeShiftPin = onCall<RevokeShiftPinRequest>(async (request) => {
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'revoke_shift_pin', 'Only managers or admins can revoke shift PINs.');
 
   const { pinId, reason = 'Administrative revocation' } = request.data || {};
-  if (!pinId) {
+  if (typeof pinId !== 'string' || !/^(kitchen|pickup|cashier)_\d{4}-\d{2}-\d{2}_(MORNING|AFTERNOON|FULL_DAY)$/.test(pinId) ||
+      typeof reason !== 'string' || !reason.trim() || reason.length > 200) {
     throw new HttpsError('invalid-argument', 'Valid pinId is required.');
   }
 
@@ -485,20 +550,86 @@ export const revokeShiftPin = onCall<RevokeShiftPinRequest>(async (request) => {
  * Asserts that a workstation session is still active and has not been revoked (TB-NEW-004 & TB-NEW-005).
  */
 export async function assertActiveWorkstationSession(uid: string, token: Record<string, any>): Promise<void> {
-  if (token && (token.isWorkstationSession === true || uid.startsWith('staff_'))) {
-    const sessionSnap = await db.collection('workstationSessions').doc(uid).get();
-    if (!sessionSnap.exists) {
-      throw new HttpsError('unauthenticated', 'Workstation session does not exist. Please re-authenticate with shift PIN.');
-    }
-    const sessionData = sessionSnap.data()!;
-    if (sessionData.status !== 'ACTIVE') {
-      throw new HttpsError('unauthenticated', 'Workstation session has been revoked. Please re-authenticate with shift PIN.');
-    }
-    const now = Timestamp.now();
-    if (sessionData.expiresAt && sessionData.expiresAt.toMillis() <= now.toMillis()) {
-      throw new HttpsError('unauthenticated', 'Workstation session has expired. Please re-authenticate with shift PIN.');
-    }
+  if (typeof uid !== 'string' || !uid || uid.length > 128 || uid.includes('/')) {
+    throw new HttpsError('unauthenticated', 'A valid authenticated user is required.');
   }
+  if (!uid.startsWith('staff_') && token?.isWorkstationSession !== true) {
+    // Customers also call this shared guard (for example self-cancellation).
+    // Check all staff-like claims, including forms capability checks normalize,
+    // without imposing permanent staff authority on customers or workstations.
+    if (typeof token?.role === 'string' && isOperationalStaffRole(token.role.trim().toLowerCase())) {
+      await assertCurrentStaffAuthority(uid, token);
+    }
+    return;
+  }
+
+  const invalidSession = () => new HttpsError('unauthenticated', 'Workstation session authority is invalid or expired. Please re-authenticate with a shift PIN on an enrolled terminal.');
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (!uid.startsWith('staff_') || !token || token.isWorkstationSession !== true || !isWorkstationRole(token.role) ||
+      !isDeviceId(token.deviceId) || typeof token.sessionGeneration !== 'string' || !/^[a-f0-9]{32}$/.test(token.sessionGeneration) ||
+      typeof token.pinId !== 'string' || !/^(kitchen|pickup|cashier)_\d{4}-\d{2}-\d{2}_(MORNING|AFTERNOON|FULL_DAY)$/.test(token.pinId) ||
+      !Number.isSafeInteger(token.auth_time) || token.auth_time <= 0 || token.auth_time > nowSeconds ||
+      !Number.isSafeInteger(token.iat) || token.iat < token.auth_time || token.iat > nowSeconds ||
+      (token.uid !== undefined && token.uid !== uid) || (token.sub !== undefined && token.sub !== uid)) {
+    throw invalidSession();
+  }
+
+  let authUser: admin.auth.UserRecord;
+  try {
+    authUser = await admin.auth().getUser(uid);
+  } catch (err: any) {
+    if (err?.code === 'auth/user-not-found') throw invalidSession();
+    throw new HttpsError('unavailable', 'Current workstation account authority could not be verified. Please retry.');
+  }
+  // Operational roles are supplied by createCustomToken, so a newly signed-in
+  // virtual workstation normally has no permanent Auth role. An explicit Auth
+  // role change, however, must invalidate its former workstation authority.
+  if (!authUser || authUser.uid !== uid || authUser.disabled !== false ||
+      (authUser.customClaims?.role !== undefined && authUser.customClaims.role !== token.role) ||
+      (authUser.customClaims?.isWorkstationSession !== undefined && authUser.customClaims.isWorkstationSession !== true)) {
+    throw invalidSession();
+  }
+  const validAfterMs = normalizeTimestampToMillis(authUser.tokensValidAfterTime);
+  const authCreatedMs = normalizeTimestampToMillis(authUser.metadata?.creationTime);
+  if ((authUser.tokensValidAfterTime !== undefined && !validAfterMs) || token.auth_time * 1000 < validAfterMs) {
+    throw invalidSession();
+  }
+
+  await db.runTransaction(async transaction => {
+    const sessionSnap = await transaction.get(db.collection('workstationSessions').doc(uid));
+    if (!sessionSnap.exists) throw invalidSession();
+    const data = sessionSnap.data()!;
+    const nowMs = Date.now();
+    const createdMs = normalizeTimestampToMillis(data.createdAt);
+    const expiresMs = normalizeTimestampToMillis(data.expiresAt);
+    // A first signInWithCustomToken can create its Auth account after this
+    // Firestore session. That initial validSince epoch is not a revocation.
+    // Later epochs still invalidate the original issuance, even if its custom
+    // token is exchanged again. Auth metadata/epochs have second precision.
+    const initialAuthEpoch = authCreatedMs > 0 && authCreatedMs <= nowMs && createdMs <= authCreatedMs + 999 &&
+      validAfterMs <= authCreatedMs + 999 && token.auth_time * 1000 + 999 >= authCreatedMs;
+    const deviceHash = crypto.createHash('sha256').update(`DEVICE_${token.deviceId}`).digest('hex').slice(0, 16);
+    if (data.sessionId !== uid || data.status !== 'ACTIVE' || data.sessionGeneration !== token.sessionGeneration ||
+        data.role !== token.role || data.deviceId !== token.deviceId || data.deviceHash !== deviceHash ||
+        data.pinId !== token.pinId || data.shiftDate !== token.shiftDate || data.shiftWindow !== token.shiftWindow ||
+        data.shiftDate !== getMumbaiDateStr(new Date(nowMs)) ||
+        !createdMs || createdMs > nowMs || (createdMs < validAfterMs && !initialAuthEpoch) || token.auth_time * 1000 + 999 < createdMs ||
+        !expiresMs || expiresMs <= createdMs || expiresMs <= nowMs || expiresMs - createdMs > WORKSTATION_SESSION_LIFETIME_MS) {
+      throw invalidSession();
+    }
+    const pinSnap = await transaction.get(db.collection('shiftPins').doc(data.pinId));
+    const workstationSnap = await transaction.get(db.collection('registeredWorkstations').doc(data.deviceId));
+    if (!pinSnap.exists || !workstationSnap.exists) throw invalidSession();
+    const pin = pinSnap.data()!;
+    const workstation = workstationSnap.data()!;
+    const pinState = activePinState(pin, pinSnap.id, data.role, nowMs);
+    if (!pinState || data.pinGeneration !== pinState.generation || data.shiftWindow !== pin.shiftWindow ||
+        createdMs < pinState.createdMs || expiresMs > pinState.expiresMs || !pin.boundDevices.includes(data.deviceId) ||
+        !isActiveRegisteredWorkstation(workstation, data.deviceId, data.role) ||
+        !equalHashes(data.workstationTokenHash, workstation.tokenHash)) {
+      throw invalidSession();
+    }
+  });
 }
 
 /**
@@ -511,7 +642,7 @@ export const listActiveShiftPins = onCall(async (request) => {
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'manage_shift_pins', 'Only managers or admins can list shift PINs.');
 
   const todayStr = getMumbaiDateStr();

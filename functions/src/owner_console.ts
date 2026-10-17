@@ -7,6 +7,7 @@ import { assertCapability } from './authorization_policy';
 import { AdminOperationsDashboardResponse } from './types';
 import { assertNoHoneytokens } from './honeypot_defense';
 import { enforceRateLimit } from './rate_limiter';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -231,10 +232,9 @@ export const updateOwnerFeatureFlags = onCall<Partial<OwnerFeatureFlags>>(async 
     throw new HttpsError('unauthenticated', 'Staff authentication is required.');
   }
 
-  await enforceRateLimit(request.auth.uid, 'menu_management');
-
-  const callerRole = (request.auth.token.role as string | undefined) || '';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   assertCapability(callerRole, 'manage_platform_flags', 'Only managers or administrators can modify campus feature flags.');
+  await enforceRateLimit(request.auth.uid, 'menu_management');
 
   const {
     onlineOrderingEnabled,

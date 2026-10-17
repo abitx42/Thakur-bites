@@ -75,11 +75,12 @@ class AuthService {
 
   static const String _cachedProfileKey = 'tb_cached_user_profile';
 
-  /// Save profile to local disk cache for instant 0ms cold-start persistence
+  /// Cache display data only. Cached verification/classification is not authority.
   Future<void> saveCachedProfile(UserProfile profile) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_cachedProfileKey, jsonEncode(profile.toJson()));
+      final displayProfile = _asUnverifiedDisplayProfile(profile);
+      await prefs.setString(_cachedProfileKey, jsonEncode(displayProfile.toJson()));
     } catch (e) {
       debugPrint('[AuthService] Error saving cached profile: $e');
     }
@@ -92,7 +93,9 @@ class AuthService {
       final raw = prefs.getString(_cachedProfileKey);
       if (raw != null && raw.isNotEmpty) {
         final data = jsonDecode(raw) as Map<String, dynamic>;
-        return UserProfile.fromJson(data);
+        final cached = UserProfile.fromJson(data);
+        if (_auth.currentUser?.uid != cached.uid) return null;
+        return _asUnverifiedDisplayProfile(cached);
       }
     } catch (e) {
       debugPrint('[AuthService] Error loading cached profile: $e');
@@ -108,64 +111,27 @@ class AuthService {
     } catch (_) {}
   }
 
-  /// Synthesize a valid fallback profile from Firebase Auth User
-  UserProfile _synthesizeProfileFromUser(User user) {
-    final rawName = user.displayName ?? 'Student';
-    final cleanName = UserProfile.cleanName(rawName);
-    final email = user.email ?? '';
-    final accountType = getIdentityHintFromEmail(email);
-
-    return UserProfile(
-      uid: user.uid,
-      email: email,
-      displayName: cleanName,
-      photoURL: user.photoURL,
-      accountType: accountType,
-      verificationStatus: accountType == AccountType.student
-          ? VerificationStatus.pending
-          : VerificationStatus.notRequired,
+  UserProfile _asUnverifiedDisplayProfile(UserProfile profile) {
+    return profile.copyWith(
+      accountType: AccountType.visitor,
+      verificationStatus: VerificationStatus.pending,
+      isVerified: false,
       priorityLevel: 0,
-      createdAt: DateTime.now(),
     );
   }
 
-  /// Fetch a user profile by UID from authoritative `users` collection with persistent disk caching.
+  /// Provision and load the current user's authoritative server profile.
+  /// Offline display is available separately through getCachedProfile().
   Future<UserProfile?> getUserProfile(String uid) async {
-    final cached = await getCachedProfile();
-
+    final user = _auth.currentUser;
+    if (user == null || user.uid != uid) return null;
     try {
-      final userDoc = await _users.doc(uid).get().timeout(const Duration(seconds: 4));
-      if (userDoc.exists && userDoc.data() != null) {
-        final profile = UserProfile.fromFirestore(userDoc.id, userDoc.data()!);
-        await saveCachedProfile(profile);
-        return profile;
-      }
-
-      // If user profile document does not exist in Firestore yet, trigger server-side provisioning
-      if (_auth.currentUser != null && _auth.currentUser!.uid == uid) {
-        final profile = await _ensureUserProfile(_auth.currentUser!);
-        await saveCachedProfile(profile);
-        return profile;
-      }
-    } catch (e) {
-      debugPrint('[AuthService] Error fetching user profile for $uid: $e');
-      // On network failure or offline startup, NEVER wipe user session if cached profile exists
-      if (cached != null && cached.uid == uid) {
-        debugPrint('[AuthService] Using cached profile for $uid');
-        return cached;
-      }
-      // If no cache, synthesize profile from current authenticated user
-      if (_auth.currentUser != null && _auth.currentUser!.uid == uid) {
-        final profile = _synthesizeProfileFromUser(_auth.currentUser!);
-        await saveCachedProfile(profile);
-        return profile;
-      }
+      return await _ensureUserProfile(user);
+    } on ProfileProvisioningException {
+      rethrow;
+    } catch (_) {
+      throw const ProfileProvisioningException('Unable to verify your profile with the server. Check your connection and retry.');
     }
-
-    if (cached != null && cached.uid == uid) {
-      return cached;
-    }
-    return null;
   }
 
   /// Checks for any pending web OAuth redirect result on startup
@@ -178,7 +144,8 @@ class AuthService {
           return await _ensureUserProfile(user);
         }
       } catch (e) {
-        debugPrint('[AuthService] Web redirect result check: $e');
+        if (e is ProfileProvisioningException) rethrow;
+        throw const ProfileProvisioningException('Unable to finish Google sign-in. Check your connection and retry.');
       }
     }
     return null;
@@ -231,6 +198,7 @@ class AuthService {
     } on FirebaseAuthException catch (e) {
       throw Exception(_mapFirebaseAuthError(e));
     } catch (e) {
+      if (e is ProfileProvisioningException) rethrow;
       if (e.toString().contains('Redirecting')) rethrow;
       throw Exception(e.toString().replaceAll('Exception:', '').trim());
     }
@@ -251,73 +219,47 @@ class AuthService {
     String? initialRollNo,
     String? initialDepartment,
   }) async {
-    // 1. Call server-authoritative provisioner to guarantee valid record & claims if Cloud Functions are deployed
+    // The callable, refreshed token and server-source profile must all succeed.
     try {
-      await _functions.provisionUserProfile(
+      final result = await _functions.provisionUserProfile(
         displayName: initialDisplayName ?? user.displayName,
         phone: initialPhone,
         rollNo: initialRollNo,
         department: initialDepartment,
       );
-    } catch (e) {
-      debugPrint('[AuthService] Server provisioning notice: $e');
-    }
-
-    // Force refresh ID token to get latest custom claims from the server (TB-AUTH-007)
-    try {
-      await user.getIdToken(true);
-    } catch (_) {}
-
-    // 2. Fetch authoritative profile from Firestore
-    try {
-      final userDoc = await _users.doc(user.uid).get();
-      if (userDoc.exists && userDoc.data() != null) {
-        final profile = UserProfile.fromFirestore(userDoc.id, userDoc.data()!);
-        if (profile.accountDisabled) {
-          await _auth.signOut();
-          throw Exception('Account has been deactivated. Please contact canteen management.');
-        }
-        return profile;
+      if (result['success'] != true || result['userId'] != user.uid) {
+        throw const ProfileProvisioningException('The server did not confirm profile setup. Please retry.');
       }
-    } catch (e) {
-      debugPrint('[AuthService] Firestore profile fetch notice: $e');
+      final refreshedToken = await user.getIdToken(true);
+      if (refreshedToken == null || refreshedToken.isEmpty) {
+        throw const ProfileProvisioningException('Your sign-in token could not be refreshed. Please sign in again.');
+      }
+      if (_auth.currentUser?.uid != user.uid) {
+        throw const ProfileProvisioningException('Your sign-in changed during profile setup. Please sign in again.');
+      }
+      final userDoc = await _users.doc(user.uid).get(const GetOptions(source: Source.server));
+      final data = userDoc.data();
+      if (_auth.currentUser?.uid != user.uid || !userDoc.exists || data == null
+          || userDoc.id != user.uid
+          || !const ['VISITOR', 'STUDENT', 'TEACHER', 'COLLEGE_STAFF'].contains(data['accountType'])
+          || !const ['NOT_REQUIRED', 'PENDING', 'UNDER_REVIEW', 'VERIFIED', 'REJECTED', 'EXPIRED'].contains(data['verificationStatus'])
+          || data['priorityLevel'] is! int || (data['priorityLevel'] as int) < 0 || (data['priorityLevel'] as int) > 3
+          || data['isVerified'] is! bool || data['accountDisabled'] is! bool) {
+        throw const ProfileProvisioningException('Your server profile is not ready. Please retry profile setup.');
+      }
+      final profile = UserProfile.fromFirestore(userDoc.id, data);
+      if (profile.accountDisabled) {
+        await clearCachedProfile();
+        if (_auth.currentUser?.uid == user.uid) await _auth.signOut();
+        throw const ProfileProvisioningException('Account has been deactivated. Please contact canteen management.');
+      }
+      await saveCachedProfile(profile);
+      return profile;
+    } on ProfileProvisioningException {
+      rethrow;
+    } catch (_) {
+      throw const ProfileProvisioningException('Unable to complete server profile setup. Check your connection and retry.');
     }
-
-    // 3. Resilient fallback when Cloud Functions are not yet deployed:
-    // Construct an authentic profile directly from the verified Firebase Auth Google user
-    // so the student/visitor can use the app smoothly without being prematurely signed out.
-    final rawName = initialDisplayName ?? user.displayName ?? 'Student';
-    final cleanName = UserProfile.cleanName(rawName);
-    final email = user.email ?? '';
-    final accountType = getIdentityHintFromEmail(email);
-
-    final profile = UserProfile(
-      uid: user.uid,
-      email: email,
-      displayName: cleanName,
-      photoURL: user.photoURL,
-      accountType: accountType,
-      verificationStatus: accountType == AccountType.student
-          ? VerificationStatus.pending
-          : VerificationStatus.notRequired,
-      priorityLevel: 0,
-      department: initialDepartment,
-      rollNo: initialRollNo,
-      phone: initialPhone ?? user.phoneNumber,
-      createdAt: DateTime.now(),
-    );
-
-    // Persist synthesized profile to Firestore so subsequent app boots find it immediately
-    try {
-      await _users.doc(user.uid).set(
-            profile.toInitialCreateMap(),
-            SetOptions(merge: true),
-          );
-    } catch (e) {
-      debugPrint('[AuthService] Profile auto-creation notice: $e');
-    }
-
-    return profile;
   }
 
   /// Translates Firebase Auth error codes into human-readable messages
@@ -384,4 +326,13 @@ class AuthService {
     } catch (_) {}
     await _auth.signOut();
   }
+}
+
+/// A failed server provisioning/read is not a successful local identity profile.
+class ProfileProvisioningException implements Exception {
+  final String message;
+  const ProfileProvisioningException(this.message);
+
+  @override
+  String toString() => message;
 }

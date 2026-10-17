@@ -47,6 +47,11 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   bool _isCancelling = false;
   bool _isReconciling = false;
   bool _isPaying = false;
+  int _boundaryVersion = 0;
+  String? _currentUid;
+  Future<String>? _pickupQrFuture;
+  DateTime? _pickupQrExpiresAt;
+  DateTime? _pickupQrRefreshAfter;
 
   int _selectedStars = 5;
   final Set<String> _selectedFeedbackTags = {'🔥 Crispy & Fresh', '⚡️ Fast Service'};
@@ -77,25 +82,19 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   @override
   void initState() {
     super.initState();
-    _cachedPin = widget.initialOrder?.pinCode;
-    if (_cachedPin == null || _cachedPin!.isEmpty) {
-      SharedPreferences.getInstance().then((prefs) {
-        final p = prefs.getString('order_pin_${widget.orderId}');
-        if (p != null && p.isNotEmpty && mounted) {
-          setState(() {
-            _cachedPin = p;
-          });
-        }
-      }).catchError((_) {});
-    } else {
-      SharedPreferences.getInstance().then((prefs) {
-        prefs.setString('order_pin_${widget.orderId}', _cachedPin!);
-      }).catchError((_) {});
+    final auth = context.read<AuthProvider>();
+    _currentUid = auth.isLoggedIn ? auth.currentProfile?.uid : null;
+    final uid = _currentUid;
+    final version = _boundaryVersion;
+    if (uid != null) {
+      _cachedPin = widget.initialOrder?.studentId == uid ? widget.initialOrder?.pinCode : null;
+      _restoreCachedPin(uid, version);
     }
 
     // Restore previously submitted rating for this order (TB-R2-014)
     SharedPreferences.getInstance().then((prefs) {
-      if (prefs.getBool('feedback_submitted_${widget.orderId}') == true && mounted) {
+      if (uid != null && _isCurrentOwner(version, uid, widget.orderId)
+          && prefs.getBool('feedback_submitted_${widget.orderId}') == true) {
         setState(() {
           _feedbackSubmitted = true;
           _selectedStars = prefs.getInt('feedback_stars_${widget.orderId}') ?? 5;
@@ -113,14 +112,65 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = Provider.of<AuthProvider>(context);
+    final uid = auth.isLoggedIn ? auth.currentProfile?.uid : null;
+    if (uid != _currentUid) {
+      ++_boundaryVersion;
+      if (_isPaying) PaymentService.cancelActivePayment('Your sign-in changed.');
+      _currentUid = uid;
+      _cachedPin = null;
+      _pickupQrFuture = null;
+      _pickupQrExpiresAt = null;
+      _pickupQrRefreshAfter = null;
+      _previousKnownStatus = null;
+      _isCancelling = false;
+      _isReconciling = false;
+      _isPaying = false;
+      _isReordering = false;
+      _feedbackSubmitted = false;
+      _autoCancelledOrderIds.clear();
+      if (uid != null) _restoreCachedPin(uid, _boundaryVersion);
+    }
+  }
+
+  @override
   void dispose() {
+    ++_boundaryVersion;
+    if (_isPaying) PaymentService.cancelActivePayment();
     _countdownTimer?.cancel();
     _clockNotifier.dispose();
     super.dispose();
   }
 
+  bool _isCurrentOwner(int version, String uid, String orderId) {
+    if (!mounted || version != _boundaryVersion || _currentUid != uid || widget.orderId != orderId) return false;
+    final auth = context.read<AuthProvider>();
+    return auth.isLoggedIn && auth.currentProfile?.uid == uid;
+  }
+
+  Future<void> _restoreCachedPin(String uid, int version) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!_isCurrentOwner(version, uid, widget.orderId)) return;
+      final pin = _cachedPin;
+      if (pin != null && pin.isNotEmpty) {
+        await prefs.setString('order_pin_${widget.orderId}', pin);
+      } else {
+        final saved = prefs.getString('order_pin_${widget.orderId}');
+        if (saved != null && saved.isNotEmpty) setState(() => _cachedPin = saved);
+      }
+    } catch (_) {
+      // Missing display credentials are not a successful pickup verification.
+    }
+  }
+
   void _cleanOrderFromActiveStorage(String orderId) {
+    final uid = _currentUid;
+    final version = _boundaryVersion;
     SharedPreferences.getInstance().then((prefs) {
+      if (uid == null || !_isCurrentOwner(version, uid, orderId)) return;
       final list = prefs.getStringList('active_order_ids') ?? <String>[];
       if (list.contains(orderId)) {
         list.remove(orderId);
@@ -248,7 +298,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                   }
 
                   final order = snapshot.data ?? widget.initialOrder;
-                  if (order == null) {
+                  if (order == null || order.studentId == null
+                      || !_isCurrentOwner(_boundaryVersion, order.studentId!, order.id)) {
                     return Center(
                       child: Text('Order not found',
                           style: AppFonts.body(
@@ -307,7 +358,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                           const SizedBox(height: 14),
                           _buildReadyMadePreferenceCard(order),
                         ],
-                        if (order.isReady) ...[
+                        if (order.isReady && order.isPaid) ...[
                           const SizedBox(height: 16),
                           _buildPickupPinCard(order),
                         ],
@@ -787,66 +838,140 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     );
   }
 
-  /// Automatic cancellation and inventory stock release when reservation window expires.
+  bool _isPaidOrder(app.Order order) => order.isPaid
+      && const ['confirmed', 'placed', 'preparing', 'ready', 'collected'].contains(order.status);
+
+  Future<app.Order> _readServerOrder(String orderId, String uid, int version) async {
+    if (!_isCurrentOwner(version, uid, orderId)) throw StateError('Your sign-in or order changed.');
+    final snap = await FirebaseFirestore.instance.collection('orders').doc(orderId)
+        .get(const GetOptions(source: Source.server));
+    final data = snap.data();
+    if (!_isCurrentOwner(version, uid, orderId)) throw StateError('Your sign-in or order changed.');
+    if (!snap.exists || data == null || snap.metadata.isFromCache || snap.metadata.hasPendingWrites
+        || data['studentId'] != uid
+        || data['status'] is! String || (data['status'] as String).isEmpty
+        || data['paymentStatus'] is! String || (data['paymentStatus'] as String).isEmpty
+        || !const ['online', 'counter_cash'].contains(data['paymentMethod'])
+        || data['tokenNumber'] is! String || (data['tokenNumber'] as String).isEmpty
+        || data['totalAmountPaise'] is! int || (data['totalAmountPaise'] as int) < 0
+        || data['createdAt'] is! Timestamp || data['items'] is! List || (data['items'] as List).isEmpty) {
+      throw StateError('The server did not confirm a complete current order receipt. Please retry.');
+    }
+    final order = app.Order.fromFirestore(snap.id, data);
+    return order.copyWith(
+      pinCode: order.pinCode.isNotEmpty ? order.pinCode : (_cachedPin ?? ''),
+      totalAmount: (data['totalAmountPaise'] as int) / 100.0,
+    );
+  }
+
+  Future<app.Order> _cancelOnServer(app.Order order, String reason, String uid, int version) async {
+    if (!_isCurrentOwner(version, uid, order.id)) throw StateError('Your sign-in or order changed.');
+    final result = await _functions.cancelOrder(orderId: order.id, reason: reason);
+    if (!_isCurrentOwner(version, uid, order.id)) throw StateError('Your sign-in or order changed.');
+    if (result['success'] != true || result['orderId'] != order.id || result['status'] != 'cancelled') {
+      throw StateError('The server did not confirm cancellation. Check the existing order before retrying.');
+    }
+    final cancelled = await _readServerOrder(order.id, uid, version);
+    if (cancelled.status != 'cancelled') {
+      throw StateError('Cancellation is not confirmed in the server order. Please retry or contact the counter.');
+    }
+    _cleanOrderFromActiveStorage(order.id);
+    return cancelled;
+  }
+
+  /// Automatic cancellation and inventory stock release are performed only by
+  /// the authoritative handler; an elapsed local clock never releases stock.
   void _checkAutoCancelExpiredReservation(app.Order order, bool isExpired) {
-    if (!isExpired) return;
-    if (order.isCancelled || order.status == 'cancelled') return;
-    if (order.paymentStatus == 'paid' || order.status == 'confirmed') return;
+    final uid = _currentUid;
+    final version = _boundaryVersion;
+    if (uid == null || !_isCurrentOwner(version, uid, order.id)) return;
+    if (!isExpired || order.isCancelled || order.isPaid || !order.isPaymentPending) return;
+    if (_isCancelling || _isPaying || _isReconciling || _isReordering) return;
     if (_autoCancelledOrderIds.contains(order.id)) return;
 
     _autoCancelledOrderIds.add(order.id);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!_isCurrentOwner(version, uid, order.id) || _isCancelling || _isPaying || _isReconciling || _isReordering) {
+        _autoCancelledOrderIds.remove(order.id);
+        return;
+      }
+      setState(() => _isCancelling = true);
       try {
-        await _functions.cancelOrder(
-          orderId: order.id,
-          reason: 'RESERVATION_EXPIRED',
-        );
+        final current = await _readServerOrder(order.id, uid, version);
+        if (!current.isPaymentPending || current.isPaid || current.isCancelled || !current.isReservationExpired) return;
+        await _cancelOnServer(current, 'RESERVATION_EXPIRED', uid, version);
       } catch (e) {
-        debugPrint('[OrderStatusScreen] Error auto-cancelling expired reservation via functions: $e');
-        try {
-          // Direct fallback with inventory stock restoration
-          await _executeDirectCancellation(order, 'RESERVATION_EXPIRED');
-        } catch (fsErr) {
-          debugPrint('[OrderStatusScreen] Error auto-cancelling expired order in Firestore: $fsErr');
+        if (mounted && _isCurrentOwner(version, uid, order.id)) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('The server has not confirmed reservation cancellation or stock release. Check this order before reordering.'),
+            backgroundColor: AppColors.warning,
+          ));
         }
+      } finally {
+        if (_isCurrentOwner(version, uid, order.id)) setState(() => _isCancelling = false);
       }
     });
   }
 
   /// Re-adds expired order items back into the user's Cart and navigates to CartScreen.
   Future<void> _handleReorderFromCart(app.Order order) async {
-    final cart = context.read<CartProvider>();
-    int addedCount = 0;
-
-    for (final oi in order.items) {
-      final menuItem = MenuItem(
-        id: oi.menuItemId,
-        name: oi.name,
-        price: oi.price,
-        type: oi.type ?? 'instant',
-        category: 'general',
-        parentCategory: 'Food',
-        available: true,
-        prepMinutes: 0,
-        stockCount: 50,
-      );
-      for (int i = 0; i < oi.quantity; i++) {
-        cart.addItem(menuItem, customization: oi.customization);
+    if (_isReordering || _isPaying || _isReconciling || _isCancelling) return;
+    final uid = _currentUid;
+    final version = _boundaryVersion;
+    if (uid == null || !_isCurrentOwner(version, uid, order.id)) return;
+    setState(() => _isReordering = true);
+    try {
+      var current = await _readServerOrder(order.id, uid, version);
+      if (current.isPaid) throw StateError('This order is already paid. Check its current status before ordering again.');
+      if (!current.isCancelled) {
+        if (!current.isPaymentPending || !current.isReservationExpired) {
+          throw StateError('The server order is still active. Check it before placing another order.');
+        }
+        current = await _cancelOnServer(current, 'RESERVATION_EXPIRED', uid, version);
       }
-      addedCount += oi.quantity;
-    }
+      if (!mounted) return;
+      if (!_isCurrentOwner(version, uid, order.id)) return;
+      final cart = context.read<CartProvider>();
+      int addedCount = 0;
+      for (final oi in current.items) {
+        final menuItem = MenuItem(
+          id: oi.menuItemId,
+          name: oi.name,
+          price: oi.price,
+          type: oi.type ?? 'instant',
+          category: 'general',
+          parentCategory: 'Food',
+          available: true,
+          prepMinutes: 0,
+          stockCount: 50,
+        );
+        for (int i = 0; i < oi.quantity; i++) {
+          cart.addItem(menuItem, customization: oi.customization);
+        }
+        addedCount += oi.quantity;
+      }
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('🛒 Restored $addedCount item(s) to your cart.'),
-          backgroundColor: AppColors.green,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const CartScreen()),
-      );
+      if (_isCurrentOwner(version, uid, order.id)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🛒 Restored $addedCount item(s) to your cart.'),
+            backgroundColor: AppColors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const CartScreen()),
+        );
+      }
+    } catch (e) {
+      if (mounted && _isCurrentOwner(version, uid, order.id)) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Unable to restore this order: ${e.toString().replaceFirst('Bad state: ', '')}'),
+          backgroundColor: AppColors.warning,
+        ));
+      }
+    } finally {
+      if (_isCurrentOwner(version, uid, order.id)) setState(() => _isReordering = false);
     }
   }
 
@@ -921,13 +1046,13 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               const SizedBox(height: 8),
               Text(
                 isExpired
-                    ? 'Your 15-minute inventory reservation has expired and reserved items have been released. Please reorder from your cart.'
+                    ? 'Your reservation window has ended. The server must confirm cancellation and stock release before you reorder.'
                     : 'Stock is reserved for you. Complete payment before the timer expires to confirm your order.',
                 style: AppFonts.body(fontSize: 12, color: AppColors.ink),
               ),
               const SizedBox(height: 14),
 
-              // When expired, stock is NOT held — provide 1-tap reorder from cart
+              // Reordering must confirm server cancellation before restoring the cart.
               if (isExpired) ...[
                 SizedBox(
                   width: double.infinity,
@@ -1053,12 +1178,88 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     );
   }
 
+  Future<String> _requestPickupQr(app.Order order, String uid, int version) async {
+    try {
+      final current = await _readServerOrder(order.id, uid, version);
+      if (!_isPaidOrder(current) || !current.isReady) throw StateError('Pickup is not ready on the server.');
+      // This existing callable is not yet wrapped by FunctionsService. Forward
+      // its opaque signed payload unchanged; the pickup client/server verify it.
+      final result = await FirebaseFunctions.instance.httpsCallable(
+        'getStudentPickupQr',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+      ).call({'orderId': order.id, 'appVersion': '1.0.0'});
+      if (!_isCurrentOwner(version, uid, order.id)) throw StateError('Your sign-in changed.');
+      final raw = result.data;
+      if (raw is! Map) throw StateError('Pickup credentials were not confirmed by the server.');
+      final data = Map<String, dynamic>.from(raw);
+      final payload = data['signedQrPayload'];
+      final expiresAt = data['qrExpiresAt'];
+      if (data['success'] != true || data['orderId'] != order.id || data['tokenNumber'] != current.tokenNumber
+          || payload is! String || payload.isEmpty || payload.length > 2048
+          || expiresAt is! int || expiresAt <= DateTime.now().millisecondsSinceEpoch ~/ 1000
+          || (data['status'] != 'ready' && !(current.isOnlyReadyMade
+              && const ['placed', 'paid', 'confirmed', 'preparing'].contains(data['status'])))) {
+        throw StateError('The server did not return current pickup credentials.');
+      }
+      final parts = payload.split('.');
+      if (parts.length != 5 || parts[0] != order.id || parts[1] != uid
+          || !RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(parts[2])
+          || parts[3] != expiresAt.toString() || !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(parts[4])) {
+        throw StateError('The server pickup token does not match this order and account.');
+      }
+      _pickupQrExpiresAt = DateTime.fromMillisecondsSinceEpoch(expiresAt * 1000);
+      _pickupQrRefreshAfter = null;
+      return payload;
+    } catch (_) {
+      if (_isCurrentOwner(version, uid, order.id)) {
+        _pickupQrRefreshAfter = DateTime.now().add(const Duration(seconds: 30));
+      }
+      rethrow;
+    }
+  }
+
+  Widget _buildPickupQrBadge(app.Order order) {
+    return ValueListenableBuilder<DateTime>(
+      valueListenable: _clockNotifier,
+      builder: (context, now, _) {
+        final uid = _currentUid;
+        final version = _boundaryVersion;
+        if (uid == null || order.studentId != uid || !_isCurrentOwner(version, uid, order.id)) {
+          return LiveSecurityQrBadge(qrData: '', isReady: false, size: 130, tokenNumber: order.tokenNumber);
+        }
+        final expired = _pickupQrExpiresAt != null && !now.isBefore(_pickupQrExpiresAt!);
+        final retryDue = _pickupQrRefreshAfter != null && !now.isBefore(_pickupQrRefreshAfter!);
+        if (_pickupQrFuture == null || expired || retryDue) {
+          _pickupQrExpiresAt = null;
+          _pickupQrRefreshAfter = null;
+          _pickupQrFuture = _requestPickupQr(order, uid, version);
+        }
+        return FutureBuilder<String>(
+          future: _pickupQrFuture,
+          builder: (context, snapshot) {
+            final ready = snapshot.connectionState == ConnectionState.done && snapshot.hasData
+                && _isCurrentOwner(version, uid, order.id)
+                && (_pickupQrExpiresAt?.isAfter(now) ?? false);
+            return LiveSecurityQrBadge(
+              qrData: ready ? snapshot.data! : '',
+              isReady: ready,
+              size: 130,
+              tokenNumber: order.tokenNumber,
+            );
+          },
+        );
+      },
+    );
+  }
+
   /// Ready Pickup PIN Display Card
   Widget _buildPickupPinCard(app.Order order) {
+    final uid = _currentUid;
+    final version = _boundaryVersion;
     final effectivePin = order.pinCode.isNotEmpty ? order.pinCode : (_cachedPin ?? '');
     if (order.pinCode.isNotEmpty && (_cachedPin == null || _cachedPin!.isEmpty)) {
       _cachedPin = order.pinCode;
-      SharedPreferences.getInstance().then((p) => p.setString('order_pin_${order.id}', order.pinCode)).catchError((_) => false);
+      if (uid != null) _restoreCachedPin(uid, version);
     }
 
     return TweenAnimationBuilder<double>(
@@ -1102,19 +1303,14 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
             ),
             const SizedBox(height: 14),
 
-            // Dynamic Hardware Scannable QR Code with Live Pulsing Security Watermark
-            LiveSecurityQrBadge(
-              qrData: 'TB:${order.id}:${order.tokenNumber}:$effectivePin',
-              isReady: true,
-              size: 130,
-              tokenNumber: order.tokenNumber,
-            ),
+            // Signed server pickup QR; existing badge preserves its payload.
+            _buildPickupQrBadge(order),
             const SizedBox(height: 12),
 
             // PIN Container with copy micro-interaction
             GestureDetector(
               onTap: () {
-                if (effectivePin.isNotEmpty) {
+                if (uid != null && _isCurrentOwner(version, uid, order.id) && effectivePin.isNotEmpty) {
                   HapticFeedback.lightImpact();
                   ClipboardSecurityService.copySensitiveText(effectivePin);
                   setState(() => _copiedPin = true);
@@ -1138,7 +1334,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                     ),
                   );
                   Future.delayed(const Duration(milliseconds: 1500), () {
-                    if (mounted) setState(() => _copiedPin = false);
+                    if (_isCurrentOwner(version, uid, order.id)) setState(() => _copiedPin = false);
                   });
                 }
               },
@@ -1205,12 +1401,26 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => TicketScreen(order: order),
-                    ),
-                  );
+                onPressed: () async {
+                  if (uid == null || !_isCurrentOwner(version, uid, order.id)) return;
+                  try {
+                    final current = await _readServerOrder(order.id, uid, version);
+                    if (!mounted) return;
+                    if (!_isPaidOrder(current) || !current.isReady) {
+                      throw StateError('The server has not confirmed a ready, paid pickup ticket.');
+                    }
+                    if (!_isCurrentOwner(version, uid, order.id)) return;
+                    Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => TicketScreen(order: current),
+                    ));
+                  } catch (e) {
+                    if (mounted && _isCurrentOwner(version, uid, order.id)) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text('Ticket was not confirmed: ${e.toString().replaceFirst('Bad state: ', '')}'),
+                        backgroundColor: AppColors.warning,
+                      ));
+                    }
+                  }
                 },
                 icon: const Icon(Icons.receipt_long_rounded, size: 16, color: AppColors.greenInk),
                 label: Text(
@@ -1543,6 +1753,10 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   }
 
   Future<void> _handleCancelOrder(app.Order order, String reason) async {
+    if (_isCancelling || _isPaying || _isReconciling || _isReordering) return;
+    final uid = _currentUid;
+    final version = _boundaryVersion;
+    if (uid == null || order.studentId != uid || !_isCurrentOwner(version, uid, order.id)) return;
     // Defense: Pre-check if order cannot be cancelled (already collected or cooking has started)
     if (order.isCollected || (!order.isOnlyReadyMade && (order.isPreparing || order.status == 'ready'))) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1556,164 +1770,77 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
 
     setState(() => _isCancelling = true);
     try {
-      final res = await _functions.cancelOrder(orderId: order.id, reason: reason);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(res['message'] ?? 'Order cancelled successfully.'),
-            backgroundColor: AppColors.green,
-          ),
-        );
-      }
-    } on FirebaseFunctionsException catch (e) {
-      final isUndeployedOrUnavailable = e.code == 'not-found' ||
-          e.code == 'internal' ||
-          e.code == 'unavailable' ||
-          (e.message ?? '').toLowerCase().contains('internal');
-
-      if (isUndeployedOrUnavailable) {
-        if (order.status == 'payment_pending' || order.status == 'placed') {
-          await _executeDirectCancellation(order, reason);
-        } else if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Confirmed orders cannot be cancelled directly. Please contact staff at the counter.'),
-              backgroundColor: AppColors.danger,
-            ),
-          );
-        }
-        return;
-      }
-
-      if (mounted) {
-        final friendly = ErrorHelper.getFriendlyErrorMessage(e, defaultFallback: 'Order cancellation failed. Please retry or contact counter.');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(friendly ?? 'Order cancellation failed.'),
-            backgroundColor: AppColors.danger,
-          ),
-        );
-      }
+      await _cancelOnServer(order, reason, uid, version);
+      if (!mounted) return;
+      if (!_isCurrentOwner(version, uid, order.id)) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Order cancellation confirmed by the server. Check the order for any refund status.'),
+        backgroundColor: AppColors.green,
+      ));
     } catch (e) {
-      if (order.status == 'payment_pending' || order.status == 'placed') {
-        await _executeDirectCancellation(order, reason);
-      } else if (mounted) {
+      if (mounted && _isCurrentOwner(version, uid, order.id)) {
+        final friendly = ErrorHelper.getFriendlyErrorMessage(e, defaultFallback: 'Cancellation was not confirmed. Check the existing order or contact the counter.');
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Confirmed orders cannot be cancelled directly. Please contact staff at the counter.'),
+          SnackBar(
+            content: Text(friendly ?? 'Cancellation was not confirmed. Please check the existing order.'),
             backgroundColor: AppColors.danger,
           ),
         );
       }
     } finally {
-      if (mounted) setState(() => _isCancelling = false);
-    }
-  }
-
-  Future<void> _executeDirectCancellation(app.Order order, String reason) async {
-    try {
-      final isPaid = order.isPaid || order.isOnlinePayment;
-
-      final updateData = <String, dynamic>{
-        'status': 'cancelled',
-        'cancellationReason': reason,
-        'cancelledAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-
-      // Restore inventory stock for instant/packaged items
-      for (final item in order.items) {
-        if (item.isInstant && item.menuItemId.isNotEmpty) {
-          try {
-            final itemRef = FirebaseFirestore.instance.collection('menuItems').doc(item.menuItemId);
-            await itemRef.update({
-              'stockOnHand': FieldValue.increment(item.quantity),
-              'stockCount': FieldValue.increment(item.quantity),
-              'availableStock': FieldValue.increment(item.quantity),
-              'isOrderable': true,
-              'available': true,
-              'availabilityStatus': 'AVAILABLE',
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-          } catch (_) {}
-        }
-      }
-
-      await FirebaseFirestore.instance.collection('orders').doc(order.id).update(updateData);
-
-      if (mounted) {
-        final msg = isPaid && order.totalAmount > 0
-            ? '✅ Order marked cancelled. Please verify refund with counter staff if not received shortly.'
-            : '✅ Order cancelled successfully.';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(msg),
-            backgroundColor: AppColors.green,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        final friendly = ErrorHelper.getFriendlyErrorMessage(e, defaultFallback: 'Please try again or contact counter.');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Cannot cancel order: $friendly'),
-            backgroundColor: AppColors.danger,
-          ),
-        );
-      }
+      if (_isCurrentOwner(version, uid, order.id)) setState(() => _isCancelling = false);
     }
   }
 
   Future<void> _handlePayNow(app.Order order) async {
-    if (_isPaying) return;
-    setState(() => _isPaying = true);
+    if (_isPaying || _isReconciling || _isCancelling || _isReordering) return;
+    final uid = _currentUid;
+    final version = _boundaryVersion;
+    if (uid == null || order.studentId != uid || !_isCurrentOwner(version, uid, order.id)) return;
     final auth = context.read<AuthProvider>();
     final student = auth.currentStudent;
+    if (student == null || student.uid != uid) return;
+    setState(() => _isPaying = true);
     try {
+      final current = await _readServerOrder(order.id, uid, version);
+      if (!mounted) return;
+      if (!_isCurrentOwner(version, uid, order.id)) return;
+      if (_isPaidOrder(current)) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Payment is already confirmed by the server.'),
+          backgroundColor: AppColors.green,
+        ));
+        return;
+      }
+      if (!current.isOnlinePayment || !current.isPaymentPending || current.isCancelled
+          || current.isReservationExpired || current.totalAmount <= 0) {
+        throw const PaymentException('The server order is not eligible for another online payment. Check its current status.');
+      }
       final paymentService = PaymentService();
       final result = await paymentService.initiateOnlinePayment(
         orderId: order.id,
-        totalAmountRs: order.totalAmount,
-        studentName: student?.displayName ?? order.studentName ?? 'Student',
-        studentEmail: student?.email ?? 'student@tcetmumbai.in',
+        totalAmountRs: current.totalAmount,
+        studentName: student.displayName,
+        studentEmail: student.email,
       );
-      if (mounted) {
-        if (result.isSuccess) {
-          final effectivePaymentId = result.paymentId ?? 'RZP_${order.id}';
-          // Direct authoritative update to Firestore /orders/{orderId}
-          try {
-            await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
-              'status': 'confirmed',
-              'paymentStatus': 'paid',
-              'paymentId': effectivePaymentId,
-              'paidAt': FieldValue.serverTimestamp(),
-              'confirmedAt': FieldValue.serverTimestamp(),
-            });
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setString('last_payment_id_${order.id}', effectivePaymentId);
-          } catch (dbErr) {
-            debugPrint('Direct Firestore order confirmation notice: $dbErr');
-          }
-
-          try {
-            await _functions.reconcileOrderPayment(orderId: order.id);
-          } catch (recErr) {
-            debugPrint('Payment reconciliation error: $recErr');
-          }
-          if (!mounted) return;
-          setState(() {});
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ Payment verified! Order confirmed.'),
-              backgroundColor: AppColors.green,
-            ),
-          );
-        }
+      if (!_isCurrentOwner(version, uid, order.id)) return;
+      if (!result.isSuccess || result.orderId != order.id || result.paymentId == null || result.paymentId!.isEmpty) {
+        throw const PaymentException('The server did not confirm the payment attempt. Check the existing order before paying again.');
       }
+      final confirmed = await _readServerOrder(order.id, uid, version);
+      if (!_isPaidOrder(confirmed) || confirmed.gatewayPaymentId != result.paymentId) {
+        throw const PaymentException('The current server order does not confirm this payment. Check it before paying again.');
+      }
+      if (!mounted) return;
+      if (!_isCurrentOwner(version, uid, order.id)) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('✅ Payment verified! Order confirmed.'),
+        backgroundColor: AppColors.green,
+      ));
     } catch (e) {
-      if (mounted) {
+      if (mounted && _isCurrentOwner(version, uid, order.id)) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Payment notice: ${e.toString().replaceAll('PaymentException:', '').replaceAll('Exception:', '').trim()}'),
@@ -1722,117 +1849,54 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() => _isPaying = false);
+      if (_isCurrentOwner(version, uid, order.id)) setState(() => _isPaying = false);
     }
   }
 
   Future<void> _handleReconcilePayment(app.Order order) async {
+    if (_isReconciling || _isPaying || _isCancelling || _isReordering) return;
+    final uid = _currentUid;
+    final version = _boundaryVersion;
+    if (uid == null || order.studentId != uid || !_isCurrentOwner(version, uid, order.id)) return;
     setState(() => _isReconciling = true);
     try {
-      try {
-        final res = await _functions.reconcileOrderPayment(orderId: order.id);
-        final isReconciled = res['isReconciled'] == true || res['reconciled'] == true;
-        final paymentStatus = res['paymentStatus'] as String? ?? res['orderStatus'] as String? ?? res['status'] as String? ?? 'pending';
-        final message = res['message'] as String? ?? 'Payment status checked.';
-        final isExpired = res['isExpired'] == true;
-
-        if (mounted) {
-          if (isReconciled && !isExpired) {
-            setState(() {});
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('✅ $message'),
-                backgroundColor: AppColors.green,
-              ),
-            );
-          } else if (isExpired) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('⏰ Stock reservation has expired and items were released. If your bank debited money, it will be refunded within 24–48 hours.'),
-                backgroundColor: AppColors.warning,
-                duration: Duration(seconds: 5),
-              ),
-            );
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Status: $paymentStatus. If you completed payment, gateway will reconcile automatically.'),
-                backgroundColor: AppColors.warning,
-              ),
-            );
-          }
-        }
-        return;
-      } on FirebaseFunctionsException catch (e) {
-        if (e.code == 'not-found' || e.code == 'unavailable' || e.code == 'internal') {
-          final snap = await FirebaseFirestore.instance.collection('orders').doc(order.id).get();
-          final data = snap.data();
-          final pStatus = data?['paymentStatus'] as String? ?? 'pending';
-          final oStatus = data?['status'] as String? ?? 'payment_pending';
-          if (mounted) {
-            final isConfirmed = pStatus == 'paid' || oStatus == 'confirmed';
-            if (isConfirmed) {
-              setState(() {});
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('✅ Payment confirmed! Order is queued in kitchen.'),
-                  backgroundColor: AppColors.green,
-                ),
-              );
-              return;
-            }
-
-            // Check if there is a saved gateway payment ID from SharedPreferences
-            final prefs = await SharedPreferences.getInstance();
-            final savedPaymentId = prefs.getString('last_payment_id_${order.id}');
-            if (savedPaymentId != null && savedPaymentId.isNotEmpty) {
-              try {
-                await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
-                  'status': 'confirmed',
-                  'paymentStatus': 'paid',
-                  'paymentId': savedPaymentId,
-                  'paidAt': FieldValue.serverTimestamp(),
-                  'confirmedAt': FieldValue.serverTimestamp(),
-                });
-                if (!mounted) return;
-                setState(() {});
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('✅ Payment reconciled from gateway record! Order is confirmed.'),
-                    backgroundColor: AppColors.green,
-                  ),
-                );
-                return;
-              } catch (recErr) {
-                debugPrint('Reconcile write error: $recErr');
-              }
-            }
-
-            if (!mounted) return;
-            // Strictly inform user without allowing unverified manual self-confirmation
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('No verified payment detected from payment gateway. If money was debited, your bank will refund within 24–48 hours.'),
-                backgroundColor: AppColors.warning,
-                duration: Duration(seconds: 5),
-              ),
-            );
-          }
-          return;
-        }
-        rethrow;
+      final result = await _functions.reconcileOrderPayment(orderId: order.id);
+      if (!_isCurrentOwner(version, uid, order.id)) return;
+      if (result['success'] != true || result['orderId'] != order.id || result['isReconciled'] is! bool
+          || result['paymentStatus'] is! String || result['orderStatus'] is! String) {
+        throw StateError('The server did not confirm a complete reconciliation receipt.');
+      }
+      final current = await _readServerOrder(order.id, uid, version);
+      if (!mounted) return;
+      if (!_isCurrentOwner(version, uid, order.id)) return;
+      if (_isPaidOrder(current)) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('✅ Payment confirmed by the server.'),
+          backgroundColor: AppColors.green,
+        ));
+      } else {
+        final message = current.isCancelled
+            ? 'The server confirms this order is cancelled. Check its refund status if money was debited.'
+            : result['isExpired'] == true
+                ? 'The reservation window has ended. Cancellation and stock release must still be confirmed by the server.'
+                : 'Server payment status: ${current.paymentStatus}. Check this order before paying again.';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(message),
+          backgroundColor: AppColors.warning,
+        ));
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && _isCurrentOwner(version, uid, order.id)) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Verification notice: ${e.toString().replaceAll('Exception:', '').trim()}'),
+            content: Text('Payment reconciliation was not confirmed: ${e.toString().replaceAll('Exception:', '').trim()}'),
             backgroundColor: AppColors.warning,
           ),
         );
       }
     } finally {
-      if (mounted) setState(() => _isReconciling = false);
+      if (_isCurrentOwner(version, uid, order.id)) setState(() => _isReconciling = false);
     }
   }
 

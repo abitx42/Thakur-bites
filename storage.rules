@@ -10,7 +10,7 @@ service firebase.storage {
     }
 
     function hasAdministrativeAccess() {
-      return isAuthenticated() && (
+      return isAuthenticated() && 'role' in request.auth.token && (
         request.auth.token.role == 'admin' ||
         request.auth.token.role == 'developer' ||
         request.auth.token.role == 'manager' ||
@@ -22,28 +22,43 @@ service firebase.storage {
       return hasAdministrativeAccess();
     }
 
+    function validProofUpload() {
+      return request.resource != null && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    }
+
+    function validMenuUpload() {
+      return request.resource != null && request.resource.size > 0
+        && request.resource.size <= 2 * 1024 * 1024
+        && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
+    }
+
     // Faculty Verification ID Proofs (Private & Encrypted at Rest)
     match /verification_proofs/{userId}/{fileName} {
-      allow create: if isOwner(userId)
-        && request.resource.size <= 5 * 1024 * 1024
-        && (request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+      // Explicitly test existing-resource absence as well: an upload must not
+      // replace evidence already submitted for review, including new versions.
+      // The Storage upload API also evaluates create for object replacement;
+      // only an administrator may replace an already-existing proof.
+      allow create: if validProofUpload() && (
+        (resource == null && isOwner(userId)) || (resource != null && isManagerOrAdmin())
+      );
       allow read: if isOwner(userId) || isManagerOrAdmin();
-      allow update, delete: if isManagerOrAdmin();
+      allow update: if isManagerOrAdmin() && validProofUpload();
+      allow delete: if isManagerOrAdmin();
     }
 
     // Public Menu Images (Admin Upload with Strict Size & MIME Whitelist)
     match /menu_images/{fileName} {
       allow read: if true;
-      allow write: if isManagerOrAdmin()
-        && request.resource.size <= 2 * 1024 * 1024
-        && (request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp']);
+      allow create, update: if isManagerOrAdmin() && validMenuUpload();
+      allow delete: if isManagerOrAdmin();
     }
 
     match /menu_images/{menuItemId}/{fileName} {
       allow read: if true;
-      allow write: if isManagerOrAdmin()
-        && request.resource.size <= 2 * 1024 * 1024
-        && (request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp']);
+      allow create, update: if isManagerOrAdmin() && validMenuUpload();
+      allow delete: if isManagerOrAdmin();
     }
 
     // Default Deny

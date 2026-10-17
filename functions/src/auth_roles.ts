@@ -8,6 +8,7 @@ import { enforceAppCheck } from './app_check';
 import { syncUserCustomClaims } from './claims_manager';
 import { assertCapability, isDeveloperRole } from './authorization_policy';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertPrivilegedSession } from './privileged_guard';
 
 const db = admin.firestore();
 
@@ -17,7 +18,7 @@ const VALID_ROLES: UserRole[] = ['customer', 'student', 'kitchen', 'pickup', 'ca
  * Assigns a verified RBAC role to a staff member with session revocation and permissionsVersion tracking.
  * Strictly enforces separation of duties, atomic claims merge, and rate limiting.
  */
-export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(async (request) => {
+export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole; privilegedSessionId?: string }>(async (request) => {
   enforceAppCheck(request);
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -26,7 +27,11 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
   await assertNoHoneytokens(request.data, request.auth.uid, 'assignStaffRole');
   await enforceRateLimit(request.auth.uid, 'role_assignment');
 
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  // The request token can predate a demotion or token revocation. The MFA guard
+  // resolves the current enabled Auth user and binds it to this session's role.
+  const { role: callerRole } = await assertPrivilegedSession(
+    request.auth.uid, request.data?.privilegedSessionId, 'manage_staff_roles', request.auth.token
+  );
   try {
     assertCapability(callerRole, 'manage_staff_roles');
   } catch (err) {
@@ -39,8 +44,9 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     throw new HttpsError('permission-denied', 'Only administrators can assign staff roles.');
   }
 
-  const { targetUid, newRole } = request.data;
-  if (!targetUid || typeof targetUid !== 'string' || targetUid.length > 128 || !VALID_ROLES.includes(newRole)) {
+  const { targetUid, newRole } = request.data || {};
+  if (!targetUid || typeof targetUid !== 'string' || targetUid !== targetUid.trim() || targetUid.includes('/') ||
+      targetUid.length > 128 || !VALID_ROLES.includes(newRole)) {
     throw new HttpsError('invalid-argument', 'Valid targetUid (max 128 chars) and role required.');
   }
 
@@ -56,7 +62,10 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
     const existingClaims = userRecord.customClaims || {};
     existingRole = (existingClaims.role as UserRole) || 'student';
   } catch (err: any) {
-    throw new HttpsError('not-found', `Target user ${targetUid} does not exist in Firebase Auth.`);
+    if (err?.code === 'auth/user-not-found') {
+      throw new HttpsError('not-found', `Target user ${targetUid} does not exist in Firebase Auth.`);
+    }
+    throw new HttpsError('unavailable', 'Current target account authority could not be verified. Please retry.');
   }
 
   // Self-Role Protection Invariant (VULN-20): Administrators cannot modify or elevate their own role
@@ -98,31 +107,36 @@ export const assignStaffRole = onCall<{ targetUid: string; newRole: UserRole }>(
   // 4. Force token refresh by revoking existing sessions
   await admin.auth().revokeRefreshTokens(targetUid);
 
-  // 4b. Immediate Cascading Invalidation of Privileged and Workstation Sessions (Priority 6)
-  const isTargetNowPrivileged = ['admin', 'manager', 'developer', 'security_admin'].includes(newRole);
-  if (!isTargetNowPrivileged) {
-    const privSessionsSnap = await db.collection('privilegedSessions')
-      .where('userId', '==', targetUid)
-      .where('status', '==', 'ACTIVE')
-      .get();
-    for (const doc of privSessionsSnap.docs) {
-      await doc.ref.update({ status: 'REVOKED', revokedAt: now, reason: 'STAFF_ROLE_DEMOTION' }).catch(() => {});
-    }
+  // 4b. Every authority change (including promotion and privileged-to-privileged
+  // transitions) invalidates sessions issued under the previous permissions.
+  const privSessionsSnap = await db.collection('privilegedSessions')
+    .where('userId', '==', targetUid)
+    .where('status', '==', 'ACTIVE')
+    .get();
+  for (const doc of privSessionsSnap.docs) {
+    await doc.ref.update({ status: 'REVOKED', revokedAt: now, reason: 'STAFF_ROLE_CHANGED' });
+  }
 
-    const workSessionsSnap = await db.collection('workstationSessions')
-      .where('staffUid', '==', targetUid)
-      .where('status', '==', 'ACTIVE')
-      .get();
-    for (const doc of workSessionsSnap.docs) {
-      await doc.ref.update({ status: 'REVOKED', revokedAt: now, reason: 'STAFF_ROLE_DEMOTION' }).catch(() => {});
+  const workSessionsSnap = await db.collection('workstationSessions')
+    .where('staffUid', '==', targetUid)
+    .where('status', '==', 'ACTIVE')
+    .get();
+  const workSessions = new Map<string, admin.firestore.DocumentSnapshot>(workSessionsSnap.docs.map(doc => [doc.id, doc]));
+  const directWorkDoc = await db.collection('workstationSessions').doc(targetUid).get();
+  if (directWorkDoc.exists && directWorkDoc.data()?.status === 'ACTIVE') {
+    workSessions.set(directWorkDoc.id, directWorkDoc);
+  }
+  for (const doc of workSessions.values()) {
+    await doc.ref.update({ status: 'REVOKED', revokedAt: now, reason: 'STAFF_ROLE_CHANGED' });
+    if (doc.id !== targetUid) {
+      try {
+        await admin.auth().revokeRefreshTokens(doc.id);
+      } catch (err: any) {
+        // A custom token may have been issued without being exchanged for an
+        // Auth user yet. Its revoked Firestore session still denies access.
+        if (err?.code !== 'auth/user-not-found') throw err;
+      }
     }
-
-    const directWorkDoc = await db.collection('workstationSessions').doc(targetUid).get();
-    if (directWorkDoc.exists && directWorkDoc.data()?.status === 'ACTIVE') {
-      await directWorkDoc.ref.update({ status: 'REVOKED', revokedAt: now, reason: 'STAFF_ROLE_DEMOTION' }).catch(() => {});
-    }
-
-    await admin.auth().revokeRefreshTokens(targetUid).catch(() => {});
   }
 
   // 5. Update staff user record

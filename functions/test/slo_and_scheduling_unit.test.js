@@ -179,7 +179,7 @@ describe('Phase 9: SLO Evaluation & Campus Scheduling Unit Tests', () => {
   // ──────────────────────────────────────────────────────────────────────────
   it('9. Smart Canteen: Campus schedule evaluator detects Primary Lunch Rush & applies 3.5x multiplier', () => {
     // 12:45 PM test date
-    const lunchDate = new Date('2026-09-08T12:45:00');
+    const lunchDate = new Date('2026-09-08T12:45:00+05:30');
     const { period, nextRecess } = evaluateCampusSchedule(lunchDate);
 
     assert.strictEqual(period, 'PEAK_LUNCH_RUSH');
@@ -187,7 +187,7 @@ describe('Phase 9: SLO Evaluation & Campus Scheduling Unit Tests', () => {
     assert.strictEqual(nextRecess.historicalDemandMultiplier, 1.5);
 
     // 11:30 AM test date (prior to lunch rush)
-    const midDayDate = new Date('2026-09-08T11:30:00');
+    const midDayDate = new Date('2026-09-08T11:30:00+05:30');
     const midDayRes = evaluateCampusSchedule(midDayDate);
     assert.strictEqual(midDayRes.period, 'MID_DAY_LECTURES');
     assert.strictEqual(midDayRes.nextRecess.startTime, '12:30 PM');
@@ -207,7 +207,7 @@ describe('Phase 9: SLO Evaluation & Campus Scheduling Unit Tests', () => {
     ];
 
     // 11:45 AM (45 mins before lunch rush)
-    const testDate = new Date('2026-09-08T11:45:00');
+    const testDate = new Date('2026-09-08T11:45:00+05:30');
     const forecast = calculateSmartCanteenForecast(mockMenuItems, mockOrders, testDate);
 
     assert.ok(forecast.currentCampusPeriod === 'MID_DAY_LECTURES');

@@ -1,5 +1,5 @@
 // Phase 10 & Platform 2.0 — Counter Pickup & Dispatch View with Hardware Barcode/QR Scanner Engine
-import { db, fetchPickupOrders, updateOrderStatus, unlockOrder, functions, cancelStaffOrder, processStaffRefund } from '../firebase.js?v=5';
+import { db, fetchPickupOrders, unlockOrder, functions, cancelStaffOrder, processStaffRefund } from '../firebase.js?v=5';
 import { collection, query, where, onSnapshot, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
@@ -17,6 +17,12 @@ let scannerFeedbackMessage = null;
 let scannerFeedbackType = 'success'; // 'success' | 'error'
 let keydownListener = null;
 let pickupAudioCtx = null;
+
+function isOrderReadyForPickup(order) {
+  const isPaid = order.paymentStatus === 'paid' || order.paymentStatus === 'captured';
+  return isPaid && (order.status === 'ready' ||
+    (order.isOnlyReadyMade === true && ['placed', 'paid', 'confirmed', 'preparing'].includes(order.status)));
+}
 
 function getAudioContext() {
   try {
@@ -103,10 +109,20 @@ export function renderPickupView(container) {
     return (hash >>> 0).toString(16).toUpperCase().padStart(8, '0');
   }
 
+  async function verifyPickupCredential(orderId, credential) {
+    const verifyFn = httpsCallable(functions, 'verifyPickup');
+    const result = await verifyFn({ orderId, ...credential });
+    if (result.data?.success !== true || result.data?.status !== 'collected') {
+      throw new Error('Pickup verification was not confirmed. Do not hand over the meal.');
+    }
+    return result.data;
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // HARDWARE 2D BARCODE & QR SCANNER ENGINE (HID Keystroke Stream)
   // ═══════════════════════════════════════════════════════════════
   async function handleScannedPayload(payload) {
+    if (typeof payload !== 'string' || payload.length > 2048) return;
     const cleanPayload = payload.trim();
     if (!cleanPayload) return;
 
@@ -116,8 +132,18 @@ export function renderPickupView(container) {
       const orderId = parts[1];
       const tokenNumber = parts[2] || orderId;
       const pinCode = parts[3] || '';
-      const timeBlock = parts[4] ? parseInt(parts[4], 10) : null;
+      const timeBlock = parts.length === 6 ? Number(parts[4]) : null;
       const totpHash = parts[5] || null;
+
+      if (![4, 6].includes(parts.length) || !orderId || orderId.length > 128 || orderId.includes('/') ||
+          !/^\d{4,8}$/.test(pinCode) ||
+          (parts.length === 6 && (!Number.isSafeInteger(timeBlock) || !/^[A-F0-9]{8}$/.test(totpHash || '')))) {
+        playScanSound(false);
+        scannerFeedbackMessage = '❌ Invalid pickup pass. Scan the customer QR or enter their pickup PIN.';
+        scannerFeedbackType = 'error';
+        render();
+        return;
+      }
 
       // Anti-Fraud 30-Second Dynamic Rotating TOTP Verification (Anti-Screenshot)
       if (timeBlock !== null && totpHash) {
@@ -144,15 +170,15 @@ export function renderPickupView(container) {
         }
       }
 
-      // Optimistic instant feedback (<300ms verification)
-      playScanSound(true);
+      if (inFlightOrderIds.has(orderId)) return;
+      inFlightOrderIds.add(orderId);
       scannerFeedbackMessage = `⚡ Verifying Order ${tokenNumber}...`;
       scannerFeedbackType = 'success';
       render();
 
       try {
-        const verifyFn = httpsCallable(functions, 'verifyPickup');
-        await verifyFn({ orderId, pinCode });
+        await verifyPickupCredential(orderId, { pinCode });
+        playScanSound(true);
 
         // Update local state immediately
         const idx = currentOrders.findIndex(o => (o.orderId || o.id) === orderId);
@@ -170,26 +196,6 @@ export function renderPickupView(container) {
           render();
         }, 4000);
       } catch (err) {
-        if (err.code === 'not-found' || err.code === 'unavailable' || String(err.message || '').includes('not found') || String(err.message || '').includes('internal')) {
-          try {
-            await updateOrderStatus(orderId, 'collected');
-            const idx = currentOrders.findIndex(o => (o.orderId || o.id) === orderId);
-            if (idx !== -1) {
-              currentOrders[idx].status = 'collected';
-              currentOrders[idx].collectedAt = new Date();
-            }
-            scannerFeedbackMessage = `✅ Order ${tokenNumber} Verified & Handed Over!`;
-            scannerFeedbackType = 'success';
-            render();
-            setTimeout(() => {
-              scannerFeedbackMessage = null;
-              render();
-            }, 4000);
-            return;
-          } catch (fallbackErr) {
-            console.error("Pickup QR fallback failed:", fallbackErr);
-          }
-        }
         playScanSound(false);
         scannerFeedbackMessage = `❌ Verification Failed: ${getFriendlyErrorMessage(err, 'Invalid PIN or unready order')}`;
         scannerFeedbackType = 'error';
@@ -199,6 +205,8 @@ export function renderPickupView(container) {
           scannerFeedbackMessage = null;
           render();
         }, 6000);
+      } finally {
+        inFlightOrderIds.delete(orderId);
       }
       return;
     }
@@ -207,10 +215,18 @@ export function renderPickupView(container) {
     if (cleanPayload.includes('.')) {
       const parts = cleanPayload.split('.');
       const orderId = parts[0];
+      if (parts.length !== 5 || !orderId || orderId.length > 128 || orderId.includes('/')) {
+        playScanSound(false);
+        scannerFeedbackMessage = '❌ Invalid signed pickup QR. Please scan the customer pickup pass again.';
+        scannerFeedbackType = 'error';
+        render();
+        return;
+      }
+      if (inFlightOrderIds.has(orderId)) return;
+      inFlightOrderIds.add(orderId);
 
       try {
-        const verifyFn = httpsCallable(functions, 'verifyPickup');
-        const res = await verifyFn({ orderId, qrToken: cleanPayload });
+        const result = await verifyPickupCredential(orderId, { qrToken: cleanPayload });
         playScanSound(true);
 
         const idx = currentOrders.findIndex(o => (o.orderId || o.id) === orderId);
@@ -219,7 +235,7 @@ export function renderPickupView(container) {
           currentOrders[idx].collectedAt = new Date();
         }
 
-        scannerFeedbackMessage = `✅ Order ${res.data?.tokenNumber || orderId} Verified & Collected!`;
+        scannerFeedbackMessage = `✅ Order ${result.tokenNumber || orderId} Verified & Collected!`;
         scannerFeedbackType = 'success';
         render();
 
@@ -228,27 +244,6 @@ export function renderPickupView(container) {
           render();
         }, 4000);
       } catch (err) {
-        if (err.code === 'not-found' || err.code === 'unavailable' || String(err.message || '').includes('not found') || String(err.message || '').includes('internal')) {
-          try {
-            await updateOrderStatus(orderId, 'collected');
-            const idx = currentOrders.findIndex(o => (o.orderId || o.id) === orderId);
-            if (idx !== -1) {
-              currentOrders[idx].status = 'collected';
-              currentOrders[idx].collectedAt = new Date();
-            }
-            playScanSound(true);
-            scannerFeedbackMessage = `✅ Order ${orderId} Verified & Collected!`;
-            scannerFeedbackType = 'success';
-            render();
-            setTimeout(() => {
-              scannerFeedbackMessage = null;
-              render();
-            }, 4000);
-            return;
-          } catch (fallbackErr) {
-            console.error("Pickup QR token fallback failed:", fallbackErr);
-          }
-        }
         playScanSound(false);
         const isReplay = String(err.message || '').includes('ALREADY_COLLECTED');
         if (isReplay) {
@@ -263,6 +258,8 @@ export function renderPickupView(container) {
           scannerFeedbackMessage = null;
           render();
         }, 6000);
+      } finally {
+        inFlightOrderIds.delete(orderId);
       }
       return;
     }
@@ -270,7 +267,7 @@ export function renderPickupView(container) {
     // 3. Exact Token Number or Barcode Scan (e.g. "TB-042", "042", "42")
     const normalizedToken = cleanPayload.replace(/^#/, '').toUpperCase();
     const matchedReadyOrder = currentOrders.find(o => 
-      o.status === 'ready' && 
+      isOrderReadyForPickup(o) &&
       (o.tokenNumber?.toUpperCase() === normalizedToken || 
        o.tokenNumber?.toUpperCase() === `TB-${normalizedToken}` ||
        String(o.tokenNumber || '').endsWith(normalizedToken))
@@ -282,9 +279,10 @@ export function renderPickupView(container) {
       return;
     }
 
-    // 4. 4 to 6 digit PIN scan / keypress
-    if (/^\d{4,6}$/.test(cleanPayload)) {
-      searchFilter = cleanPayload;
+    // A token number only finds an order; it never authorizes handover.
+    if (/^\d{4,8}$/.test(cleanPayload)) {
+      scannerFeedbackMessage = '🔑 PIN-only scan: find the order by token, then choose Verify PIN & Collect, or scan the full pickup QR.';
+      scannerFeedbackType = 'error';
       render();
     }
   }
@@ -320,7 +318,7 @@ export function renderPickupView(container) {
     } else if (e.key.length === 1) {
       // Hardware barcode scanner inter-character latency is typically < 75ms
       if (interval < 75 || scannerBuffer.length === 0) {
-        scannerBuffer += e.key;
+        scannerBuffer = scannerBuffer.length < 2048 ? scannerBuffer + e.key : '';
       } else {
         // Human typing reset
         scannerBuffer = e.key;
@@ -457,8 +455,7 @@ export function renderPickupView(container) {
       const tokenMatch = order.tokenNumber && order.tokenNumber.toString().toLowerCase().replace('#', '').includes(cleanSearch);
       const nameMatch = order.studentName && order.studentName.toLowerCase().includes(cleanSearch);
       const rollMatch = order.studentRoll && order.studentRoll.toLowerCase().includes(cleanSearch);
-      const pinMatch = order.pinCode && order.pinCode.toString().includes(cleanSearch);
-      return tokenMatch || nameMatch || rollMatch || pinMatch;
+      return tokenMatch || nameMatch || rollMatch;
     };
 
     const displayReady = readyOrders.filter(filterFn);
@@ -530,76 +527,13 @@ export function renderPickupView(container) {
       });
     }
 
-    scopeEl.querySelectorAll('.collect-action-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const orderId = btn.getAttribute('data-order-id');
-        const tokenNumber = btn.getAttribute('data-token') || 'Order';
-        const orderPin = btn.getAttribute('data-pin') || '';
-        if (inFlightOrderIds.has(orderId)) return;
-        inFlightOrderIds.add(orderId);
-
-        const origContent = btn.innerHTML;
-        btn.textContent = 'Handing over...';
-        btn.disabled = true;
-
-        const cardEl = btn.closest('.pickup-order-card');
-
-        try {
-          try {
-            const verifyFn = httpsCallable(functions, 'verifyPickup');
-            await verifyFn({ orderId, pinCode: orderPin || undefined, staffVerified: true });
-          } catch (fnErr) {
-            const errMsg = String(fnErr.message || fnErr).toLowerCase();
-            if (errMsg.includes('already_collected') || errMsg.includes('already collected')) {
-              alert(`Notice: Order ${tokenNumber} was already collected on another workstation.`);
-              await loadPickupData();
-              return;
-            }
-            console.warn("verifyPickup Cloud Function notice (falling back to direct Firestore update):", fnErr);
-            await updateOrderStatus(orderId, 'collected');
-          }
-
-          playScanSound(true);
-          scannerFeedbackMessage = `✅ ${tokenNumber} Handed Over & Collected!`;
-          scannerFeedbackType = 'success';
-          if (cardEl) {
-            cardEl.classList.add('card-collected');
-            await new Promise(r => setTimeout(r, 120));
-          }
-          await loadPickupData();
-          render();
-          setTimeout(() => {
-            if (scannerFeedbackMessage && scannerFeedbackMessage.includes(tokenNumber)) {
-              scannerFeedbackMessage = null;
-              render();
-            }
-          }, 4000);
-        } catch (err) {
-          console.error("Pickup collect error:", err);
-          playScanSound(false);
-          const isReplay = String(err.message || '').includes('ALREADY_COLLECTED');
-          const alertMsg = isReplay 
-            ? "🚨 REPLAY DETECTED: Order already collected! Do not hand over duplicate meal."
-            : ("Handover Error: " + getFriendlyErrorMessage(err, 'Unable to complete handover.'));
-          scannerFeedbackMessage = `❌ ${alertMsg}`;
-          scannerFeedbackType = 'error';
-          render();
-          alert(alertMsg);
-          btn.disabled = false;
-          btn.innerHTML = origContent;
-        } finally {
-          inFlightOrderIds.delete(orderId);
-        }
-      });
-    });
-
     scopeEl.querySelectorAll('.verify-pin-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const orderId = btn.getAttribute('data-order-id');
         const tokenNumber = btn.getAttribute('data-token') || 'Order';
         if (inFlightOrderIds.has(orderId)) return;
 
-        const enteredPin = prompt(`Enter 4-digit Student Pickup PIN for ${tokenNumber}:`);
+        const enteredPin = prompt(`Enter the customer's 4-8 digit pickup PIN for ${tokenNumber}:`);
         if (!enteredPin) return;
 
         const cleanPin = enteredPin.trim();
@@ -614,21 +548,7 @@ export function renderPickupView(container) {
         btn.disabled = true;
 
         try {
-          try {
-            const verifyFn = httpsCallable(functions, 'verifyPickup');
-            await verifyFn({ orderId, pinCode: cleanPin });
-          } catch (fnErr) {
-            console.warn("verifyPickup PIN notice (falling back to direct verification):", fnErr);
-            const matchingOrder = currentOrders.find(o => (o.id || o.orderId) === orderId);
-            if (matchingOrder && matchingOrder.pinCode && String(matchingOrder.pinCode).trim() !== cleanPin) {
-              playScanSound(false);
-              alert("PIN Verification Failed: Incorrect PIN entered.");
-              btn.disabled = false;
-              btn.innerHTML = origContent;
-              return;
-            }
-            await updateOrderStatus(orderId, 'collected');
-          }
+          await verifyPickupCredential(orderId, { pinCode: cleanPin });
 
           playScanSound(true);
           scannerFeedbackMessage = `✅ ${tokenNumber} Verified with PIN & Collected!`;
@@ -740,8 +660,8 @@ export function renderPickupView(container) {
     const cleanSearch = searchFilter.trim().toLowerCase().replace('#', '');
     const activeOrders = currentOrders.filter(o => o.status !== 'collected' && o.status !== 'cancelled');
     const collectedOrders = currentOrders.filter(o => o.status === 'collected');
-    const readyOrders = activeOrders.filter(o => o.status === 'ready' || (o.isOnlyReadyMade && (o.status === 'confirmed' || o.status === 'placed' || o.status === 'paid')));
-    const kitchenOrders = activeOrders.filter(o => !o.isOnlyReadyMade && (o.status === 'preparing' || o.status === 'placed' || o.status === 'confirmed' || o.status === 'paid'));
+    const readyOrders = activeOrders.filter(isOrderReadyForPickup);
+    const kitchenOrders = activeOrders.filter(o => !isOrderReadyForPickup(o));
 
     ordersContainer.innerHTML = buildOrdersSectionsHtml(readyOrders, kitchenOrders, collectedOrders, cleanSearch);
     attachOrderListeners(ordersContainer);
@@ -776,8 +696,8 @@ export function renderPickupView(container) {
     const cleanSearch = searchFilter.trim().toLowerCase().replace('#', '');
     const activeOrders = currentOrders.filter(o => o.status !== 'collected' && o.status !== 'cancelled');
     const collectedOrders = currentOrders.filter(o => o.status === 'collected');
-    const readyOrders = activeOrders.filter(o => o.status === 'ready' || (o.isOnlyReadyMade && (o.status === 'confirmed' || o.status === 'placed' || o.status === 'paid')));
-    const kitchenOrders = activeOrders.filter(o => !o.isOnlyReadyMade && (o.status === 'preparing' || o.status === 'placed' || o.status === 'confirmed' || o.status === 'paid'));
+    const readyOrders = activeOrders.filter(isOrderReadyForPickup);
+    const kitchenOrders = activeOrders.filter(o => !isOrderReadyForPickup(o));
 
     container.innerHTML = `
       <div class="main-wrapper" style="max-width: 1200px; margin: 0 auto; padding: 1.5rem 1rem;">
@@ -791,7 +711,7 @@ export function renderPickupView(container) {
               </h2>
             </div>
             <p style="font-family: var(--font-sans); font-size: 0.9rem; color: var(--ink-secondary); margin-top: 4px; font-weight: 500;">
-              Click <strong>✓ Handover & Collect</strong> when giving food to the student.
+              Scan the customer's pickup QR or <strong>verify their PIN</strong> before handing over food.
             </p>
           </div>
 
@@ -824,7 +744,7 @@ export function renderPickupView(container) {
               <span style="font-size: 1.5rem;">${scannerFeedbackType === 'success' ? '✅' : '🚨'}</span>
               <span>${escapeHtml(scannerFeedbackMessage)}</span>
             </span>
-            <span style="font-size: 0.8rem; font-weight: 800; letter-spacing: 0.08em; padding: 4px 12px; border-radius: var(--radius-pill, 999px); background: ${scannerFeedbackType === 'success' ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)'}; color: ${scannerFeedbackType === 'success' ? '#15803D' : '#DC2626'};">STATION VERIFIED</span>
+              <span style="font-size: 0.8rem; font-weight: 800; letter-spacing: 0.08em; padding: 4px 12px; border-radius: var(--radius-pill, 999px); background: ${scannerFeedbackType === 'success' ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)'}; color: ${scannerFeedbackType === 'success' ? '#15803D' : '#DC2626'};">${scannerFeedbackMessage.startsWith('⚡') ? 'VERIFYING' : scannerFeedbackType === 'success' ? 'CONFIRMED' : 'REJECTED'}</span>
           </div>
         ` : ''}
 
@@ -834,7 +754,7 @@ export function renderPickupView(container) {
           <input 
             type="text" 
             id="pickup-filter-input" 
-            placeholder="Filter by Token #, PIN, or Student Name..." 
+            placeholder="Scan pickup QR, or filter by Token # / Student Name..."
             value="${escapeHtml(searchFilter)}"
             style="flex: 1; border: none; outline: none; font-family: var(--font-mono); font-size: 1rem; font-weight: 600; color: var(--ink-primary); background: transparent;"
           />
@@ -864,6 +784,8 @@ export function renderPickupView(container) {
           const val = filterInput.value.trim();
           if (val.startsWith('TB:') || val.includes('.') || val.length >= 2) {
             e.preventDefault();
+            e.stopPropagation();
+            scannerBuffer = '';
             filterInput.value = '';
             searchFilter = '';
             handleScannedPayload(val);
@@ -927,11 +849,11 @@ export function renderPickupView(container) {
           orderId: d.id,
           tokenNumber: data.tokenNumber || 'TB-???',
           status: data.status,
+          paymentStatus: data.paymentStatus,
           studentName: data.studentName || 'Student',
           studentRoll: data.studentRoll || '',
-          pinCode: data.pinCode || '',
           items: data.items || [],
-          isOnlyReadyMade: data.isOnlyReadyMade === true || (Array.isArray(data.items) && data.items.length > 0 && data.items.every(i => i.type === 'instant')),
+          isOnlyReadyMade: data.isOnlyReadyMade === true,
           readyMadePreference: data.readyMadePreference || null,
           isLockedForInvestigation: data.isLockedForInvestigation || false,
           failedPinAttempts: data.failedPinAttempts || 0,
@@ -977,12 +899,6 @@ function renderOrderCard(order, isReady) {
               <span style="font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; color: var(--ink-secondary);">
                 ${escapeHtml(order.studentName || 'Student')}
               </span>
-              ${order.pinCode ? `
-                <span style="display: inline-flex; align-items: center; gap: 4px; background: #EEF2FF; border: 1.5px solid #C7D2FE; border-radius: 6px; padding: 1px 7px; font-family: var(--font-mono); font-size: 0.82rem; font-weight: 800; color: #4338CA;" title="Student Pickup PIN for quick counter glance">
-                  <span style="font-size: 0.7rem; color: #6366F1; font-weight: 700;">PIN</span>
-                  <span>${escapeHtml(order.pinCode)}</span>
-                </span>
-              ` : ''}
             </div>
             ${order.createdAt ? `
               <div style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-secondary); margin-top: 2px;">
@@ -1003,8 +919,8 @@ function renderOrderCard(order, isReady) {
           </div>
 
           <div style="text-align: right;">
-            <div style="background: ${isReady ? '#DCFCE7' : (order.isOnlyReadyMade ? '#DCFCE7' : '#FEF3C7')}; color: ${isReady ? '#15803D' : (order.isOnlyReadyMade ? '#15803D' : '#B45309')}; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 3px 8px; border-radius: 6px; text-transform: uppercase;">
-              ${order.isOnlyReadyMade && !isReady ? 'READY FOR PICKUP' : escapeHtml(order.status)}
+            <div style="background: ${isReady ? '#DCFCE7' : '#FEF3C7'}; color: ${isReady ? '#15803D' : '#B45309'}; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; padding: 3px 8px; border-radius: 6px; text-transform: uppercase;">
+              ${escapeHtml(order.status)}
             </div>
           </div>
         </div>
@@ -1033,18 +949,15 @@ function renderOrderCard(order, isReady) {
           <button class="btn btn--danger unlock-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" style="width: 100%;">
             Manager Override Unlock
           </button>
-        ` : ((isReady || order.isOnlyReadyMade) ? `
+        ` : (isReady ? `
           <div style="display: flex; gap: 8px;">
-            <button class="btn btn--success collect-action-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" data-pin="${escapeHtml(order.pinCode || '')}" style="flex: 2; font-weight: 800; font-size: 0.95rem; padding: 10px 14px; border-radius: 8px; box-shadow: 0 2px 4px rgba(22,101,52,0.15);">
-              <span>✓ Handover & Collect</span>
-            </button>
-            <button class="btn btn--secondary btn--sm verify-pin-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" title="Optional: Manually enter student PIN if needed" style="flex: 0.8; font-size: 0.82rem; font-weight: 700; padding: 10px 8px; border-radius: 8px;">
-              <span>🔑 PIN</span>
+            <button class="btn btn--success verify-pin-btn" data-order-id="${escapeHtml(order.orderId || order.id)}" data-token="${escapeHtml(order.tokenNumber || 'TB-???')}" title="Enter the customer's pickup PIN, or scan their QR" style="flex: 1; font-size: 0.95rem; font-weight: 800; padding: 10px 14px; border-radius: 8px;">
+              <span>🔑 Verify PIN & Collect</span>
             </button>
           </div>
         ` : `
           <div style="text-align: center; color: var(--ink-secondary); font-family: var(--font-mono); font-size: 0.8rem; padding: 6px;">
-            Waiting on Kitchen prep
+            ${order.paymentStatus === 'paid' || order.paymentStatus === 'captured' ? 'Waiting on Kitchen prep' : 'Waiting for confirmed payment'}
           </div>
         `)}
 

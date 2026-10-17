@@ -1,4 +1,5 @@
 import { Timestamp } from 'firebase-admin/firestore';
+import { HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { PaymentRecord, FinancialTransactionRecord } from './types';
 import { commitInventoryInTransaction } from './inventory_reservation';
@@ -50,6 +51,14 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     signatureOrRef = '',
   } = params;
 
+  const boundedId = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 128 &&
+    !!value.trim() && value !== '.' && value !== '..' && !/[/\u0000-\u001f\u007f]/.test(value);
+  if (!boundedId(orderId) || !boundedId(gatewayOrderId) || !boundedId(gatewayPaymentId) || !boundedId(actorId) ||
+      !Number.isSafeInteger(amountPaise) || amountPaise <= 0 || currency !== 'INR' ||
+      !['client_verification', 'webhook', 'cashier_counter'].includes(source)) {
+    throw new HttpsError('invalid-argument', 'Valid payment identifiers, positive integer paise, currency and source are required.');
+  }
+
   const now = Timestamp.now();
   const orderRef = db.collection('orders').doc(orderId);
   const isCash = source === 'cashier_counter';
@@ -71,22 +80,8 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
 
     const orderData = orderSnap.data()!;
 
-    // ATOMIC CREATE-IF-ABSENT: If financial transaction already exists in the ledger,
-    // this capture was already committed. Return idempotent success immediately.
-    if (finTxSnap.exists) {
-      const expectedPaise = orderData.totalAmountPaise !== undefined
-        ? Number(orderData.totalAmountPaise)
-        : Math.round(Number(orderData.totalAmount || 0) * 100);
-
-      return {
-        success: true,
-        alreadyCaptured: true,
-        orderId,
-        tokenNumber: orderData.tokenNumber || '',
-        amountPaise: expectedPaise,
-        status: (orderData.status === 'cancelled' ? 'cancelled' : 'confirmed') as 'confirmed' | 'cancelled',
-        orphaned: orderData.status === 'cancelled',
-      };
+    if (source === 'client_verification' && orderData.studentId !== actorId) {
+      throw new HttpsError('permission-denied', 'Cannot finalize another customer’s payment.');
     }
 
     // 1. Strict Payment Method Cross-Validation (Phase 1 Fix: Cash cannot settle online orders)
@@ -101,7 +96,7 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       throw new Error(`Invalid payment flow: Order ${orderId} was placed as an online payment order and cannot be settled as counter-cash.`);
     }
 
-    if (source !== 'cashier_counter' && orderData.paymentMethod === 'counter_cash') {
+    if (source !== 'cashier_counter' && orderData.paymentMethod !== 'online') {
       logSecurityEvent({
         eventType: 'GATEWAY_PAYMENT_ATTEMPTED_ON_CASH_ORDER',
         orderId,
@@ -113,7 +108,8 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
     }
 
     // 2. Strict Gateway Order ID Validation
-    if (orderData.gatewayOrderId && orderData.gatewayOrderId !== gatewayOrderId) {
+    if ((!isCash && (!boundedId(orderData.gatewayOrderId) || orderData.gatewayOrderId !== gatewayOrderId)) ||
+        (isCash && orderData.gatewayOrderId !== undefined && orderData.gatewayOrderId !== gatewayOrderId)) {
       logSecurityEvent({
         eventType: 'GATEWAY_ORDER_MISMATCH',
         orderId,
@@ -126,12 +122,12 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
 
     // 3. Strict Integer Paise Amount & Currency Validation
     const expectedPaise = orderData.totalAmountPaise !== undefined
-      ? Number(orderData.totalAmountPaise)
-      : Math.round(Number(orderData.totalAmount || 0) * 100);
+      ? orderData.totalAmountPaise
+      : (typeof orderData.totalAmount === 'number' ? Math.round(orderData.totalAmount * 100) : NaN);
 
-    const expectedCurrency = orderData.currency || 'INR';
+    const expectedCurrency = orderData.currency ?? 'INR';
 
-    if (amountPaise !== expectedPaise || currency !== expectedCurrency) {
+    if (!Number.isSafeInteger(expectedPaise) || expectedPaise <= 0 || amountPaise !== expectedPaise || currency !== expectedCurrency) {
       logSecurityEvent({
         eventType: 'PAYMENT_AMOUNT_TAMPERING_FLAGGED',
         orderId,
@@ -142,16 +138,51 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       throw new Error(`Payment amount or currency mismatch. Expected ${expectedPaise} ${expectedCurrency}, received ${amountPaise} ${currency}.`);
     }
 
+    if (orderData.gatewayPaymentId && orderData.gatewayPaymentId !== gatewayPaymentId) {
+      throw new Error('Gateway payment ID mismatch with the payment already recorded on this order.');
+    }
+    const assertLedgerBinding = (record: Record<string, any>, type: string): void => {
+      if (record.type !== type || record.orderId !== orderId || record.amountPaise !== amountPaise ||
+          record.currency !== currency || record.gatewayOrderId !== gatewayOrderId || record.gatewayTransactionId !== gatewayPaymentId) {
+        throw new Error('Existing payment ledger binding mismatch; reconciliation required.');
+      }
+    };
+    // Immutable validation must precede every idempotent-success path, including
+    // payment IDs that already have a deterministic financial transaction.
+    if (finTxSnap.exists) {
+      if (orderData.gatewayPaymentId !== gatewayPaymentId) {
+        throw new Error('Existing capture is not bound to the recorded order payment; reconciliation required.');
+      }
+      assertLedgerBinding(finTxSnap.data()!, 'PAYMENT_CAPTURE');
+      return {
+        success: true,
+        alreadyCaptured: true,
+        orderId,
+        tokenNumber: orderData.tokenNumber || '',
+        amountPaise: expectedPaise,
+        status: (orderData.status === 'cancelled' || orderData.status === 'expired' ? 'cancelled' :
+          orderData.status === 'ready' ? 'ready' : 'confirmed') as 'cancelled' | 'ready' | 'confirmed',
+      };
+    }
+
     // 4. Cancelled Order / Orphaned Payment Handling (TB-003 & TB-NEW-002 Remediation)
     // Invariant: Cancelled orders are NEVER resurrected. Late payment is recorded as ORPHANED for automated refund.
     // Invariant TB-NEW-002 & TB-R2-006: Deterministic transaction ID orphan_fin_${gatewayPaymentId} guarantees exactly 1 ledger posting.
     if (orderData.status === 'cancelled' || orderData.paymentStatus === 'cancelled' || orderData.status === 'expired' || orderData.paymentStatus === 'expired') {
       const paymentId = `orphan_${gatewayPaymentId}`;
       const orphanRef = db.collection('orphanedPayments').doc(paymentId);
-      const finTxRef = db.collection('financialTransactions').doc(`orphan_fin_${gatewayPaymentId}`);
+      const orphanFinRef = db.collection('financialTransactions').doc(`orphan_fin_${gatewayPaymentId}`);
 
-      const orphanSnap = await transaction.get(orphanRef);
-      if (!orphanSnap.exists) {
+      const [orphanSnap, orphanFinSnap] = await Promise.all([transaction.get(orphanRef), transaction.get(orphanFinRef)]);
+      if (orphanSnap.exists || orphanFinSnap.exists) {
+        if (!orphanSnap.exists || !orphanFinSnap.exists) throw new Error('Incomplete orphaned payment record; reconciliation required.');
+        assertLedgerBinding(orphanFinSnap.data()!, 'ORPHANED_PAYMENT_CAPTURE');
+        const orphan = orphanSnap.data()!;
+        if (orphan.orderId !== orderId || orphan.gatewayOrderId !== gatewayOrderId || orphan.gatewayPaymentId !== gatewayPaymentId ||
+            orphan.amountPaise !== amountPaise || orphan.currency !== currency) {
+          throw new Error('Existing orphaned payment binding mismatch.');
+        }
+      } else {
         const isCash = source === 'cashier_counter';
         const orphanRecord = {
           paymentId,
@@ -169,8 +200,8 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
         };
         transaction.set(orphanRef, orphanRecord);
 
-        transaction.set(finTxRef, {
-          transactionId: finTxRef.id,
+        transaction.set(orphanFinRef, {
+          transactionId: orphanFinRef.id,
           orderId,
           type: 'ORPHANED_PAYMENT_CAPTURE',
           amount: expectedPaise / 100,
@@ -206,7 +237,7 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
 
       return {
         success: true,
-        alreadyCaptured: false,
+        alreadyCaptured: orphanSnap.exists,
         orderId,
         tokenNumber: orderData.tokenNumber || '',
         amountPaise: expectedPaise,
@@ -215,16 +246,8 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
       };
     }
 
-    // 5. Idempotency check: Evaluated AFTER all immutable validations pass (Phase 1 Fix)
-    if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
-      return {
-        success: true,
-        alreadyCaptured: true,
-        orderId,
-        tokenNumber: orderData.tokenNumber || '',
-        amountPaise: expectedPaise,
-        status: (orderData.status || (orderData.isOnlyReadyMade === true ? 'ready' : 'confirmed')) as 'confirmed' | 'ready',
-      };
+    if (['paid', 'captured', 'partially_refunded', 'refunded'].includes(orderData.paymentStatus)) {
+      throw new Error('Paid order has no matching capture ledger; reconciliation required.');
     }
 
     // 5. Commit inventory reservation (Phase 2 Two-Phase Inventory Lifecycle)
@@ -320,9 +343,15 @@ export async function finalizeSuccessfulPayment(params: FinalizePaymentParams): 
 
   // Synchronize TV queue projection immediately upon payment finalization (BUG-01)
   if (!result.alreadyCaptured && (result.status === 'confirmed' || result.status === 'ready')) {
-    await updatePublicLiveQueueProjection(db).catch((err) => {
-      console.warn('Failed to update public live queue projection after payment finalize:', err);
-    });
+    try {
+      await updatePublicLiveQueueProjection(db);
+    } catch (_) {
+      console.warn('[payment_finalize] Payment committed; public queue projection sync failed.', { orderId });
+      logSecurityEvent({
+        eventType: 'PAYMENT_PROJECTION_SYNC_FAILED', severity: 'MEDIUM', orderId, actorUid: actorId,
+        details: { projection: 'publicLiveQueue/current' },
+      }).catch(() => {});
+    }
   }
 
   return result;

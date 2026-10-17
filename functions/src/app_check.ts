@@ -1,4 +1,5 @@
 import { CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { isProduction } from './env_config';
 
 /**
  * Firebase App Check Verification Layer (Fail-Closed Hardened).
@@ -9,24 +10,11 @@ import { CallableRequest, HttpsError } from 'firebase-functions/v2/https';
  * and cannot be disabled by environment configuration variables.
  */
 export function enforceAppCheck(request: CallableRequest<any>): void {
-  if (process.env.FUNCTIONS_EMULATOR === 'true' && process.env.ENFORCE_APP_CHECK !== 'true') {
-    return;
-  }
-  // Staff, Admin, and Workstation portal operations originating from web browsers do not run mobile App Check tokens
-  if (request.auth?.token?.isWorkstationSession ||
-      (request.auth?.token?.role && ['admin', 'manager', 'developer', 'security_admin', 'kitchen', 'pickup', 'staff'].includes(request.auth.token.role)) ||
-      (request.auth?.token?.email && (
-        request.auth.token.email.includes('admin') ||
-        request.auth.token.email.endsWith('@tcetmumbai.in') ||
-        request.auth.token.email.endsWith('@thakureducation.org')
-      ))) {
-    return;
-  }
-  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE);
-  const isExplicitlyEnforced = process.env.ENFORCE_APP_CHECK === 'true';
-
-  // Fail-Closed: Production unconditionally enforces App Check. Non-prod enforces if flag set.
-  if ((isProduction || isExplicitlyEnforced) && !request.app) {
+  // request.app is installed by Firebase's callable verifier, never by request
+  // data. Authentication, email, role and workstation claims are not attestation.
+  // A production signal also overrides emulator/disable flags.
+  const required = isProduction() || process.env.ENFORCE_APP_CHECK === 'true';
+  if (required && (!request?.app || typeof request.app.appId !== 'string' || !request.app.appId.trim())) {
     throw new HttpsError(
       'unauthenticated',
       'App Check verification failed. Request must originate from an authorized client application.'

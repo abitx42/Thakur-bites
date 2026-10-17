@@ -3,19 +3,14 @@
 import { db, auth, functions } from '../firebase.js?v=5';
 import { 
   collection, 
-  doc, 
   onSnapshot, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc, 
   query, 
   where, 
-  getDocs, 
-  serverTimestamp 
+  getDocsFromServer
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
 import { escapeHtml } from './escapeHtml.js';
-import { staffAuth } from '../auth.js?v=12';
+import { staffAuth, getPrivilegedSession, onStaffAuthStateChanged } from '../auth.js?v=12';
 
 let unsubscribeUsers = null;
 let unsubscribeStaffUsers = null;
@@ -25,8 +20,15 @@ let searchQuery = '';
 let selectedRoleFilter = 'ALL'; // 'ALL' | 'ADMINS' | 'STAFF' | 'PRIORITY' | 'STUDENTS' | 'SUSPENDED'
 let actionLoadingUid = null;
 let statusFeedback = null; // { type: 'success' | 'error' | 'info', text: string }
+let unsubscribeAuth = null;
+let feedbackTimeout = null;
+let viewRevision = 0;
+let activeContainer = null;
+const ADMIN_ROLES = ['manager', 'admin', 'developer', 'security_admin', 'system'];
+const ASSIGNABLE_ROLES = ['customer', 'student', 'kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin'];
 
 export function cleanupUserProfilesView() {
+  ++viewRevision;
   if (unsubscribeUsers) {
     unsubscribeUsers();
     unsubscribeUsers = null;
@@ -35,17 +37,49 @@ export function cleanupUserProfilesView() {
     unsubscribeStaffUsers();
     unsubscribeStaffUsers = null;
   }
+  if (unsubscribeAuth) { unsubscribeAuth(); unsubscribeAuth = null; }
+  if (feedbackTimeout !== null) { clearTimeout(feedbackTimeout); feedbackTimeout = null; }
+  allUsers.clear();
+  allStaffUsers.clear();
+  searchQuery = '';
+  selectedRoleFilter = 'ALL';
+  actionLoadingUid = null;
+  statusFeedback = null;
+  if (activeContainer) { activeContainer.innerHTML = ''; activeContainer = null; }
 }
 
 export function renderUserProfilesView(container) {
   cleanupUserProfilesView();
+  activeContainer = container;
+  const revision = viewRevision;
+  const actorUid = auth.currentUser?.uid;
+
+  function stopDirectory(message) {
+    if (revision !== viewRevision) return;
+    cleanupUserProfilesView();
+    container.innerHTML = `<div role="alert" style="padding: 1.5rem;">${escapeHtml(message)}</div>`;
+  }
+
+  function isCurrentView() {
+    if (revision !== viewRevision) return false;
+    if (!actorUid || auth.currentUser?.uid !== actorUid || !staffAuth.isAuthenticated()
+        || !ADMIN_ROLES.includes(staffAuth.getRole())) {
+      stopDirectory('User directory access requires a current administrative sign-in. Sign in and reload the directory.');
+      return false;
+    }
+    return true;
+  }
+
+  if (!isCurrentView()) return;
 
   function showStatus(text, type = 'info', duration = 4000) {
+    if (!isCurrentView()) return;
+    if (feedbackTimeout !== null) clearTimeout(feedbackTimeout);
     statusFeedback = { text, type };
     render();
     if (duration > 0) {
-      setTimeout(() => {
-        if (statusFeedback && statusFeedback.text === text) {
+      feedbackTimeout = setTimeout(() => {
+        if (isCurrentView() && statusFeedback && statusFeedback.text === text) {
           statusFeedback = null;
           render();
         }
@@ -54,179 +88,67 @@ export function renderUserProfilesView(container) {
   }
 
   // Dual listener: Listen to 'users' and 'staffUsers'
+  const failDirectory = error => {
+    console.error('[UserProfilesView] User directory read failed:', error);
+    stopDirectory('Unable to load user records. Check your authorization and connection, then reload the directory.');
+  };
   try {
     const usersCol = collection(db, 'users');
     unsubscribeUsers = onSnapshot(usersCol, (snapshot) => {
-      snapshot.docChanges().forEach(change => {
-        if (change.type === 'removed') {
-          allUsers.delete(change.doc.id);
-        } else {
-          allUsers.set(change.doc.id, { id: change.doc.id, ...change.doc.data() });
-        }
-      });
+      if (!isCurrentView()) return;
+      allUsers = new Map(snapshot.docs.map(record => [record.id, { ...record.data(), id: record.id, uid: record.id }]));
       render();
-    }, (err) => {
-      console.warn('[UserProfilesView] users collection listener notice:', err);
-    });
+    }, failDirectory);
 
     const staffCol = collection(db, 'staffUsers');
     unsubscribeStaffUsers = onSnapshot(staffCol, (snapshot) => {
-      snapshot.docChanges().forEach(change => {
-        if (change.type === 'removed') {
-          allStaffUsers.delete(change.doc.id);
-        } else {
-          allStaffUsers.set(change.doc.id, { id: change.doc.id, ...change.doc.data() });
-        }
-      });
+      if (!isCurrentView()) return;
+      allStaffUsers = new Map(snapshot.docs.map(record => [record.id, { ...record.data(), id: record.id, uid: record.id }]));
       render();
-    }, (err) => {
-      console.warn('[UserProfilesView] staffUsers collection listener notice:', err);
-    });
+    }, failDirectory);
+    unsubscribeAuth = onStaffAuthStateChanged(() => { isCurrentView(); });
   } catch (err) {
-    console.error('[UserProfilesView] Error setting up listeners:', err);
+    failDirectory(err);
   }
 
   async function updateUserRole(uid, newRole, existingData = {}) {
+    if (!isCurrentView()) return false;
+    const session = getPrivilegedSession();
+    if (!session?.sessionId) {
+      showStatus('Activate a current MFA privileged session before assigning staff roles.', 'error');
+      return false;
+    }
+    if (typeof uid !== 'string' || !uid || uid.length > 128 || uid.includes('/') || uid !== uid.trim()
+        || !ASSIGNABLE_ROLES.includes(newRole)) {
+      showStatus('A valid existing Firebase UID and canonical role are required.', 'error');
+      return false;
+    }
     actionLoadingUid = uid;
     render();
     try {
       const email = existingData.email || '';
       const displayName = existingData.displayName || existingData.name || email.split('@')[0] || 'User';
 
-      // 1. Dual-write to staffUsers document
-      const staffRef = doc(db, 'staffUsers', uid);
-      await setDoc(staffRef, {
-        uid,
-        email,
-        displayName,
-        role: newRole,
-        updatedAt: serverTimestamp(),
-        assignedBy: auth.currentUser ? auth.currentUser.uid : 'admin_direct',
-        lastModifiedAt: new Date().toISOString()
-      }, { merge: true });
-
-      // 2. Dual-write to users document
-      const userRef = doc(db, 'users', uid);
-      await setDoc(userRef, {
-        role: newRole,
-        accountType: ['admin', 'manager', 'kitchen', 'pickup', 'cashier'].includes(newRole) ? 'COLLEGE_STAFF' : 'STUDENT',
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-
-      // 3. Attempt callable function for custom claims (optional sync, fails gracefully on Spark)
-      try {
-        const assignFn = httpsCallable(functions, 'assignStaffRole');
-        await assignFn({ targetUid: uid, newRole });
-      } catch (cfErr) {
-        console.log('[UserProfilesView] Callable role sync completed locally:', cfErr.message);
+      const assignFn = httpsCallable(functions, 'assignStaffRole');
+      const result = await assignFn({ targetUid: uid, newRole, privilegedSessionId: session.sessionId });
+      if (!isCurrentView()) return false;
+      if (result.data?.success !== true || result.data.targetUid !== uid || result.data.assignedRole !== newRole) {
+        throw new Error('The server did not confirm this role assignment. Refresh records before retrying.');
       }
-
       showStatus(`Successfully updated role to "${newRole.toUpperCase()}" for ${displayName}`, 'success');
+      return true;
     } catch (err) {
       console.error('[UserProfilesView] Role update error:', err);
       showStatus(`Error updating role: ${err.message || err}`, 'error');
+      return false;
     } finally {
-      actionLoadingUid = null;
-      render();
-    }
-  }
-
-  async function togglePriorityLevel(uid, currentPriority, existingData = {}) {
-    actionLoadingUid = uid;
-    render();
-    try {
-      const newPriority = currentPriority === 1 ? 0 : 1;
-      const isFaculty = newPriority === 1;
-      const userRef = doc(db, 'users', uid);
-
-      await setDoc(userRef, {
-        priorityLevel: newPriority,
-        isFaculty: isFaculty,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-
-      showStatus(
-        newPriority === 1 
-          ? `⭐ Priority Level 1 (Faculty/Express) enabled for user!` 
-          : `Standard priority restored.`,
-        'success'
-      );
-    } catch (err) {
-      console.error('[UserProfilesView] Priority toggle error:', err);
-      showStatus(`Error changing priority: ${err.message}`, 'error');
-    } finally {
-      actionLoadingUid = null;
-      render();
-    }
-  }
-
-  async function toggleAccountDisabled(uid, isCurrentlyDisabled) {
-    actionLoadingUid = uid;
-    render();
-    try {
-      const newStatus = !isCurrentlyDisabled;
-      const userRef = doc(db, 'users', uid);
-      await setDoc(userRef, {
-        accountDisabled: newStatus,
-        disabledAt: newStatus ? serverTimestamp() : null,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-
-      showStatus(
-        newStatus ? `Account suspended for user ${uid}` : `Account reactivated successfully.`,
-        newStatus ? 'info' : 'success'
-      );
-    } catch (err) {
-      console.error('[UserProfilesView] Account status error:', err);
-      showStatus(`Failed to change account status: ${err.message}`, 'error');
-    } finally {
-      actionLoadingUid = null;
-      render();
-    }
-  }
-
-  async function ensureDeveloperAdmin() {
-    actionLoadingUid = 'dev_self';
-    render();
-    try {
-      const devEmails = ['1032251174@tcetmumbai.in', 'adi@tcetmumbai.in'];
-      const currentAuthUser = auth.currentUser;
-      const targetUid = currentAuthUser ? currentAuthUser.uid : null;
-      const targetEmail = currentAuthUser?.email || devEmails[0];
-
-      if (targetUid) {
-        await setDoc(doc(db, 'staffUsers', targetUid), {
-          uid: targetUid,
-          email: targetEmail,
-          displayName: 'Aditya Bodake (Lead Developer)',
-          role: 'admin',
-          isDeveloper: true,
-          updatedAt: serverTimestamp(),
-          assignedBy: 'developer_cockpit'
-        }, { merge: true });
-
-        await setDoc(doc(db, 'users', targetUid), {
-          role: 'admin',
-          displayName: 'Aditya Bodake',
-          accountType: 'COLLEGE_STAFF',
-          priorityLevel: 1,
-          isFaculty: true,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-      }
-
-      showStatus('🚀 Developer Aditya Bodake master admin & priority credentials verified!', 'success');
-    } catch (err) {
-      console.error('[UserProfilesView] Dev check error:', err);
-      showStatus(`Dev setup notice: ${err.message}`, 'error');
-    } finally {
-      actionLoadingUid = null;
-      render();
+      if (isCurrentView()) { actionLoadingUid = null; render(); }
     }
   }
 
   async function handleQuickAssign(e) {
     e.preventDefault();
+    if (!isCurrentView()) return;
     const form = e.target;
     const identifier = (form.identifier.value || '').trim();
     const role = form.role.value;
@@ -236,7 +158,6 @@ export function renderUserProfilesView(container) {
       return;
     }
 
-    form.identifier.value = '';
     showStatus(`Assigning role ${role.toUpperCase()} to ${identifier}...`, 'info', 10000);
 
     // Look in current users
@@ -262,22 +183,31 @@ export function renderUserProfilesView(container) {
     }
 
     if (!targetUid) {
-      // If it looks like an email or UID, perform Firestore query or direct doc creation
       if (identifier.includes('@')) {
         try {
-          const q = query(collection(db, 'users'), where('email', '==', identifier));
-          const snap = await getDocs(q);
-          if (!snap.empty) {
-            targetUid = snap.docs[0].id;
-            targetData = snap.docs[0].data();
+          for (const collectionName of ['users', 'staffUsers']) {
+            const q = query(collection(db, collectionName), where('email', '==', identifier.toLowerCase()));
+            const snap = await getDocsFromServer(q);
+            if (!isCurrentView()) return;
+            if (snap.docs.length > 1) throw new Error('Multiple accounts match this email. Use the verified Firebase UID.');
+            if (snap.docs.length === 1) {
+              targetUid = snap.docs[0].id;
+              targetData = snap.docs[0].data();
+              break;
+            }
           }
-        } catch (_) {}
-      }
-
-      if (!targetUid) {
-        // Assume identifier is UID or sanitized key
-        targetUid = identifier.includes('@') ? identifier.replace(/[^a-zA-Z0-9]/g, '_') : identifier;
-        targetData = { email: identifier.includes('@') ? identifier : '', displayName: identifier };
+        } catch (error) {
+          showStatus(`Account lookup failed: ${error.message || error}`, 'error');
+          return;
+        }
+        if (!targetUid) {
+          showStatus('No registered account was found for this email. Ask the user to sign in first, or enter their verified Firebase UID.', 'error');
+          return;
+        }
+      } else {
+        // Explicit UIDs are verified by assignStaffRole against Firebase Auth.
+        targetUid = identifier;
+        targetData = { displayName: identifier };
       }
     }
 
@@ -306,12 +236,13 @@ export function renderUserProfilesView(container) {
   }
 
   function render() {
+    if (!isCurrentView()) return;
     const mergedUsers = getMergedUsersList();
     const cleanSearch = (searchQuery || '').trim().toLowerCase();
 
     const filteredUsers = mergedUsers.filter(u => {
       const role = (u.role || 'student').toLowerCase();
-      const isPriority = u.priorityLevel === 1 || u.isFaculty;
+      const isPriority = Number.isInteger(u.priorityLevel) && u.priorityLevel >= 2;
       const isDisabled = Boolean(u.accountDisabled);
 
       // Category / Tab filter
@@ -349,7 +280,7 @@ export function renderUserProfilesView(container) {
     const totalCount = mergedUsers.length;
     const adminCount = mergedUsers.filter(u => ['admin', 'manager', 'developer', 'security_admin'].includes((u.role || '').toLowerCase())).length;
     const staffCount = mergedUsers.filter(u => ['kitchen', 'pickup', 'cashier', 'staff', 'kitchen_staff', 'pickup_staff'].includes((u.role || '').toLowerCase())).length;
-    const priorityCount = mergedUsers.filter(u => u.priorityLevel === 1 || u.isFaculty).length;
+    const priorityCount = mergedUsers.filter(u => Number.isInteger(u.priorityLevel) && u.priorityLevel >= 2).length;
 
     container.innerHTML = `
       <div style="max-width: 1400px; margin: 0 auto; padding: 1.5rem 1rem;">
@@ -364,13 +295,13 @@ export function renderUserProfilesView(container) {
               </h2>
             </div>
             <p style="font-family: var(--font-sans); font-size: 0.88rem; color: var(--ink-secondary); margin: 6px 0 0 0;">
-              Real-time user directory, admin delegation, operational roles, and faculty priority controls.
+              Real-time user directory and server-validated staff role assignments with MFA.
             </p>
           </div>
 
           <div style="display: flex; align-items: center; gap: 8px;">
-            <button id="dev-verify-self-btn" class="btn btn--secondary btn--sm" style="background: #0F172A; color: #38BDF8; border: 1.5px solid #1E293B; font-weight: 700; display: flex; align-items: center; gap: 6px;">
-              <span>⚡</span> Developer Sync Master
+            <button id="dev-verify-self-btn" disabled title="Self-promotion is unavailable. Contact another trusted administrator." class="btn btn--secondary btn--sm">
+              Self-promotion unavailable
             </button>
             <button id="refresh-users-btn" class="btn btn--secondary btn--sm" style="display: flex; align-items: center; gap: 4px;">
               <span>🔄</span> Refresh
@@ -378,35 +309,11 @@ export function renderUserProfilesView(container) {
           </div>
         </div>
 
-        <!-- Lead Developer Governance Card -->
-        <div style="background: linear-gradient(135deg, #0F172A 0%, #1E1B4B 100%); border: 1.5px solid #312E81; border-radius: 12px; padding: 1rem 1.25rem; color: #FFF; margin-bottom: 1.5rem; box-shadow: 0 4px 20px rgba(0,0,0,0.15); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-          <div style="display: flex; align-items: center; gap: 14px;">
-            <div style="width: 48px; height: 48px; border-radius: 12px; background: rgba(99, 102, 241, 0.2); border: 1.5px solid #6366F1; display: flex; align-items: center; justify-content: center; font-size: 1.5rem;">
-              💻
-            </div>
-            <div>
-              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                <span style="font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.1em; color: #818CF8; font-weight: 800; text-transform: uppercase;">
-                  LEAD DEVELOPER OPERATIONS & GOVERNANCE
-                </span>
-                <span style="background: rgba(34, 197, 94, 0.2); border: 1px solid #22C55E; color: #4ADE80; font-family: var(--font-mono); font-size: 0.68rem; font-weight: 800; padding: 1px 6px; border-radius: 999px;">
-                  ● ACTIVE
-                </span>
-              </div>
-              <div style="font-family: var(--font-sans); font-size: 1.05rem; font-weight: 700; color: #F8FAFC; margin-top: 2px;">
-                Lead Developer: Aditya Bodake (<code style="font-family: var(--font-mono); font-size: 0.85rem; color: #93C5FD;">1032251174@tcetmumbai.in</code>)
-              </div>
-              <div style="font-family: var(--font-sans); font-size: 0.78rem; color: #94A3B8; margin-top: 2px;">
-                Direct elevation authority active. Master role assignments with real-time Firestore persistence.
-              </div>
-            </div>
-          </div>
-
-          <div style="display: flex; gap: 8px;">
-            <button id="quick-dev-admin-btn" style="background: #4F46E5; color: #FFF; border: none; padding: 8px 14px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
-              👑 Confirm Lead Admin
-            </button>
-          </div>
+        <div role="note" style="padding: 1rem; margin-bottom: 1.5rem; border: 1px solid var(--border-light); border-radius: 8px;">
+          Staff roles require an active privileged MFA session and server approval.
+          Faculty priority follows the verified application flow; priority overrides are unavailable here.
+          Account suspension/reactivation must use trusted account administration.
+          This directory cannot grant master access or promote your own account.
         </div>
 
         <!-- Status Feedback Notice -->
@@ -540,8 +447,8 @@ export function renderUserProfilesView(container) {
                     const uid = user.uid || user.id;
                     const role = (user.role || 'student').toLowerCase();
                     const isAdmin = ['admin', 'manager', 'developer', 'security_admin'].includes(role);
-                    const isDev = role === 'developer' || role === 'security_admin' || user.isDeveloper || user.email === '1032251174@tcetmumbai.in' || user.email === 'adi@tcetmumbai.in';
-                    const isPriority = user.priorityLevel === 1 || user.isFaculty;
+                    const isDev = role === 'developer' || role === 'security_admin' || role === 'system';
+                    const isPriority = Number.isInteger(user.priorityLevel) && user.priorityLevel >= 2;
                     const isDisabled = Boolean(user.accountDisabled);
                     const isLoading = actionLoadingUid === uid;
 
@@ -663,7 +570,7 @@ export function renderUserProfilesView(container) {
                             class="toggle-priority-btn" 
                             data-uid="${escapeHtml(uid)}" 
                             data-priority="${user.priorityLevel || 0}"
-                            ${isLoading ? 'disabled' : ''}
+                            disabled title="Priority is assigned through the verified application flow."
                             style="
                               border: 1.5px solid ${isPriority ? '#86EFAC' : 'var(--border-light)'};
                               background: ${isPriority ? '#F0FDF4' : 'transparent'};
@@ -679,7 +586,7 @@ export function renderUserProfilesView(container) {
                               gap: 4px;
                             "
                           >
-                            ${isPriority ? '⭐ Priority Lvl 1 (Fast-track)' : '⚪ Standard Queue'}
+                            ${isPriority ? `⭐ Verified priority (Level ${escapeHtml(user.priorityLevel)})` : '⚪ Standard Queue'}
                           </button>
                         </td>
 
@@ -717,7 +624,7 @@ export function renderUserProfilesView(container) {
                               class="toggle-disable-btn"
                               data-uid="${escapeHtml(uid)}"
                               data-disabled="${isDisabled ? 'true' : 'false'}"
-                              ${isLoading ? 'disabled' : ''}
+                              disabled title="Account changes require trusted account administration; unavailable in this directory."
                               style="background: transparent; border: 1px solid var(--border-light); color: ${isDisabled ? '#16A34A' : '#64748B'}; font-family: var(--font-mono); font-size: 0.72rem; padding: 4px 8px; border-radius: 6px; cursor: pointer;"
                             >
                               ${isDisabled ? '🔓 Activate' : '🔒 Suspend'}
@@ -740,16 +647,7 @@ export function renderUserProfilesView(container) {
 
     // Attach Event Handlers
     container.querySelector('#refresh-users-btn')?.addEventListener('click', () => {
-      showStatus('Refreshing user records...', 'info', 1000);
-      render();
-    });
-
-    container.querySelector('#dev-verify-self-btn')?.addEventListener('click', () => {
-      ensureDeveloperAdmin();
-    });
-
-    container.querySelector('#quick-dev-admin-btn')?.addEventListener('click', () => {
-      ensureDeveloperAdmin();
+      if (isCurrentView()) renderUserProfilesView(container);
     });
 
     container.querySelector('#close-feedback-btn')?.addEventListener('click', () => {
@@ -784,7 +682,7 @@ export function renderUserProfilesView(container) {
         const uid = btn.getAttribute('data-uid');
         const role = btn.getAttribute('data-role');
         const user = allUsers.get(uid) || allStaffUsers.get(uid) || {};
-        updateUserRole(uid, role, user);
+        return updateUserRole(uid, role, user);
       });
     });
 
@@ -793,24 +691,7 @@ export function renderUserProfilesView(container) {
         const uid = select.getAttribute('data-uid');
         const role = e.target.value;
         const user = allUsers.get(uid) || allStaffUsers.get(uid) || {};
-        updateUserRole(uid, role, user);
-      });
-    });
-
-    container.querySelectorAll('.toggle-priority-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const uid = btn.getAttribute('data-uid');
-        const priority = parseInt(btn.getAttribute('data-priority'), 10) || 0;
-        const user = allUsers.get(uid) || allStaffUsers.get(uid) || {};
-        togglePriorityLevel(uid, priority, user);
-      });
-    });
-
-    container.querySelectorAll('.toggle-disable-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const uid = btn.getAttribute('data-uid');
-        const isDisabled = btn.getAttribute('data-disabled') === 'true';
-        toggleAccountDisabled(uid, isDisabled);
+        return updateUserRole(uid, role, user);
       });
     });
   }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:provider/provider.dart';
 import '../models/user_profile.dart';
 import '../providers/auth_provider.dart';
@@ -25,11 +25,14 @@ class _VerificationScreenState extends State<VerificationScreen> {
   final _officialEmailController = TextEditingController();
 
   bool _isSubmitting = false;
+  int _submissionVersion = 0;
+  String? _submissionUid;
 
   @override
   void initState() {
     super.initState();
     final auth = context.read<AuthProvider>();
+    _submissionUid = FirebaseAuth.instance.currentUser?.uid;
     final user = auth.currentProfile;
     if (user != null) {
       if (user.department != null) _departmentController.text = user.department!;
@@ -40,7 +43,25 @@ class _VerificationScreenState extends State<VerificationScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = Provider.of<AuthProvider>(context);
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != _submissionUid) {
+      ++_submissionVersion;
+      _submissionUid = uid;
+      _isSubmitting = false;
+      final user = auth.currentProfile;
+      _employeeIdController.text = user?.rollNo ?? '';
+      _departmentController.text = user?.department ?? '';
+      _designationController.text = user?.designation ?? '';
+      _officialEmailController.text = user?.email ?? '';
+    }
+  }
+
+  @override
   void dispose() {
+    ++_submissionVersion;
     _employeeIdController.dispose();
     _departmentController.dispose();
     _designationController.dispose();
@@ -51,61 +72,51 @@ class _VerificationScreenState extends State<VerificationScreen> {
   Future<void> _submitApplication() async {
     if (!_formKey.currentState!.validate()) return;
     if (_isSubmitting) return;
+    final auth = context.read<AuthProvider>();
+    final user = auth.currentProfile;
+    if (user == null || !auth.isLoggedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Please sign in and verify your server profile before applying.'),
+        backgroundColor: AppColors.red,
+      ));
+      return;
+    }
+    final uid = user.uid;
+    final version = ++_submissionVersion;
+    final applicationType = _selectedType.toDbString();
+    bool isCurrent() => mounted && version == _submissionVersion
+        && FirebaseAuth.instance.currentUser?.uid == uid;
+    String? submittedApplicationId;
 
     setState(() => _isSubmitting = true);
     HapticFeedback.mediumImpact();
 
     try {
-      final auth = context.read<AuthProvider>();
-      final user = auth.currentProfile;
-      if (user == null) throw Exception('Please sign in first.');
-
-      // Server-Authoritative Verification Application Submission with Firestore Fallback
+      // IDs, timestamps and review status are assigned only by this handler.
       final functionsService = FunctionsService();
-      Map<String, dynamic> result = {};
-      try {
-        result = await functionsService.submitVerificationApplication(
-          applicationType: _selectedType.toDbString(),
-          employeeId: _employeeIdController.text.trim().toUpperCase(),
-          department: _departmentController.text.trim(),
-          designation: _designationController.text.trim(),
-          officialEmail: _officialEmailController.text.trim().toLowerCase(),
-        );
-      } catch (fnErr) {
-        debugPrint('[VerificationScreen] Function submission failed ($fnErr), falling back to Firestore.');
-        final appId = '${_selectedType.toDbString() == 'TEACHER' ? 'FAC' : 'STF'}-${DateTime.now().millisecondsSinceEpoch.toRadixString(16).toUpperCase()}';
-        await FirebaseFirestore.instance.collection('verificationApplications').doc(appId).set({
-          'applicationId': appId,
-          'userId': user.uid,
-          'applicationType': _selectedType.toDbString(),
-          'employeeId': _employeeIdController.text.trim().toUpperCase(),
-          'department': _departmentController.text.trim(),
-          'designation': _designationController.text.trim(),
-          'officialEmail': _officialEmailController.text.trim().toLowerCase(),
-          'claimedEmployeeId': _employeeIdController.text.trim().toUpperCase(),
-          'claimedDepartment': _departmentController.text.trim(),
-          'claimedDesignation': _designationController.text.trim(),
-          'claimedOfficialEmail': _officialEmailController.text.trim().toLowerCase(),
-          'status': 'SUBMITTED',
-          'submittedAt': FieldValue.serverTimestamp(),
-        });
-        result = {'applicationId': appId, 'status': 'SUBMITTED'};
-      }
-
-      final appId = (result['applicationId'] as String?) ?? 'Pending';
-
-      // Update local profile status
-      final updated = user.copyWith(
-        verificationStatus: VerificationStatus.underReview,
+      final result = await functionsService.submitVerificationApplication(
+        applicationType: applicationType,
+        employeeId: _employeeIdController.text.trim().toUpperCase(),
         department: _departmentController.text.trim(),
         designation: _designationController.text.trim(),
+        officialEmail: _officialEmailController.text.trim().toLowerCase(),
       );
-      await auth.updateProfile(updated);
-
-      if (mounted) {
+      if (!isCurrent()) return;
+      final applicationId = result['applicationId'];
+      final prefix = applicationType == 'TEACHER' ? 'FAC' : 'STF';
+      if (result['success'] != true || result['status'] != 'SUBMITTED'
+          || applicationId is! String || !RegExp(r'^(FAC|STF)-[A-F0-9]{16}$').hasMatch(applicationId)
+          || !applicationId.startsWith('$prefix-')) {
+        throw StateError('The server did not confirm a complete verification application receipt.');
+      }
+      submittedApplicationId = applicationId;
+      // Read the real post-submission profile; do not copy UNDER_REVIEW into
+      // local identity or overwrite approved/claimed fields from this form.
+      await auth.retryProfile();
+      if (mounted && isCurrent()) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Application $appId submitted for campus review! 📋'),
+            content: Text('Application $applicationId submitted for campus review! 📋'),
             backgroundColor: AppColors.green,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -113,16 +124,18 @@ class _VerificationScreenState extends State<VerificationScreen> {
         );
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && isCurrent()) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Submission failed: $e'),
-            backgroundColor: AppColors.red,
+            content: Text(submittedApplicationId == null
+                ? 'Submission was not confirmed: $e'
+                : 'Application $submittedApplicationId was submitted, but your profile refresh was not confirmed. Reconnect and reload your profile.'),
+            backgroundColor: submittedApplicationId == null ? AppColors.red : AppColors.mustardInk,
           ),
         );
       }
     } finally {
-      if (mounted) {
+      if (mounted && version == _submissionVersion) {
         setState(() => _isSubmitting = false);
       }
     }

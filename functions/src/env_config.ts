@@ -9,20 +9,48 @@
 
 export type RuntimeEnvironment = 'production' | 'staging' | 'test' | 'development';
 
+function envValue(name: string): string {
+  return (process.env[name] || '').trim();
+}
+
+function firebaseProjectId(): string {
+  const raw = envValue('FIREBASE_CONFIG');
+  if (!raw) return '';
+  const invalidConfig = () => new Error('FIREBASE_CONFIG configuration error: expected a JSON object with a string projectId.');
+  let config: any;
+  try {
+    config = JSON.parse(raw);
+  } catch (_) {
+    throw invalidConfig();
+  }
+  if (!config || typeof config !== 'object' || Array.isArray(config) ||
+      (config.projectId !== undefined && typeof config.projectId !== 'string')) throw invalidConfig();
+  return (config.projectId || '').trim();
+}
+
 export function getProjectId(): string {
-  return (
-    process.env.GCLOUD_PROJECT ||
-    process.env.FIREBASE_CONFIG ? JSON.parse(process.env.FIREBASE_CONFIG || '{}').projectId || '' : ''
-  ) || process.env.PROJECT_ID || '';
+  // Cloud's authoritative project ID wins without parsing an unused JSON value.
+  return envValue('GCLOUD_PROJECT') || envValue('GOOGLE_CLOUD_PROJECT') || firebaseProjectId() || envValue('PROJECT_ID');
+}
+
+function isProductionProject(projectId: string): boolean {
+  const clean = projectId.toLowerCase();
+  return clean.includes('prod') || clean.includes('thakurbites-live') || clean === 'adi-thakur-bite';
 }
 
 export function detectEnvironment(): RuntimeEnvironment {
-  const nodeEnv = (process.env.NODE_ENV || '').trim().toLowerCase();
+  const nodeEnv = envValue('NODE_ENV').toLowerCase();
+  // A deployed Cloud Run/Functions service is never a development or test
+  // runtime merely because NODE_ENV or a simulation/emulator flag says so.
+  if (nodeEnv === 'production' || envValue('K_SERVICE')) return 'production';
   const projectId = getProjectId().toLowerCase();
-
-  if (nodeEnv === 'production' || projectId.includes('prod') || projectId.includes('thakurbites-live') || projectId === 'adi-thakur-bite') {
-    return 'production';
+  const projectIds = [projectId, envValue('GCLOUD_PROJECT'), envValue('GOOGLE_CLOUD_PROJECT'), envValue('PROJECT_ID')];
+  if (envValue('GCLOUD_PROJECT') || envValue('GOOGLE_CLOUD_PROJECT')) {
+    // Conflicting but valid Firebase configuration must not hide a known live
+    // project. Malformed *unused* JSON cannot replace the authoritative ID.
+    try { projectIds.push(firebaseProjectId()); } catch (_) {}
   }
+  if (projectIds.some(isProductionProject)) return 'production';
   if (nodeEnv === 'staging' || projectId.includes('stage') || projectId.includes('staging')) {
     return 'staging';
   }
@@ -36,12 +64,16 @@ export function isProduction(): boolean {
   return detectEnvironment() === 'production';
 }
 
+export function isTrustedEmulator(): boolean {
+  return process.env.FUNCTIONS_EMULATOR === 'true' && !isProduction();
+}
+
 export function isSimulationAllowed(): boolean {
   // STRICT INVARIANT: Payment or auth simulation is NEVER allowed in production
-  if (isProduction()) {
-    return false;
-  }
-  return Boolean(process.env.SIMULATE_PAYMENTS) || detectEnvironment() === 'test';
+  const environment = detectEnvironment();
+  if (environment === 'production') return false;
+  const flag = process.env.SIMULATE_PAYMENTS;
+  return flag === undefined ? environment === 'test' : flag === 'true';
 }
 
 export function assertNotProduction(operation: string): void {
@@ -79,4 +111,3 @@ export function validateEnvironmentCredentials(config: {
 
   return { valid: true, environment: env };
 }
-

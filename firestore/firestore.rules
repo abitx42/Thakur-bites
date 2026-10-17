@@ -12,67 +12,117 @@ service cloud.firestore {
     }
 
     function getStaffRole() {
-      return ('role' in request.auth.token) ? request.auth.token.role :
+      // A role change must also invalidate an old, not-yet-expired ID token.
+      return !isAuthenticated() ? null :
         (exists(/databases/$(database)/documents/staffUsers/$(request.auth.uid)) ?
-          get(/databases/$(database)/documents/staffUsers/$(request.auth.uid)).data.role : null);
+          currentStaffRole(get(/databases/$(database)/documents/staffUsers/$(request.auth.uid)).data) :
+          ('role' in request.auth.token ? request.auth.token.role : null));
     }
 
-    function isKitchen() {
-      return isAuthenticated() && (
-        ('role' in request.auth.token && (request.auth.token.role == 'kitchen' || request.auth.token.role == 'kitchen_staff')) ||
-        (getStaffRole() == 'kitchen' || getStaffRole() == 'kitchen_staff')
-      );
+    function currentStaffRole(staff) {
+      return (!('role' in request.auth.token) || request.auth.token.role == staff.role) ? staff.role : null;
     }
 
-    function isPickup() {
-      return isAuthenticated() && (
-        ('role' in request.auth.token && (request.auth.token.role == 'pickup' || request.auth.token.role == 'pickup_staff')) ||
-        (getStaffRole() == 'pickup' || getStaffRole() == 'pickup_staff')
-      );
+    function mumbaiShiftDate() {
+      let ist = request.time + duration.value(330, 'm');
+      return string(ist.year()) + '-' + (ist.month() < 10 ? '0' : '') + string(ist.month())
+        + '-' + (ist.day() < 10 ? '0' : '') + string(ist.day());
     }
 
-    function isCashier() {
-      return isAuthenticated() && (
-        ('role' in request.auth.token && request.auth.token.role == 'cashier') ||
-        (getStaffRole() == 'cashier')
-      );
+    function workstationShiftDeadline(shiftWindow) {
+      let localDayStart = (request.time + duration.value(330, 'm')).date() - duration.value(330, 'm');
+      return localDayStart + (shiftWindow == 'MORNING' ? duration.value(930, 'm') :
+        shiftWindow == 'AFTERNOON' ? duration.value(1320, 'm') : duration.value(86399999, 'ms'));
     }
 
-    function isManager() {
-      return isAuthenticated() && (
-        ('role' in request.auth.token && request.auth.token.role == 'manager') ||
-        (getStaffRole() == 'manager')
-      );
+    function hasActiveWorkstationSession() {
+      // Match shift_pins.ts: every ephemeral identity needs the current login
+      // generation, PIN issuance and enrolled hardware, not just an ACTIVE flag.
+      let uid = request.auth.uid;
+      let token = request.auth.token;
+      let shiftIdentity = uid.matches('^staff_.*');
+      return (!shiftIdentity && !('isWorkstationSession' in token && token.isWorkstationSession == true))
+        || (
+          shiftIdentity && 'isWorkstationSession' in token && token.isWorkstationSession == true
+          && token.role in ['kitchen', 'pickup', 'cashier']
+          && token.deviceId is string && token.deviceId.matches('^[A-Za-z0-9_-]{4,100}$')
+          && token.shiftDate is string && token.shiftDate == mumbaiShiftDate()
+          && token.shiftWindow in ['MORNING', 'AFTERNOON', 'FULL_DAY']
+          && token.pinId is string
+          && token.pinId.matches('^(kitchen|pickup|cashier)_[0-9]{4}-[0-9]{2}-[0-9]{2}_(MORNING|AFTERNOON|FULL_DAY)$')
+          && token.sessionGeneration is string && token.sessionGeneration.matches('^[a-f0-9]{32}$')
+          && validWorkstationSession(uid, token)
+        );
+    }
+
+    function validWorkstationSession(uid, token) {
+      // Bind resource reads once. Passing get(...).data as an argument causes
+      // repeated expression evaluation when a large validation body is inlined.
+      // A missing document/field fails closed without a second exists() read.
+      let session = get(/databases/$(database)/documents/workstationSessions/$(uid)).data;
+      return session.sessionId == uid
+        && session.status == 'ACTIVE'
+        && session.sessionGeneration == token.sessionGeneration
+        && session.createdAt is timestamp && session.createdAt.toMillis() > 0 && session.createdAt <= request.time
+        && session.expiresAt is timestamp && session.expiresAt > request.time
+        && session.expiresAt > session.createdAt && session.expiresAt <= session.createdAt + duration.value(8, 'h')
+        && session.role == token.role
+        && session.deviceId == token.deviceId
+        && session.deviceHash is string && session.deviceHash.matches('^[a-f0-9]{16}$')
+        && hashing.sha256('DEVICE_' + session.deviceId).toHexString().lower().matches(session.deviceHash + '[a-f0-9]{48}')
+        && session.shiftDate == token.shiftDate
+        && session.shiftWindow == token.shiftWindow
+        && session.pinId == token.pinId
+        && session.pinGeneration is string && session.pinGeneration.matches('^[a-f0-9]{64}$')
+        && validWorkstationOrigin(session);
+    }
+
+    function validWorkstationOrigin(session) {
+      let pin = get(/databases/$(database)/documents/shiftPins/$(session.pinId)).data;
+      let hardware = get(/databases/$(database)/documents/registeredWorkstations/$(session.deviceId)).data;
+      return validWorkstationPin(pin, session) && validRegisteredWorkstation(hardware, session);
+    }
+
+    function validWorkstationPin(pin, session) {
+      return pin.pinId == session.pinId && pin.status == 'ACTIVE'
+        && pin.role == session.role
+        && pin.shiftDate == session.shiftDate
+        && pin.shiftWindow == session.shiftWindow
+        && pin.pinId == pin.role + '_' + pin.shiftDate + '_' + pin.shiftWindow
+        && pin.createdAt is timestamp && pin.createdAt.toMillis() > 0 && pin.createdAt <= session.createdAt
+        && pin.expiresAt is timestamp && pin.expiresAt > request.time
+        && pin.expiresAt > pin.createdAt && pin.expiresAt <= workstationShiftDeadline(pin.shiftWindow)
+        && session.expiresAt <= pin.expiresAt
+        && pin.pinHash is string && pin.pinHash.matches('^[a-fA-F0-9]{64}$')
+        && pin.salt is string && pin.salt.matches('^[a-fA-F0-9]{32}$')
+        // Same SHA-256(JSON.stringify([pinId, pinHash, salt, createdAtMs]))
+        // fingerprint as activePinState in shift_pins.ts. Validated fields have
+        // no JSON-escape characters; regenerated hashes/salts cannot match it.
+        && session.pinGeneration == hashing.sha256('["' + pin.pinId + '","' + pin.pinHash + '","'
+          + pin.salt + '",' + string(pin.createdAt.toMillis()) + ']').toHexString().lower()
+        && pin.boundDevices is list
+        && session.deviceId in pin.boundDevices
+        && pin.maxDevices is int && pin.maxDevices > 0 && pin.maxDevices <= (pin.role == 'pickup' ? 3 : 2)
+        && pin.boundDevices.size() <= pin.maxDevices;
+    }
+
+    function validRegisteredWorkstation(workstation, session) {
+      return workstation.workstationId == session.deviceId && workstation.status == 'ACTIVE'
+        && workstation.stationType == session.role
+        && workstation.tokenHash is string && workstation.tokenHash.matches('^[a-fA-F0-9]{64}$')
+        && session.workstationTokenHash == workstation.tokenHash;
+    }
+
+    function hasStaffRole(roles) {
+      return isAuthenticated() && getStaffRole() in roles && hasActiveWorkstationSession();
     }
 
     function isAdmin() {
-      // SECURITY: Email-regex checks removed — use exact allowlist + domain suffix only.
-      // .*admin.* regex was overly broad (e.g., "notadmin@gmail.com" would match).
-      return isAuthenticated() && (
-        ('role' in request.auth.token && (request.auth.token.role == 'admin' || request.auth.token.role == 'manager')) ||
-        (getStaffRole() == 'admin' || getStaffRole() == 'manager') ||
-        (request.auth.token.email != null && (
-          request.auth.token.email == 'moreaboutastram@gmail.com' ||
-          request.auth.token.email == 'adi@tcetmumbai.in' ||
-          request.auth.token.email == '1032251174@tcetmumbai.in' ||
-          request.auth.token.email == 'adityadjsb@gmail.com' ||
-          request.auth.token.email.matches('^[a-zA-Z0-9._%+\\-]+@(tcetmumbai\\.in|thakureducation\\.org)$')
-        )) ||
-        ('isWorkstationSession' in request.auth.token && request.auth.token.isWorkstationSession == true)
-      );
+      return hasStaffRole(['admin', 'manager']);
     }
 
     function isDeveloper() {
-      return isAuthenticated() && (
-        ('role' in request.auth.token && (request.auth.token.role == 'developer' || request.auth.token.role == 'security_admin')) ||
-        (getStaffRole() == 'developer' || getStaffRole() == 'security_admin') ||
-        (request.auth.token.email != null && (
-          request.auth.token.email == 'moreaboutastram@gmail.com' ||
-          request.auth.token.email == 'adi@tcetmumbai.in' ||
-          request.auth.token.email == 'adityadjsb@gmail.com' ||
-          request.auth.token.email == '1032251174@tcetmumbai.in'
-        ))
-      );
+      return hasStaffRole(['developer', 'security_admin', 'system']);
     }
 
     function isSecurityAdmin() {
@@ -80,12 +130,7 @@ service cloud.firestore {
     }
 
     function hasAdministrativeAccess() {
-      // SECURITY: Removed .*admin.* and .*staff.* open-ended regex patterns.
-      // Administrative access now requires exact email allowlist or institutional domain suffix.
-      return isAdmin() || isDeveloper() || isManager() ||
-        (isAuthenticated() && request.auth.token.email != null &&
-          request.auth.token.email.matches('^[a-zA-Z0-9._%+\\-]+@(tcetmumbai\\.in|thakureducation\\.org)$')
-        );
+      return hasStaffRole(['manager', 'admin', 'developer', 'security_admin', 'system']);
     }
 
     function isManagerOrAdmin() {
@@ -93,97 +138,37 @@ service cloud.firestore {
     }
 
     function isOperationalStaff() {
-      return isKitchen() || isPickup() || isCashier() || hasAdministrativeAccess();
+      return hasStaffRole(['kitchen', 'pickup', 'cashier', 'manager', 'admin', 'developer', 'security_admin', 'system']);
     }
 
     // ─── Menu Items (Server Authority Architecture) ───────────────
-    // Public read for live canteen catalog. Modifications restricted to Managers/Admins or audited Cloud Functions.
+    // Prices, availability and stock are validated/audited by Cloud Functions.
     match /menuItems/{itemId} {
       allow read: if true;
-      allow create, update: if (isOperationalStaff() || isManagerOrAdmin())
-        && (!('price' in request.resource.data) || (request.resource.data.price is number && request.resource.data.price > 0 && request.resource.data.price <= 10000))
-        && (!('stockOnHand' in request.resource.data) || (request.resource.data.stockOnHand is number && request.resource.data.stockOnHand >= 0))
-        && (!('reservedStock' in request.resource.data) || (request.resource.data.reservedStock is number && request.resource.data.reservedStock >= 0));
-      allow delete: if isManagerOrAdmin();
-      // SECURITY: Removed student stock-decrement direct write rule (TB-VULN-STOCK-DOS).
-      // Any authenticated student could set isOrderable=false on all menu items causing a canteen-wide
-      // denial-of-service. Stock/availability changes are server-authority only via Cloud Functions.
+      allow write: if false;
     }
 
     // ─── Categories & Subcategories Taxonomy ──────────────────────
     match /categories/{categoryId} {
       allow read: if true;
-      allow write: if isOperationalStaff() || isManagerOrAdmin();
+      allow write: if false;
 
       match /subcategories/{subId} {
         allow read: if true;
-        allow write: if isOperationalStaff() || isManagerOrAdmin();
+        allow write: if false;
       }
     }
 
 
-    // ─── Orders (Least-Privilege Isolation & Operational Resilience) ──
-    // Students read their own orders. Staff read station-filtered / operational orders.
-    // Order mutations support Cloud Functions as primary and direct authenticated operations
-    // for operational continuity (Spark plan / network degraded mode).
+    // ─── Orders (Server Authority) ────────────────────────────────
+    // Customers retain own reads and canonical staff retain operational reads.
+    // Every mutation requires the backend's state, payment and inventory checks.
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (
         resource.data.studentId == request.auth.uid || isOperationalStaff()
       );
 
-      // Order creation: Authenticated students for their own order (Spark plan resilience) or Operational Staff (counter POS)
-      allow create: if isAuthenticated() && (
-        (isOperationalStaff() && request.resource.data.totalAmount is number && request.resource.data.totalAmount >= 0 && request.resource.data.items is list && request.resource.data.items.size() > 0)
-        ||
-        (
-          request.resource.data.studentId == request.auth.uid
-          && request.resource.data.totalAmount is number
-          && request.resource.data.totalAmount >= 0
-          && request.resource.data.items is list
-          && request.resource.data.items.size() > 0
-          && request.resource.data.items.size() <= 30
-          // Security Invariant: Students cannot create orders marked already 'paid' or 'captured'
-          && request.resource.data.paymentStatus in ['pending', 'unpaid']
-          // Security Invariant: Students cannot create orders in kitchen/pickup fulfillment states
-          && request.resource.data.status in ['payment_pending', 'confirmed', 'placed']
-        )
-      );
-
-      // Order mutations:
-      // 1. Operational staff can advance order states, unlock orders, and manage cash flow (terminal states locked)
-      // 2. Students can cancel their own placed/pending orders, or confirm payment status (fields locked against tampering)
-      allow update: if isAuthenticated() && (
-        (
-          isOperationalStaff() &&
-          // Invariant: Terminal orders (collected, cancelled) are immutable unless Manager/Admin
-          (!(resource.data.status in ['collected', 'cancelled']) || isManagerOrAdmin())
-        )
-        ||
-        (
-          resource.data.studentId == request.auth.uid
-          && !(resource.data.status in ['collected', 'cancelled'])
-          // Field tampering lock: Students CANNOT alter total, items, student ID, token, or pin code
-          && request.resource.data.totalAmount == resource.data.totalAmount
-          && request.resource.data.items == resource.data.items
-          && request.resource.data.studentId == resource.data.studentId
-          && (!('tokenNumber' in resource.data) || request.resource.data.tokenNumber == resource.data.tokenNumber)
-          && (!('pinCode' in resource.data) || request.resource.data.pinCode == resource.data.pinCode)
-          && (
-            // Cancellation before kitchen confirmation
-            (
-              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt', 'cancelReason', 'updatedAt'])
-              && request.resource.data.status == 'cancelled'
-              && resource.data.status in ['placed', 'payment_pending']
-            )
-            // CRITICAL SECURITY FIX (TB-VULN-FREE-ORDER): Removed student self-payment-confirmation rule.
-            // A student could previously call update({paymentStatus: 'paid'}) from the client SDK,
-            // bypassing the gateway entirely and receiving free orders.
-            // Payment status transitions are NOW strictly server-side only (Cloud Functions webhook handler).
-          )
-        )
-      );
-
-      allow delete: if false;
+      allow write: if false;
     }
 
     // ─── Cryptographic Order Secrets (Isolated from Client/Staff Reads) ──
@@ -224,10 +209,10 @@ service cloud.firestore {
     }
 
     // ─── Staff Users (RBAC Records) ─────────────────────────────
-    // Staff profiles managed via admin portal or Cloud Functions.
+    // Role assignment must synchronize claims, session revocation and audit logs.
     match /staffUsers/{userId} {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isManagerOrAdmin());
-      allow write: if isManagerOrAdmin();
+      allow write: if false;
     }
 
     // ─── Payments & Financial Records (Least-Privilege Isolation) ─
@@ -274,15 +259,8 @@ service cloud.firestore {
 
     // ─── Internal System Tables ─────────────────────────────────
     match /counters/dailyTokenCounter {
-      // SECURITY FIX (TB-VULN-TOKEN-HIJACK): Write restricted to operational staff only.
-      // Previously any authenticated student could set lastToken 100-1000, causing token collisions.
       allow read: if isAuthenticated();
-      allow write: if isOperationalStaff()
-        && request.resource.data.lastToken is number
-        && request.resource.data.lastToken >= 100
-        && request.resource.data.lastToken <= 1000
-        && request.resource.data.date is string
-        && request.resource.data.date.size() == 10;
+      allow write: if false; // Token allocation is part of server checkout.
     }
 
     match /counters/{counterId} {
@@ -313,7 +291,7 @@ service cloud.firestore {
     // ─── Registered Workstations & Hardware Binding ─────────────
     match /registeredWorkstations/{workstationId} {
       allow read: if isManagerOrAdmin();
-      allow write: if isManagerOrAdmin();
+      allow write: if false;
     }
 
     match /workstationInvites/{inviteId} {
@@ -342,13 +320,8 @@ service cloud.firestore {
     // ─── Universal Users (Platform 2.0) ──────────────────────────
     match /users/{userId} {
       allow read: if isOwner(userId) || isManagerOrAdmin();
-      allow create: if isManagerOrAdmin() || (isOwner(userId)
-        && request.resource.data.priorityLevel == 0
-        && request.resource.data.isVerified == false
-        && (!('role' in request.resource.data))
-        && (!('accountType' in request.resource.data) || request.resource.data.accountType == 'STUDENT'));
-      allow update: if isManagerOrAdmin() || (
-        isOwner(userId)
+      allow create: if false;
+      allow update: if isOwner(userId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phone', 'rollNo', 'department', 'year', 'photoURL', 'preferences', 'updatedAt'])
         && request.resource.data.displayName is string && request.resource.data.displayName.size() >= 2 && request.resource.data.displayName.size() <= 100
         && (!('rollNo' in request.resource.data) || (request.resource.data.rollNo is string && request.resource.data.rollNo.size() <= 30))
@@ -356,9 +329,8 @@ service cloud.firestore {
         && (!('department' in request.resource.data) || (request.resource.data.department is string && request.resource.data.department.size() <= 50))
         && (!('year' in request.resource.data) || (request.resource.data.year is string && request.resource.data.year.size() <= 10))
         && (!('photoURL' in request.resource.data) || (request.resource.data.photoURL is string && request.resource.data.photoURL.size() <= 500 && (request.resource.data.photoURL.matches('^https://.*') || request.resource.data.photoURL == '')))
-        && (!('preferences' in request.resource.data) || (request.resource.data.preferences is map))
-      );
-      allow delete: if isManagerOrAdmin();
+        && (!('preferences' in request.resource.data) || (request.resource.data.preferences is map));
+      allow delete: if false;
 
       // User Order Notifications (Read-only to owner, writes strictly Admin SDK / Cloud Functions)
       match /notifications/{notificationId} {
@@ -390,8 +362,7 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         resource.data.userId == request.auth.uid || isManagerOrAdmin()
       );
-      allow create: if isAuthenticated();
-      allow update, delete: if isManagerOrAdmin();
+      allow write: if false;
     }
 
 
@@ -415,7 +386,7 @@ service cloud.firestore {
     // ─── Workstation Shift PINs ───────────────────────────────────
     match /shiftPins/{pinId} {
       allow read: if isManagerOrAdmin();
-      allow write: if isManagerOrAdmin();
+      allow write: if false;
     }
 
     // ─── Step-Up Emergency Sessions ──────────────────────────────
@@ -440,7 +411,7 @@ service cloud.firestore {
     // ─── TV Ephemeral Public Projection (Single Document Isolation) ─
     match /publicLiveQueue/current {
       allow read: if true;
-      allow write: if isOperationalStaff();
+      allow write: if false;
     }
 
     match /publicLiveQueue/{otherDoc} {
@@ -448,15 +419,46 @@ service cloud.firestore {
     }
 
     // ─── Daily Menu Board & Canteen Specials ──────────────────────
+    // Display/bread-choice configuration is the sole staff-written board API.
+    // It cannot be used to create arbitrary config, price or stock records.
+    function validBoardText(data, field, maximum) {
+      let value = data.get(field, '');
+      return value is string && value.size() <= maximum;
+    }
+
+    function validDailyBoard() {
+      let data = request.resource.data;
+      let author = data.get('updatedBy', request.auth.uid);
+      // Missing optional fields keep their old meaning. Using get() defaults
+      // avoids repeated presence tests and request.resource traversals while
+      // retaining every type/length/author check for fields actually supplied.
+      return data.keys().hasOnly([
+          'date', 'dayOfWeek', 'sabji1', 'sabji2', 'dalOfTheDay', 'sweetOfTheDay',
+          'riceType', 'canteenSpecial', 'specialBadge', 'rotiAvailable', 'puriAvailable',
+          'announcement', 'isRushHour', 'updatedAt', 'updatedBy'
+        ])
+        && validBoardText(data, 'date', 10) && validBoardText(data, 'dayOfWeek', 10)
+        && validBoardText(data, 'sabji1', 200) && validBoardText(data, 'sabji2', 200)
+        && validBoardText(data, 'dalOfTheDay', 200) && validBoardText(data, 'sweetOfTheDay', 200)
+        && validBoardText(data, 'riceType', 200) && validBoardText(data, 'canteenSpecial', 200)
+        && validBoardText(data, 'specialBadge', 100) && validBoardText(data, 'announcement', 1000)
+        && data.get('rotiAvailable', false) is bool
+        && data.get('puriAvailable', false) is bool
+        && data.get('isRushHour', false) is bool
+        && data.get('updatedAt', request.time) is timestamp
+        && (author == request.auth.uid
+          || (resource != null && 'updatedBy' in resource.data && author == resource.data.updatedBy));
+    }
+
     match /canteenConfig/{configId} {
       allow read: if true;
-      allow create, update: if isOperationalStaff();
+      allow create, update: if configId == 'dailyMenuBoard' && isOperationalStaff() && validDailyBoard();
       allow delete: if false; // Deletion strictly forbidden to prevent checkout outages
     }
 
     match /dailyBoard/{docId} {
       allow read: if true;
-      allow create, update: if isOperationalStaff();
+      allow create, update: if docId == 'today' && isOperationalStaff() && validDailyBoard();
       allow delete: if false; // Deletion strictly forbidden to prevent kitchen outages
     }
 

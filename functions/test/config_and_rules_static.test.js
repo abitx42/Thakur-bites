@@ -47,14 +47,15 @@ describe('Phase 8: Static Configuration & Rules File Inspection', () => {
     });
   });
 
-  it('3. Emulator Routing Invariant in Web Client: Routes to local functions emulator in dev', () => {
+  it('3. Emulator Routing Invariant in Web Client: Explicit SDK routing never overrides the browser origin', () => {
     const firebaseJsPath = path.resolve(__dirname, '../../js/firebase.js');
     assert.ok(fs.existsSync(firebaseJsPath), 'js/firebase.js exists');
     const content = fs.readFileSync(firebaseJsPath, 'utf8');
 
     // Verifies local dev emulator host detection
     assert.ok(content.includes('isLocalDev'), 'Must detect local development host');
-    assert.ok(content.includes('functions.emulatorOrigin'), 'Must route functions to emulator origin on localhost');
+    assert.ok(content.includes('connectFunctionsEmulator(functions, emulatorConfig.host, emulatorConfig.port)'), 'Use supported SDK routing only for explicit local configuration');
+    assert.ok(!content.includes('functions.emulatorOrigin'), 'Never send function credentials to the static browser origin');
   });
 
   it('4. Admin SDK Root Authority vs Client Lockdown Invariant', () => {

@@ -1,12 +1,12 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { UserRole } from './types';
 import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { enforceRateLimit } from './rate_limiter';
 import { assertCapability } from './authorization_policy';
 import { assertNoHoneytokens } from './honeypot_defense';
+import { assertCurrentStaffAuthority } from './staff_authority';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -158,7 +158,7 @@ export const updateAppVersionPolicy = onCall<UpdateVersionPolicyRequest>(async (
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
-  const callerRole = (request.auth.token.role as UserRole) || 'student';
+  const callerRole = await assertCurrentStaffAuthority(request.auth.uid, request.auth.token);
   try {
     assertCapability(callerRole, 'manage_version_policy');
   } catch (err) {

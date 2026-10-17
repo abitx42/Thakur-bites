@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -11,7 +12,7 @@ import '../providers/cart_provider.dart';
 import '../services/firestore_service.dart';
 import '../services/checkout_service.dart';
 import '../services/payment_service.dart';
-import '../services/functions_service.dart';
+import '../services/preferences_service.dart';
 import '../services/error_helper.dart';
 import '../services/in_app_notification_service.dart';
 import '../theme/app_theme.dart';
@@ -786,8 +787,9 @@ class _CartSummary extends StatefulWidget {
 class _CartSummaryState extends State<_CartSummary> with WidgetsBindingObserver {
   final FirestoreService _firestore = FirestoreService();
   final CheckoutService _checkoutService = CheckoutService();
-  String? _currentIdempotencyKey;
-  app.Order? _activePendingOrder;
+  AuthProvider? _authProvider;
+  bool Function()? _checkoutIsCurrent;
+  int _checkoutVersion = 0;
   bool _isProcessing = false;
   bool _tapLocked = false;
   DateTime? _paymentStartTime;
@@ -797,11 +799,38 @@ class _CartSummaryState extends State<_CartSummary> with WidgetsBindingObserver 
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _restoreActiveOrder();
+    widget.cart.addListener(_handleCheckoutInputChange);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = context.read<AuthProvider>();
+    if (!identical(auth, _authProvider)) {
+      _authProvider?.removeListener(_handleCheckoutInputChange);
+      _authProvider = auth;
+      auth.addListener(_handleCheckoutInputChange);
+      _handleCheckoutInputChange();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _CartSummary oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.cart, widget.cart)) {
+      oldWidget.cart.removeListener(_handleCheckoutInputChange);
+      widget.cart.addListener(_handleCheckoutInputChange);
+      _handleCheckoutInputChange();
+    }
   }
 
   @override
   void dispose() {
+    ++_checkoutVersion;
+    _checkoutIsCurrent = null;
+    widget.cart.removeListener(_handleCheckoutInputChange);
+    _authProvider?.removeListener(_handleCheckoutInputChange);
+    if (_paymentStartTime != null) PaymentService.cancelActivePayment();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -819,7 +848,18 @@ class _CartSummaryState extends State<_CartSummary> with WidgetsBindingObserver 
     }
   }
 
+  void _handleCheckoutInputChange() {
+    final isCurrent = _checkoutIsCurrent;
+    if (mounted && isCurrent != null && !isCurrent()) {
+      _cancelPaymentInProgress();
+    }
+  }
+
   void _cancelPaymentInProgress() {
+    // Invalidate callbacks even when cancellation races a completed gateway or
+    // callable response. The persisted checkout key remains available for retry.
+    ++_checkoutVersion;
+    _checkoutIsCurrent = null;
     PaymentService.cancelActivePayment('Payment was cancelled by user.');
     if (mounted) {
       setState(() {
@@ -836,24 +876,100 @@ class _CartSummaryState extends State<_CartSummary> with WidgetsBindingObserver 
     }
   }
 
-  Future<void> _restoreActiveOrder() async {
+  String _checkoutFingerprint({
+    required String uid,
+    required List<CartEntry> entries,
+    required String paymentMethod,
+    String? readyMadePreference,
+    List<String>? dietaryPreferences,
+    String? dietaryNotes,
+  }) {
+    final lines = entries.map((entry) => <String, dynamic>{
+      'itemId': entry.item.id,
+      'quantity': entry.qty,
+      'customization': entry.customization?.trim() ?? '',
+    }).toList()
+      ..sort((a, b) => jsonEncode(a).compareTo(jsonEncode(b)));
+    final dietary = List<String>.of(dietaryPreferences ?? const <String>[])..sort();
+    return jsonEncode(<String, dynamic>{
+      'uid': uid,
+      'items': lines,
+      'paymentMethod': paymentMethod,
+      'readyMadePreference': readyMadePreference?.trim() ?? '',
+      'dietaryPreferences': dietary,
+      'dietaryNotes': dietaryNotes?.trim() ?? '',
+    });
+  }
+
+  String _intentStorageKey(String uid) => 'checkout_intents_v1_$uid';
+
+  Map<String, String> _savedCheckoutIntents(SharedPreferences prefs, String uid) {
+    final raw = prefs.getString(_intentStorageKey(uid));
+    if (raw == null) return <String, String>{};
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final savedOrderId = prefs.getString('active_order_id');
-      if (savedOrderId != null && savedOrderId.isNotEmpty) {
-        final snap = await FirebaseFirestore.instance.collection('orders').doc(savedOrderId).get();
-        if (snap.exists && mounted) {
-          final order = app.Order.fromFirestore(snap.id, snap.data() ?? {});
-          if (order.isPaymentPending && !order.isCancelled) {
-            setState(() {
-              _activePendingOrder = order;
-            });
-          } else {
-            await prefs.remove('active_order_id');
-          }
-        }
+      final intents = Map<String, String>.from(jsonDecode(raw) as Map);
+      if (intents.values.any((key) => !RegExp(r'^[a-f0-9]{32}$').hasMatch(key))) {
+        throw const FormatException('Invalid checkout recovery key.');
       }
-    } catch (_) {}
+      return intents;
+    } catch (_) {
+      // Discarding a damaged recovery record could create a duplicate order.
+      throw const CheckoutException('Unable to recover your saved checkout. Check your existing orders before starting another.');
+    }
+  }
+
+  Future<void> _forgetCheckoutIntent(
+    String uid, String fingerprint, String idempotencyKey, bool Function() isCurrent,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!isCurrent()) return;
+    final intents = _savedCheckoutIntents(prefs, uid);
+    if (intents[fingerprint] != idempotencyKey) return;
+    intents.remove(fingerprint);
+    if (!await prefs.setString(_intentStorageKey(uid), jsonEncode(intents))) {
+      throw const CheckoutException('Unable to finish saving your checkout. Your order is retained; please retry.');
+    }
+  }
+
+  Future<app.Order> _readAuthoritativeOrder(app.Order receipt, String uid, String idempotencyKey) async {
+    final snap = await FirebaseFirestore.instance.collection('orders').doc(receipt.id)
+        .get(const GetOptions(source: Source.server));
+    final data = snap.data();
+    if (!snap.exists || data == null || snap.metadata.isFromCache || snap.metadata.hasPendingWrites
+        || data['studentId'] != uid || data['idempotencyKey'] != idempotencyKey
+        || data['tokenNumber'] is! String || (data['tokenNumber'] as String).isEmpty
+        || data['status'] is! String || (data['status'] as String).isEmpty
+        || data['paymentStatus'] is! String || (data['paymentStatus'] as String).isEmpty
+        || data['paymentMethod'] != receipt.paymentMethod
+        || data['totalAmountPaise'] is! int || (data['totalAmountPaise'] as int) < 0
+        || data['totalAmountPaise'] != receipt.totalAmountPaise
+        || data['createdAt'] is! Timestamp || data['items'] is! List || (data['items'] as List).isEmpty) {
+      throw const CheckoutException('The server has not confirmed a complete order receipt. Keep this checkout and retry.');
+    }
+    final saved = app.Order.fromFirestore(snap.id, data);
+    // Pickup credentials are delivered separately from the canonical order.
+    // Preserve only that server-issued secret, never override payment/status.
+    final prefs = await SharedPreferences.getInstance();
+    return saved.copyWith(
+      pinCode: saved.pinCode.isNotEmpty ? saved.pinCode
+          : (receipt.pinCode.isNotEmpty ? receipt.pinCode : (prefs.getString('order_pin_${saved.id}') ?? '')),
+      totalAmount: (data['totalAmountPaise'] as int) / 100.0,
+    );
+  }
+
+  Future<void> _rememberActiveOrder(app.Order order, bool Function() isCurrent) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!isCurrent()) return;
+    final list = prefs.getStringList('active_order_ids') ?? <String>[];
+    if (!list.contains(order.id)) {
+      list.insert(0, order.id);
+      if (list.length > 10) list.removeLast();
+      await prefs.setStringList('active_order_ids', list);
+      if (!isCurrent()) return;
+    }
+    await prefs.setString('active_order_id', order.id);
+    if (!isCurrent()) return;
+    if (order.pinCode.isNotEmpty) await prefs.setString('order_pin_${order.id}', order.pinCode);
   }
 
   Future<void> _handleConfirmAndPay() async {
@@ -861,9 +977,10 @@ class _CartSummaryState extends State<_CartSummary> with WidgetsBindingObserver 
     _tapLocked = true;
     final cart = widget.cart;
     final authProvider = context.read<AuthProvider>();
+    final student = authProvider.currentProfile;
 
     // If browsing as guest or unauthenticated, prompt to sign in before checkout
-    if (!authProvider.isLoggedIn || authProvider.currentProfile == null || authProvider.isGuest) {
+    if (!authProvider.isLoggedIn || student == null || authProvider.isGuest) {
       _tapLocked = false;
       LoginSheet.show(context);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -877,266 +994,206 @@ class _CartSummaryState extends State<_CartSummary> with WidgetsBindingObserver 
       return;
     }
 
-    // 1. If cart has items that went completely unavailable, prompt to clean
-    if (cart.hasOutOfStockItems) {
+    if (cart.isEmpty) {
       _tapLocked = false;
-      _showOutOfStockAlert(cart.outOfStockEntries);
       return;
     }
 
+    final attempt = ++_checkoutVersion;
+    final uid = student.uid;
+    final entries = cart.entries.map((entry) => CartEntry(
+      item: entry.item, qty: entry.qty, customization: entry.customization,
+    )).toList();
+    final paymentMethod = _selectedPaymentMethod;
+    final readyMadePreference = cart.isOnlyReadyMade ? cart.readyMadePreferenceSummary : null;
+    List<String>? dietaryPreferences;
+    String? dietaryNotes;
+    String currentFingerprint() => _checkoutFingerprint(
+      uid: uid, entries: cart.entries, paymentMethod: _selectedPaymentMethod,
+      readyMadePreference: cart.isOnlyReadyMade ? cart.readyMadePreferenceSummary : null,
+      dietaryPreferences: dietaryPreferences, dietaryNotes: dietaryNotes,
+    );
+    var fingerprint = currentFingerprint();
+    bool isCurrent() => mounted && attempt == _checkoutVersion
+        && authProvider.isLoggedIn && authProvider.currentProfile?.uid == uid
+        && fingerprint == currentFingerprint();
+    _checkoutIsCurrent = isCurrent;
+    app.Order? knownOrder;
     setState(() => _isProcessing = true);
     HapticFeedback.mediumImpact();
 
     try {
-      // ──────────────────────────────────────────────────────────────
-      // 2. ATOMIC STOCK CHECK — Backend is the single source of truth.
-      //    First student to reach this point and pass wins the stock.
-      // ──────────────────────────────────────────────────────────────
-      final stockIssues = await _firestore.verifyItemsStockQuantity(cart.entries);
+      final preferences = await PreferencesService().getPreferences(uid);
+      if (!isCurrent()) return;
+      dietaryPreferences = List<String>.unmodifiable(preferences.dietary.labels);
+      dietaryNotes = preferences.dietary.customNotes.trim();
+      fingerprint = currentFingerprint();
+      final prefs = await SharedPreferences.getInstance();
+      if (!isCurrent()) return;
+      final intents = _savedCheckoutIntents(prefs, uid);
+      // A replay may own the very stock that now appears unavailable locally.
+      // Only a genuinely new intent uses the existing unavailable-items prompt;
+      // inventory quantities and reservations are always checked by the backend.
+      if (intents[fingerprint] == null && cart.hasOutOfStockItems) {
+        _showOutOfStockAlert(cart.outOfStockEntries);
+        return;
+      }
+      final idempotencyKey = intents[fingerprint] ?? generateIdempotencyKey();
+      intents[fingerprint] = idempotencyKey;
+      // Persist BEFORE sending the request. Lost replies, widget disposal and
+      // app restarts all replay this key instead of creating another order.
+      if (!await prefs.setString(_intentStorageKey(uid), jsonEncode(intents))) {
+        throw const CheckoutException('Unable to save checkout recovery. Please retry before placing your order.');
+      }
+      if (!isCurrent()) return;
+      var order = await _checkoutService.createCheckout(
+        idempotencyKey: idempotencyKey,
+        entries: entries,
+        paymentMethod: paymentMethod,
+        readyMadePreference: readyMadePreference,
+        dietaryPreferences: dietaryPreferences,
+        dietaryNotes: dietaryNotes,
+        student: student,
+      );
+      if (!isCurrent()) return;
+      knownOrder = order;
+      order = await _readAuthoritativeOrder(order, uid, idempotencyKey);
+      if (!isCurrent()) return;
+      knownOrder = order;
+      if (order.isCancelled || order.paymentStatus == 'expired') {
+        // A server-confirmed terminal order may be replaced on the next tap.
+        // Uncertain network/payment failures never retire the recovery key.
+        await _forgetCheckoutIntent(uid, fingerprint, idempotencyKey, isCurrent);
+        if (!isCurrent()) return;
+        throw const CheckoutException('This checkout was closed by the server. Retry to start a new order.');
+      }
+      await _rememberActiveOrder(order, isCurrent);
+      if (!isCurrent()) return;
 
-      if (stockIssues.isNotEmpty) {
-        // Cap cart quantities to what's actually available
-        for (final entry in stockIssues.entries) {
-          cart.capItemQuantity(entry.key, entry.value);
+      if (order.isCounterCash && !order.isPaid) {
+        if (!order.isPaymentPending || order.isReservationExpired) {
+          throw const PaymentException('Your reservation is not awaiting counter payment. Check the existing order.');
         }
-
-        setState(() => _isProcessing = false);
-        _tapLocked = false;
-
-        if (mounted) {
-          _showStockLimitedAlert(stockIssues);
-        }
+        await _forgetCheckoutIntent(uid, fingerprint, idempotencyKey, isCurrent);
+        if (!mounted) return;
+        if (!isCurrent()) return;
+        _checkoutIsCurrent = null;
+        cart.clear();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Order reserved. Payment is pending at the counter.'),
+        ));
+        Navigator.of(context).pushReplacement(MaterialPageRoute(
+          builder: (_) => OrderStatusScreen(order: order),
+        ));
         return;
       }
 
-      // ──────────────────────────────────────────────────────────────
-      // 3. TRUSTED CHECKOUT & INVENTORY RESERVATION ENGINE
-      //    Reuse existing pending order session on payment retry to prevent
-      //    creating duplicate orphaned orders in Firestore.
-      // ──────────────────────────────────────────────────────────────
-      app.Order order;
-      final student = authProvider.currentStudent;
-
-      bool canReuseOrder = false;
-      if (_activePendingOrder != null &&
-          !_activePendingOrder!.isCancelled &&
-          _activePendingOrder!.totalAmount == cart.totalPrice &&
-          _activePendingOrder!.items.length == cart.entries.length) {
-        canReuseOrder = true;
-        for (final entry in cart.entries) {
-          final matched = _activePendingOrder!.items.any((i) =>
-              i.itemId == entry.item.id &&
-              i.quantity == entry.qty &&
-              (i.customization ?? '') == (entry.customization ?? ''));
-          if (!matched) {
-            canReuseOrder = false;
-            break;
-          }
+      // Never re-charge a server-paid replay, launch Razorpay for counter cash,
+      // or manufacture a successful free-order payment.
+      if (!order.isPaid && order.isOnlinePayment && order.totalAmount > 0) {
+        if (!order.isPaymentPending || order.isReservationExpired) {
+          throw const PaymentException('Your payment reservation is no longer active. Check the existing order.');
         }
-      }
-
-      if (canReuseOrder) {
-        // Reuse current pending order session
-        order = _activePendingOrder!;
-      } else {
-        // Cancel prior pending order if cart items or totals changed (TB-R2-004 & TB-BUG-05)
-        if (_activePendingOrder != null) {
-          final oldOrderId = _activePendingOrder!.id;
-          _activePendingOrder = null;
-          // Guard: Verify order is not captured/paid before issuing cancellation
-          FirebaseFirestore.instance.collection('orders').doc(oldOrderId).get().then((snap) {
-            if (snap.exists) {
-              final status = snap.data()?['paymentStatus'];
-              if (status != 'paid' && status != 'captured') {
-                FunctionsService().cancelOrder(orderId: oldOrderId, reason: 'Cart modified before payment retry')
-                    .catchError((_) => <String, dynamic>{});
-              }
-            }
-          }).catchError((_) {});
-        }
-
-        // Explicitly clear old idempotency key so retry generates fresh session
-        _currentIdempotencyKey = null;
-        _currentIdempotencyKey = generateIdempotencyKey();
-
-        order = await _checkoutService.createCheckout(
-          idempotencyKey: _currentIdempotencyKey!,
-          entries: cart.entries,
-          paymentMethod: _selectedPaymentMethod,
-          readyMadePreference: cart.isOnlyReadyMade ? cart.readyMadePreferenceSummary : null,
-          dietaryPreferences: null,
-          dietaryNotes: null,
-          student: student,
+        _paymentStartTime = DateTime.now();
+        final paymentService = PaymentService();
+        final payRes = await paymentService.initiateOnlinePayment(
+          orderId: order.id,
+          totalAmountRs: order.totalAmount,
+          studentName: student.displayName,
+          studentEmail: student.email,
         );
-        _activePendingOrder = order;
-      }
-
-      if (student != null) {
-        authProvider.incrementOrderCount();
-      }
-
-      // Persist active_order_id and active_order_ids in SharedPreferences for crash/kill recovery
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        final list = prefs.getStringList('active_order_ids') ?? <String>[];
-        if (!list.contains(order.id)) {
-          list.insert(0, order.id);
-          if (list.length > 10) list.removeLast();
-          await prefs.setStringList('active_order_ids', list);
+        if (!isCurrent()) return;
+        if (!payRes.isSuccess || payRes.orderId != order.id) {
+          throw PaymentException(payRes.errorMessage ?? 'The payment attempt was not confirmed.');
         }
-        await prefs.setString('active_order_id', order.id);
-      } catch (_) {}
-
-      // 4. Online Payment via Razorpay (Bypass if 100% discounted / 0 paise)
-      String effectivePaymentId = 'CASH_${order.id}';
-      _paymentStartTime = DateTime.now();
-
-      if (order.totalAmount > 0) {
+        // PaymentService's gateway result alone is not authority. Even a lost
+        // verifyPayment reply must leave this cart/key intact unless the server
+        // actually confirms paid/captured state for this exact order.
         try {
-          final paymentService = PaymentService();
-          final payRes = await paymentService.initiateOnlinePayment(
-            orderId: order.id,
-            totalAmountRs: order.totalAmount,
-            studentName: student?.displayName ?? order.studentName ?? 'Student',
-            studentEmail: student?.email ?? 'student@tcetmumbai.in',
-          );
-          effectivePaymentId = payRes.paymentId ?? 'RZP_${order.id}';
-          debugPrint('[CartScreen] Online payment verified successfully: $effectivePaymentId');
-        } on PaymentException catch (pe) {
-          // Payment dismissed, declined, or timed out.
-          // DO NOT wipe the cart! Keep items so student can retry.
-          _paymentStartTime = null;
-          setState(() => _isProcessing = false);
-          _tapLocked = false;
-          if (mounted) {
-            // Show in-app payment failed notification
-            InAppNotificationService().showPaymentFailed(
-              context: context,
-              tokenNumber: order.tokenNumber,
-              onRetry: () => _handleConfirmAndPay(),
-            );
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(pe.message),
-                backgroundColor: AppColors.red,
-                duration: const Duration(seconds: 5),
-                action: SnackBarAction(
-                  label: 'View Order',
-                  textColor: Colors.white,
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => OrderStatusScreen(order: order),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            );
-          }
-          return;
+          order = await _readAuthoritativeOrder(order, uid, idempotencyKey);
+        } catch (_) {
+          throw const PaymentException('Payment confirmation is unavailable. Check this existing order before paying again.');
         }
-      } else {
-        effectivePaymentId = 'FREE_${order.id}';
+        if (!isCurrent()) return;
+        knownOrder = order;
       }
 
-      // CRITICAL: Persist confirmed state directly to Firestore /orders/{orderId} with retry
-      for (int updAttempt = 0; updAttempt < 3; updAttempt++) {
-        try {
-          await FirebaseFirestore.instance.collection('orders').doc(order.id).update({
-            'status': 'confirmed',
-            'paymentStatus': 'paid',
-            'paymentId': effectivePaymentId,
-            'paidAt': FieldValue.serverTimestamp(),
-            'confirmedAt': FieldValue.serverTimestamp(),
-          });
-          break;
-        } catch (dbErr) {
-          debugPrint('[CartScreen] Order confirmation attempt $updAttempt notice: $dbErr');
-          if (updAttempt < 2) {
-            await Future.delayed(Duration(milliseconds: 250 * (updAttempt + 1)));
-          }
-        }
+      if (!order.isPaid || !const ['confirmed', 'placed', 'preparing', 'ready', 'collected'].contains(order.status)) {
+        throw const PaymentException('Payment has not been confirmed by the server. Check the existing order before retrying payment.');
       }
-
-      // Store payment ID and keep active_order_id in SharedPreferences for recovery
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('last_payment_id_${order.id}', effectivePaymentId);
-        final list = prefs.getStringList('active_order_ids') ?? <String>[];
-        if (!list.contains(order.id)) {
-          list.insert(0, order.id);
-          if (list.length > 10) list.removeLast();
-          await prefs.setStringList('active_order_ids', list);
-        }
-        await prefs.setString('active_order_id', order.id);
-      } catch (_) {}
-
+      await _forgetCheckoutIntent(uid, fingerprint, idempotencyKey, isCurrent);
+      if (!mounted) return;
+      if (!isCurrent()) return;
       _paymentStartTime = null;
-
-      // 5. Payment verified — clear pending session, clear cart & show ticket
-      _activePendingOrder = null;
-      _currentIdempotencyKey = null;
-      _tapLocked = false;
+      _checkoutIsCurrent = null;
       cart.clear();
-
-      final confirmedOrder = order.copyWith(
-        status: 'confirmed',
-        paymentStatus: 'paid',
+      final navigator = Navigator.of(context);
+      InAppNotificationService().showOrderPlaced(
+        context: context,
+        tokenNumber: order.tokenNumber,
+        onTrack: () {
+          if (navigator.mounted && authProvider.currentProfile?.uid == uid) {
+            navigator.push(MaterialPageRoute(
+              builder: (_) => OrderStatusScreen(orderId: order.id, order: order),
+            ));
+          }
+        },
       );
-
-      if (mounted) {
-        // Fire "Track Here" notification — visible when user returns to menu
-        InAppNotificationService().showOrderPlaced(
+      navigator.pushReplacement(MaterialPageRoute(
+        builder: (_) => TicketScreen(order: order),
+      ));
+    } on PaymentException catch (e) {
+      if (!mounted) return;
+      if (!isCurrent()) return;
+      final pendingOrder = knownOrder;
+      if (pendingOrder != null) {
+        InAppNotificationService().showPaymentFailed(
           context: context,
-          tokenNumber: confirmedOrder.tokenNumber,
-          onTrack: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => OrderStatusScreen(orderId: confirmedOrder.id, order: confirmedOrder),
-              ),
-            );
+          tokenNumber: pendingOrder.tokenNumber,
+          onRetry: () {
+            if (mounted && authProvider.currentProfile?.uid == uid) _handleConfirmAndPay();
           },
         );
-
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => TicketScreen(order: confirmedOrder),
-          ),
-        );
       }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(e.message),
+        backgroundColor: AppColors.red,
+        duration: const Duration(seconds: 5),
+        action: pendingOrder == null ? null : SnackBarAction(
+          label: 'View Order',
+          textColor: Colors.white,
+          onPressed: () {
+            if (mounted && authProvider.currentProfile?.uid == uid) {
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => OrderStatusScreen(order: pendingOrder),
+              ));
+            }
+          },
+        ),
+      ));
     } on CanteenPausedException catch (e) {
-      _paymentStartTime = null;
-      setState(() => _isProcessing = false);
-      _tapLocked = false;
-      if (mounted) {
-        showCanteenStatusSheet(
-          context,
-          CanteenOperationalStatus(mode: e.mode ?? 'DEGRADED', orderingAvailable: false),
-          customMessage: e.message,
-        );
-      }
+      if (!mounted) return;
+      if (!isCurrent()) return;
+      showCanteenStatusSheet(
+        context,
+        CanteenOperationalStatus(mode: e.mode ?? 'DEGRADED', orderingAvailable: false),
+        customMessage: e.message,
+      );
     } on InsufficientStockException catch (e) {
-      _paymentStartTime = null;
-      setState(() => _isProcessing = false);
-      _tapLocked = false;
+      if (!mounted) return;
+      if (!isCurrent()) return;
+      // This intentional cart edit ends the attempt, not the persisted intent.
+      _checkoutIsCurrent = null;
       cart.capItemQuantity(e.itemId, e.availableStock);
-      if (mounted) {
-        _showStockLimitedAlert({e.itemId: e.availableStock});
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString()),
-            backgroundColor: AppColors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
-      }
+      _showStockLimitedAlert({e.itemId: e.availableStock});
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(e.toString()),
+        backgroundColor: AppColors.red,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ));
     } catch (e) {
-      _paymentStartTime = null;
-      setState(() => _isProcessing = false);
-      _tapLocked = false;
+      if (!isCurrent()) return;
       final errStr = e.toString().toLowerCase();
       // Intercept local network and connectivity dropouts
       if (errStr.contains('socket') ||
@@ -1159,8 +1216,6 @@ class _CartSummaryState extends State<_CartSummary> with WidgetsBindingObserver 
       }
       if (errStr.contains('paused') ||
           errStr.contains('degraded') ||
-          errStr.contains('counter') ||
-          errStr.contains('closed') ||
           errStr.contains('halt')) {
         if (mounted) {
           showCanteenStatusSheet(
@@ -1183,6 +1238,15 @@ class _CartSummaryState extends State<_CartSummary> with WidgetsBindingObserver 
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         );
+      }
+    } finally {
+      if (mounted && attempt == _checkoutVersion) {
+        _checkoutIsCurrent = null;
+        setState(() {
+          _isProcessing = false;
+          _tapLocked = false;
+          _paymentStartTime = null;
+        });
       }
     }
   }

@@ -9,135 +9,202 @@ import '../services/preferences_service.dart';
 /// Backed by Platform 2.0 Universal Identity Model.
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService;
+  final PreferencesService _preferences;
   StreamSubscription<User?>? _authSub;
 
   UserProfile? _currentUserProfile;
   bool _isLoading = true;
   bool _isGuestBrowsing = false;
-  bool _signOutExplicit = false;
+  bool _signingOut = false;
+  bool _disposed = false;
+  int _stateVersion = 0;
+  int _actionVersion = 0;
   String? _errorMessage;
 
-  UserProfile? get currentProfile => _currentUserProfile;
-  /// Backward-compatibility alias for currentProfile
-  UserProfile? get currentStudent => _currentUserProfile;
+  UserProfile? get currentProfile {
+    if (_disposed) return null;
+    if (_isGuestBrowsing) return _currentUserProfile;
+    return _currentUserProfile?.uid == _authService.currentUser?.uid
+        ? _currentUserProfile
+        : null;
+  }
 
-  bool get isLoggedIn => _currentUserProfile != null && !isGuest;
+  /// Backward-compatibility alias for currentProfile
+  UserProfile? get currentStudent => currentProfile;
+
+  bool get isLoggedIn => currentProfile != null && !isGuest;
   bool get isGuest =>
-      _currentUserProfile == null ||
+      currentProfile == null ||
       _isGuestBrowsing ||
-      (_authService.currentUser?.isAnonymous ?? false);
-  bool get isVerified => _currentUserProfile?.isVerified ?? false;
+      (_authService.currentUser?.isAnonymous ?? true);
+  bool get isVerified => isLoggedIn && (currentProfile?.isVerified ?? false);
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
   AccountType get accountType =>
-      _currentUserProfile?.accountType ?? AccountType.visitor;
+      currentProfile?.accountType ?? AccountType.visitor;
   VerificationStatus get verificationStatus =>
-      _currentUserProfile?.verificationStatus ?? VerificationStatus.notRequired;
+      currentProfile?.verificationStatus ?? VerificationStatus.notRequired;
   bool get hasPriorityAccess =>
-      _currentUserProfile?.hasPriorityAccess ?? false;
+      isLoggedIn && (currentProfile?.hasPriorityAccess ?? false);
 
-  AuthProvider({AuthService? authService})
-      : _authService = authService ?? AuthService() {
+  AuthProvider({AuthService? authService, PreferencesService? preferencesService})
+      : _authService = authService ?? AuthService(),
+        _preferences = preferencesService ?? PreferencesService() {
     _init();
   }
 
-  Future<void> _init() async {
-    _isLoading = true;
-    notifyListeners();
+  void _init() {
+    // Subscribe before awaiting redirects or provisioning, so a null/switch
+    // event invalidates every in-flight profile read immediately.
+    _authSub = _authService.authStateChanges.listen(
+      (user) => unawaited(_loadProfile(user)),
+      onError: (Object error) {
+        if (_disposed) return;
+        ++_stateVersion;
+        _failProfile(error);
+      },
+    );
+    unawaited(_completeRedirect());
+  }
 
-    try {
-      // 1. Instantly restore cached profile from disk (0ms cold start, offline resilient)
-      final cachedProfile = await _authService.getCachedProfile();
-      final firebaseUser = _authService.currentUser;
-      if (cachedProfile != null && (firebaseUser == null || firebaseUser.uid == cachedProfile.uid)) {
-        _currentUserProfile = cachedProfile;
-        _isGuestBrowsing = false;
-        _isLoading = false;
-        notifyListeners();
-      }
+  bool _isCurrent(int version, String uid) =>
+      !_disposed &&
+      !_signingOut &&
+      version == _stateVersion &&
+      _authService.currentUser?.uid == uid;
 
-      final redirectProfile = await _authService.checkRedirectResult();
-      if (redirectProfile != null) {
-        _currentUserProfile = redirectProfile;
-        _isGuestBrowsing = false;
-        await _authService.saveCachedProfile(redirectProfile);
-      } else {
-        final user = _authService.currentUser;
-        if (user != null) {
-          final liveProfile = await _authService.getUserProfile(user.uid);
-          if (liveProfile != null) {
-            _currentUserProfile = liveProfile;
-            _isGuestBrowsing = false;
-            await _authService.saveCachedProfile(liveProfile);
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('[AuthProvider] Error initializing auth state: $e');
-    } finally {
-      _isLoading = false;
-      if (_currentUserProfile != null && !_isGuestBrowsing) {
-        PreferencesService().initFavourites(_currentUserProfile!.uid);
-      }
-      notifyListeners();
+  void _notifyIfActive() {
+    if (!_disposed) notifyListeners();
+  }
+
+  void _clearIdentity() {
+    _currentUserProfile = null;
+    _isGuestBrowsing = false;
+    _preferences.clearCache();
+    unawaited(_authService.clearCachedProfile().catchError((Object _) {}));
+  }
+
+  void _failProfile(Object error) {
+    _clearIdentity();
+    _errorMessage = error.toString().replaceFirst('Exception:', '').trim();
+    _isLoading = false;
+    _notifyIfActive();
+  }
+
+  void _publishProfile(UserProfile? profile, String uid) {
+    if (_disposed || _signingOut || _authService.currentUser?.uid != uid || profile == null) {
+      throw const ProfileProvisioningException('Your sign-in changed. Please retry profile setup.');
     }
+    if (profile.uid != uid || profile.accountDisabled) {
+      throw const ProfileProvisioningException('Your server profile is unavailable. Please sign in again.');
+    }
+    _currentUserProfile = profile;
+    _isGuestBrowsing = false;
+    _errorMessage = null;
+    _preferences.initFavourites(uid);
+  }
 
-    _authSub = _authService.authStateChanges.listen((user) async {
-      if (user == null) {
-        // Only wipe session if the user explicitly signed out.
-        // On cold start or transient Firebase Auth delays, authStateChanges
-        // may fire null before credential restoration completes — ignore it.
-        if (_signOutExplicit) {
-          _currentUserProfile = null;
-          _isGuestBrowsing = false;
-          await _authService.clearCachedProfile();
-          _signOutExplicit = false;
-        }
-      } else {
-        _isGuestBrowsing = false;
-        try {
-          final profile = await _authService.getUserProfile(user.uid);
-          if (profile != null) {
-            _currentUserProfile = profile;
-            await _authService.saveCachedProfile(profile);
-          }
-        } catch (e) {
-          debugPrint('[AuthProvider] Error fetching profile on auth change: $e');
-        }
+  Future<bool> _loadProfile(User? user) async {
+    if (_disposed) return false;
+    final version = ++_stateVersion;
+    _clearIdentity();
+    _errorMessage = null;
+    _isLoading = user != null;
+    _notifyIfActive();
+    if (user == null || _signingOut) return false;
+    try {
+      final profile = await _authService.getUserProfile(user.uid);
+      if (!_isCurrent(version, user.uid)) return false;
+      _publishProfile(profile, user.uid);
+      return true;
+    } catch (e) {
+      if (_isCurrent(version, user.uid)) _failProfile(e);
+      return false;
+    } finally {
+      if (_isCurrent(version, user.uid)) {
+        _isLoading = false;
+        _notifyIfActive();
       }
-      notifyListeners();
-    });
+    }
+  }
+
+  /// Complete a possible web redirect without letting an old result replace a
+  /// newer auth event. Cached display profiles never establish a session.
+  Future<void> _completeRedirect() async {
+    final version = _stateVersion;
+    try {
+      await _authService.checkRedirectResult();
+      if (_disposed || version != _stateVersion) return;
+      await _loadProfile(_authService.currentUser);
+    } catch (e) {
+      if (!_disposed && version == _stateVersion) {
+        ++_stateVersion;
+        _failProfile(e);
+      }
+    }
   }
 
   /// Sign In with Google (Google Identity Platform)
   Future<void> signInWithGoogle() async {
+    if (_disposed) throw StateError('Authentication provider has been disposed.');
+    final action = ++_actionVersion;
+    final version = ++_stateVersion;
+    _signingOut = false;
+    _clearIdentity();
     _isLoading = true;
-    _isGuestBrowsing = false;
     _errorMessage = null;
-    notifyListeners();
-
+    _notifyIfActive();
     try {
-      _currentUserProfile = await _authService.signInWithGoogle();
-      if (_currentUserProfile != null) {
-        PreferencesService().initFavourites(_currentUserProfile!.uid);
+      final profile = await _authService.signInWithGoogle();
+      if (_disposed || action != _actionVersion || _authService.currentUser?.uid != profile.uid) {
+        throw const ProfileProvisioningException('Your sign-in changed. Please sign in again.');
+      }
+      // The auth listener may already have published a server-verified profile.
+      // Otherwise do a guarded server read, never publish this async result directly.
+      if (currentProfile?.uid != profile.uid || _isLoading) {
+        await retryProfile();
+      }
+      if (_disposed || action != _actionVersion || currentProfile?.uid != profile.uid || !isLoggedIn) {
+        throw const ProfileProvisioningException('Profile setup was not confirmed. Please retry.');
       }
     } catch (e) {
-      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
+      if (!_disposed && action == _actionVersion && version == _stateVersion) {
+        _failProfile(e);
+      }
       rethrow;
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (!_disposed && action == _actionVersion && version == _stateVersion) {
+        _isLoading = false;
+        _notifyIfActive();
+      }
+    }
+  }
+
+  /// Retry server profile provisioning after a recoverable loading failure.
+  Future<void> retryProfile() async {
+    if (_disposed) throw StateError('Authentication provider has been disposed.');
+    final user = _authService.currentUser;
+    final loaded = await _loadProfile(user);
+    if (!loaded) {
+      throw ProfileProvisioningException(
+        _errorMessage ?? 'Your profile is not verified with the server. Please sign in or retry.',
+      );
     }
   }
 
   /// Enable instant guest browsing mode (synchronous, 0ms latency, pure client-side visitor profile)
   void enableGuestBrowsing() {
+    if (_disposed) return;
+    ++_actionVersion;
+    ++_stateVersion;
+    _signingOut = false;
+    _clearIdentity();
     _isGuestBrowsing = true;
     _currentUserProfile = UserProfile.guest();
     _errorMessage = null;
     _isLoading = false;
-    notifyListeners();
+    _notifyIfActive();
   }
 
   /// Sign in as Guest for casual browsing
@@ -145,16 +212,38 @@ class AuthProvider extends ChangeNotifier {
     enableGuestBrowsing();
   }
 
-
-
   /// Update Profile Details
   Future<void> updateProfile([UserProfile? profile]) async {
-    if (profile != null) {
-      _currentUserProfile = profile;
+    if (profile == null) return;
+    final user = _authService.currentUser;
+    if (_disposed || user == null || !isLoggedIn || profile.uid != user.uid) {
+      throw const ProfileProvisioningException('Please verify your current sign-in before updating your profile.');
+    }
+    final version = ++_stateVersion;
+    _clearIdentity();
+    _isLoading = true;
+    _errorMessage = null;
+    _notifyIfActive();
+    try {
       await _authService.updateUserProfile(profile);
-      await _authService.saveCachedProfile(profile);
-      notifyListeners();
-      return;
+      if (!_isCurrent(version, user.uid)) {
+        throw const ProfileProvisioningException('Your sign-in changed while updating your profile.');
+      }
+      final saved = await _authService.getUserProfile(user.uid);
+      if (!_isCurrent(version, user.uid)) {
+        throw const ProfileProvisioningException('Your sign-in changed while updating your profile.');
+      }
+      // Input may contain obsolete or caller-supplied classification fields.
+      // Only the post-write server profile is eligible for publication.
+      _publishProfile(saved, user.uid);
+    } catch (e) {
+      if (_isCurrent(version, user.uid)) _failProfile(e);
+      rethrow;
+    } finally {
+      if (_isCurrent(version, user.uid)) {
+        _isLoading = false;
+        _notifyIfActive();
+      }
     }
   }
 
@@ -167,64 +256,58 @@ class AuthProvider extends ChangeNotifier {
     String? rollNo,
     String? photoURL,
   }) async {
-    if (_currentUserProfile == null) return;
-
-    _isLoading = true;
-    notifyListeners();
-
-    try {
-      final updated = _currentUserProfile!.copyWith(
-        displayName: displayName ?? _currentUserProfile!.displayName,
-        phone: phone ?? _currentUserProfile!.phone,
-        department: department ?? _currentUserProfile!.department,
-        year: year ?? _currentUserProfile!.year,
-        rollNo: rollNo ?? _currentUserProfile!.rollNo,
-        photoURL: photoURL ?? _currentUserProfile!.photoURL,
-        lastLoginAt: DateTime.now(),
-      );
-
-      await _authService.updateUserProfile(updated);
-      _currentUserProfile = updated;
-      await _authService.saveCachedProfile(updated);
-    } catch (e) {
-      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
-      rethrow;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
+    final profile = currentProfile;
+    if (profile == null || !isLoggedIn) {
+      throw const ProfileProvisioningException('Please verify your current sign-in before updating your profile.');
     }
+    await updateProfile(profile.copyWith(
+      displayName: displayName ?? profile.displayName,
+      phone: phone ?? profile.phone,
+      department: department ?? profile.department,
+      year: year ?? profile.year,
+      rollNo: rollNo ?? profile.rollNo,
+      photoURL: photoURL ?? profile.photoURL,
+    ));
   }
 
-  /// Increment Order Count (Local state notification — server updates authoritative totalOrders on checkout)
+  /// Compatibility hook: counts are refreshed from the server, never incremented
+  /// locally (a replayed checkout is not a second order).
   void incrementOrderCount() {
-    if (_currentUserProfile != null) {
-      _currentUserProfile = _currentUserProfile!.copyWith(
-        totalOrders: _currentUserProfile!.totalOrders + 1,
-      );
-      notifyListeners();
-    }
+    if (_disposed) return;
+    unawaited(retryProfile().catchError((Object _) {}));
   }
 
   /// Sign Out
   Future<void> signOut() async {
+    if (_disposed) return;
+    final action = ++_actionVersion;
+    ++_stateVersion;
+    _signingOut = true;
+    _clearIdentity();
     _isLoading = true;
-    notifyListeners();
-
+    _errorMessage = null;
+    _notifyIfActive();
     try {
-      _signOutExplicit = true;
       await _authService.signOut();
-      _currentUserProfile = null;
-      _isGuestBrowsing = false;
-      _errorMessage = null;
-      PreferencesService().clearCache();
+    } catch (e) {
+      if (!_disposed && action == _actionVersion) _failProfile(e);
+      rethrow;
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (!_disposed && action == _actionVersion) {
+        ++_stateVersion;
+        _signingOut = false;
+        _clearIdentity();
+        _isLoading = false;
+        _notifyIfActive();
+      }
     }
   }
 
   @override
   void dispose() {
+    _disposed = true;
+    ++_stateVersion;
+    ++_actionVersion;
     _authSub?.cancel();
     super.dispose();
   }

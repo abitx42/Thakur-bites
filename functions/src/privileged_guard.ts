@@ -2,7 +2,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { logSecurityEvent } from './security_logger';
-import { PRIVILEGED_SESSION_IDLE_TIMEOUT_MS } from './mfa_totp';
+import { PRIVILEGED_SESSION_IDLE_TIMEOUT_MS, PRIVILEGED_SESSION_LIFETIME_MS } from './mfa_totp';
 
 function getDb(): admin.firestore.Firestore {
   if (!admin.apps.length) {
@@ -22,26 +22,29 @@ function getDb(): admin.firestore.Firestore {
  * - null, undefined, NaN -> returns 0
  */
 export function normalizeTimestampToMillis(ts: any): number {
-  if (!ts) return 0;
-  if (typeof ts === 'number') {
-    if (!Number.isFinite(ts) || ts <= 0) return 0;
-    // Numbers below 1e11 represent epoch seconds (e.g. 1.7e9 vs 1.7e12)
-    return ts < 1e11 ? Math.round(ts * 1000) : Math.round(ts);
+  try {
+    if (ts === null || ts === undefined) return 0;
+    let millis: unknown;
+    if (typeof ts === 'number') {
+      // Numbers below 1e11 represent epoch seconds (e.g. 1.7e9 vs 1.7e12).
+      millis = ts < 1e11 ? Math.round(ts * 1000) : Math.round(ts);
+    } else if (typeof ts.toMillis === 'function') {
+      millis = ts.toMillis();
+    } else if (ts instanceof Date) {
+      millis = ts.getTime();
+    } else if (typeof ts._seconds === 'number') {
+      const nanos = ts._nanoseconds === undefined ? 0 : ts._nanoseconds;
+      if (!Number.isSafeInteger(ts._seconds) || !Number.isInteger(nanos) || nanos < 0 || nanos >= 1e9) return 0;
+      millis = ts._seconds * 1000 + Math.floor(nanos / 1e6);
+    } else if (typeof ts === 'string') {
+      millis = Date.parse(ts);
+    }
+    // Invalid Date/Timestamp methods must never turn comparisons into NaN or
+    // return a coercible string. Match the JavaScript Date representable range.
+    return typeof millis === 'number' && Number.isFinite(millis) && millis > 0 && millis <= 8.64e15 ? millis : 0;
+  } catch (_) {
+    return 0;
   }
-  if (typeof ts.toMillis === 'function') {
-    return ts.toMillis();
-  }
-  if (ts instanceof Date) {
-    return ts.getTime();
-  }
-  if (typeof ts._seconds === 'number') {
-    return ts._seconds * 1000 + Math.round((ts._nanoseconds || 0) / 1e6);
-  }
-  if (typeof ts === 'string') {
-    const parsed = Date.parse(ts);
-    return isNaN(parsed) ? 0 : parsed;
-  }
-  return 0;
 }
 
 /**
@@ -51,9 +54,13 @@ export function normalizeTimestampToMillis(ts: any): number {
 export async function assertPrivilegedSession(
   userId: string,
   sessionId: string | undefined | null,
-  operation: string
+  operation: string,
+  token?: Record<string, any>
 ): Promise<{ sessionId: string; role: string }> {
-  if (!sessionId || typeof sessionId !== 'string' || !sessionId.startsWith('psess_')) {
+  if (typeof userId !== 'string' || !userId || userId.length > 128 || userId.includes('/')) {
+    throw new HttpsError('unauthenticated', 'A valid authenticated user is required.');
+  }
+  if (typeof sessionId !== 'string' || !/^psess_[A-Za-z0-9_-]{1,160}$/.test(sessionId)) {
     await logSecurityEvent({
       eventType: 'PRIVILEGED_OPERATION_BLOCKED_NO_SESSION',
       severity: 'HIGH',
@@ -68,85 +75,86 @@ export async function assertPrivilegedSession(
 
   const db = getDb();
   const sessionRef = db.collection('privilegedSessions').doc(sessionId);
-  const sessionDoc = await sessionRef.get();
-
-  if (!sessionDoc.exists) {
-    throw new HttpsError('permission-denied', 'Invalid privileged session identifier.');
-  }
-
-  const data = sessionDoc.data()!;
-  if (data.userId !== userId || data.status !== 'ACTIVE') {
-    throw new HttpsError('permission-denied', 'Privileged session does not belong to the active user or has been revoked.');
-  }
-
-  // Priority 9: Privileged role check - Demoted roles immediately lose privileged session validity
-  const privilegedRoles = ['admin', 'manager', 'developer', 'security_admin'];
-  if (!privilegedRoles.includes(data.role)) {
-    await sessionRef.update({ status: 'REVOKED', reason: 'ROLE_NOT_PRIVILEGED' }).catch(() => {});
-    throw new HttpsError('permission-denied', 'ROLE_REVOKED: User role is not authorized for privileged sessions.');
-  }
-
-  const sessionCreatedMs = normalizeTimestampToMillis(data.createdAt);
-
-  // Priority 9: Token revocation awareness via Firebase Auth tokensValidAfterTime (Normalized)
+  let authUser: admin.auth.UserRecord;
   try {
-    const authUser = await admin.auth().getUser(userId);
-    if (authUser && authUser.tokensValidAfterTime) {
-      const validAfterMs = normalizeTimestampToMillis(authUser.tokensValidAfterTime);
-      if (validAfterMs > 0 && sessionCreatedMs > 0 && sessionCreatedMs < validAfterMs) {
-        await sessionRef.update({ status: 'REVOKED', reason: 'FIREBASE_TOKENS_REVOKED' }).catch(() => {});
-        throw new HttpsError(
-          'unauthenticated',
-          'USER_TOKENS_REVOKED: User authentication tokens have been revoked. Please sign in again.'
-        );
-      }
-    }
+    authUser = await admin.auth().getUser(userId);
   } catch (err: any) {
-    if (err instanceof HttpsError) throw err;
     if (err?.code === 'auth/user-not-found') {
-      await sessionRef.update({ status: 'REVOKED', reason: 'USER_NOT_FOUND' }).catch(() => {});
       throw new HttpsError('unauthenticated', 'USER_NOT_FOUND: User account does not exist.');
     }
+    throw new HttpsError('unavailable', 'Current account authority could not be verified. Please retry.');
+  }
+  if (!authUser || authUser.uid !== userId || authUser.disabled !== false) {
+    throw new HttpsError('unauthenticated', 'User account is disabled or invalid.');
+  }
+  const currentRole = authUser.customClaims?.role;
+  // Firebase may omit this optional property when no revocation epoch exists.
+  // A present but malformed epoch is an authority failure, never "not revoked".
+  const validAfterMs = normalizeTimestampToMillis(authUser.tokensValidAfterTime);
+  if (authUser.tokensValidAfterTime !== undefined && validAfterMs === 0) {
+    throw new HttpsError('unauthenticated', 'Invalid account revocation state. Please sign in again.');
+  }
+  // Callers that have the decoded ID token can additionally reject a revoked
+  // sign-in even if MFA was attempted after that token's revocation epoch.
+  if (token !== undefined && (!Number.isSafeInteger(token.auth_time) || token.auth_time <= 0 ||
+      token.auth_time > Math.floor(Date.now() / 1000) || token.auth_time * 1000 < validAfterMs ||
+      (token.uid !== undefined && token.uid !== userId) || (token.sub !== undefined && token.sub !== userId))) {
+    throw new HttpsError('unauthenticated', 'USER_TOKENS_REVOKED: A current authenticated sign-in is required.');
   }
 
-  const now = Date.now();
-  const expiresAtMs = normalizeTimestampToMillis(data.expiresAt);
-  const lastActivityMs = normalizeTimestampToMillis(data.lastActivityAt);
-
-  // Enforce 6-hour total lifetime
-  if (now > expiresAtMs) {
-    await sessionRef.update({ status: 'EXPIRED' }).catch(() => {});
-    await logSecurityEvent({
-      eventType: 'PRIVILEGED_SESSION_EXPIRED',
-      severity: 'MEDIUM',
-      actorUid: userId,
-      details: { operation, sessionId },
+  let invalidation: { status: string; reason: string } | undefined;
+  try {
+    return await db.runTransaction(async transaction => {
+      const sessionDoc = await transaction.get(sessionRef);
+      if (!sessionDoc.exists) throw new HttpsError('permission-denied', 'Invalid privileged session identifier.');
+      const data = sessionDoc.data()!;
+      if (data.sessionId !== sessionId || data.userId !== userId || data.status !== 'ACTIVE' || data.mfaVerified !== true) {
+        throw new HttpsError('permission-denied', 'Privileged session identity, MFA or active status is invalid.');
+      }
+      if (typeof currentRole !== 'string' || !['admin', 'manager', 'developer', 'security_admin'].includes(currentRole)) {
+        invalidation = { status: 'REVOKED', reason: 'ROLE_NOT_PRIVILEGED' };
+        throw new HttpsError('permission-denied', 'ROLE_REVOKED: Current user role is not authorized for privileged sessions.');
+      }
+      if (data.role !== currentRole) {
+        invalidation = { status: 'REVOKED', reason: 'ROLE_CHANGED' };
+        throw new HttpsError('permission-denied', 'ROLE_REVOKED: User role changed. Please re-authenticate with MFA.');
+      }
+      const now = Date.now();
+      const createdMs = normalizeTimestampToMillis(data.createdAt);
+      const expiresMs = normalizeTimestampToMillis(data.expiresAt);
+      const activityMs = normalizeTimestampToMillis(data.lastActivityAt);
+      if (!createdMs || !expiresMs || !activityMs || createdMs > now || activityMs < createdMs || activityMs > now ||
+          expiresMs <= createdMs || expiresMs - createdMs > PRIVILEGED_SESSION_LIFETIME_MS || activityMs >= expiresMs) {
+        invalidation = { status: 'REVOKED', reason: 'INVALID_SESSION_TIMING' };
+        throw new HttpsError('permission-denied', 'Invalid privileged session timing. Please re-authenticate with MFA.');
+      }
+      if (createdMs < validAfterMs) {
+        invalidation = { status: 'REVOKED', reason: 'FIREBASE_TOKENS_REVOKED' };
+        throw new HttpsError('unauthenticated', 'USER_TOKENS_REVOKED: Please sign in again.');
+      }
+      if (now >= expiresMs || now - createdMs >= PRIVILEGED_SESSION_LIFETIME_MS) {
+        invalidation = { status: 'EXPIRED', reason: 'PRIVILEGED_SESSION_EXPIRED' };
+        throw new HttpsError('permission-denied', 'PRIVILEGED_SESSION_EXPIRED: Please re-authenticate with MFA.');
+      }
+      if (now - activityMs >= PRIVILEGED_SESSION_IDLE_TIMEOUT_MS) {
+        invalidation = { status: 'IDLE_TIMEOUT', reason: 'PRIVILEGED_SESSION_IDLE_TIMEOUT' };
+        throw new HttpsError('permission-denied', 'PRIVILEGED_SESSION_IDLE_TIMEOUT: Please re-authenticate with MFA.');
+      }
+      // Validate and touch the same snapshot so a concurrent revocation cannot
+      // be lost between the active-session read and the activity write.
+      transaction.update(sessionRef, { lastActivityAt: Timestamp.fromMillis(now) });
+      return { sessionId, role: currentRole };
     });
-    throw new HttpsError(
-      'permission-denied',
-      'PRIVILEGED_SESSION_EXPIRED: Your 6-hour privileged session has expired. Please re-authenticate with your Authenticator app.'
-    );
+  } catch (err) {
+    if (invalidation) {
+      await sessionRef.update(invalidation).catch(() => {});
+      await logSecurityEvent({
+        eventType: invalidation.reason,
+        severity: 'MEDIUM',
+        actorUid: userId,
+        details: { operation, sessionId },
+      });
+    }
+    throw err;
   }
-
-  // Enforce 30-minute idle timeout
-  if (now - lastActivityMs > PRIVILEGED_SESSION_IDLE_TIMEOUT_MS) {
-    await sessionRef.update({ status: 'IDLE_TIMEOUT' }).catch(() => {});
-    await logSecurityEvent({
-      eventType: 'PRIVILEGED_SESSION_IDLE_TIMEOUT',
-      severity: 'MEDIUM',
-      actorUid: userId,
-      details: { operation, sessionId, idleMinutes: Math.round((now - lastActivityMs) / 60000) },
-    });
-    throw new HttpsError(
-      'permission-denied',
-      'PRIVILEGED_SESSION_IDLE_TIMEOUT: Privileged portal locked after 30 minutes of inactivity. Please re-authenticate.'
-    );
-  }
-
-  // Session valid: touch lastActivityAt
-  await sessionRef.update({
-    lastActivityAt: Timestamp.fromMillis(now),
-  }).catch(() => {});
-
-  return { sessionId, role: data.role || '' };
 }

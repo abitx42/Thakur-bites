@@ -94,7 +94,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
   const lineItemsMap = new Map<string, { itemId: string; quantity: number; customization?: string }>();
 
   for (const item of items) {
-    if (!item.itemId || typeof item.itemId !== 'string' || item.itemId.length > 128) {
+    if (!item || typeof item !== 'object' || typeof item.itemId !== 'string' || !item.itemId || item.itemId.includes('/') || item.itemId.length > 128) {
       throw new HttpsError('invalid-argument', 'Item ID must be a non-empty string <= 128 characters.');
     }
     if (!Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 50) {
@@ -159,6 +159,13 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         ...itemRefs.map(ref => transaction.get(ref)),
       ]);
 
+      // Replays must not bypass current account/device suspension.
+      if (!userSnap.exists) throw new HttpsError('not-found', 'User profile not found. Please complete profile setup.');
+      const userData = userSnap.data() || {};
+      if (userData.accountDisabled === true || bannedDeviceSnap?.exists) {
+        throw new HttpsError('permission-denied', 'Account or device is suspended.');
+      }
+
       if (idempotencySnap.exists) {
         const idempData = idempotencySnap.data() || {};
         const existingOrderId = idempData.orderId;
@@ -169,6 +176,7 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
           ]);
           if (existingOrderDoc.exists) {
             const existingData = existingOrderDoc.data()!;
+            if (existingData.studentId !== studentId) throw new HttpsError('permission-denied', 'Checkout receipt ownership mismatch.');
             const secretData = existingSecretDoc.exists ? existingSecretDoc.data() : null;
             let replayedQrPayload: string | undefined;
             if (secretData && secretData.qrNonce && secretData.qrExpiresAt) {
@@ -195,7 +203,6 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
               signedQrPayload: replayedQrPayload,
               gatewayOrderId: existingData.gatewayOrderId || null,
               amountPaise: existingAmountPaise,
-              keyId: getRequiredSecret('PAYMENT_GATEWAY_KEY_ID'),
               isReplay: true,
               pinAlreadyIssued: true,
             };
@@ -204,19 +211,6 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
       }
 
       // 2. Validate Canonical User Profile (Fail-Closed, Zero Legacy Fallback)
-      if (!userSnap.exists) {
-        throw new HttpsError('not-found', 'User profile not found. Please complete profile setup.');
-      }
-
-      const userData = userSnap.data() || {};
-      if (userData.accountDisabled === true) {
-        throw new HttpsError('permission-denied', 'Account has been deactivated.');
-      }
-
-      if (bannedDeviceSnap && bannedDeviceSnap.exists) {
-        throw new HttpsError('permission-denied', 'This device has been suspended due to security violations.');
-      }
-
       const studentName = userData.displayName || 'Customer';
       const studentRoll = userData.rollNo || (userData.accountType === 'TEACHER' ? 'FACULTY' : 'TCET');
       const userPriorityLevel: PriorityLevel = (typeof userData.priorityLevel === 'number' && [0, 1, 2, 3].includes(userData.priorityLevel))
@@ -402,7 +396,8 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
 
       const readyAtDate = new Date(now.toMillis() + maxPrepMinutes * 60000);
       const isCounterCash = paymentMethod === 'counter_cash';
-      const gatewayOrderId = !isCounterCash ? `order_${crypto.randomBytes(8).toString('hex')}` : undefined;
+      // The payment-session handler publishes an actual provider-created binding.
+      // A fabricated ID here prevents safe retries and cannot prove gateway creation.
 
       const isOnlyReadyMade = orderItemSnapshots.length > 0 && orderItemSnapshots.every(i => i.type === 'instant');
       const finalReadyMadePreference = isOnlyReadyMade
@@ -421,7 +416,6 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         status: 'payment_pending',
         paymentStatus: 'pending',
         paymentMethod: isCounterCash ? 'counter_cash' : 'online',
-        gatewayOrderId,
         totalAmount: calculatedTotalPaise / 100,
         totalAmountPaise: calculatedTotalPaise,
         currency: 'INR',
@@ -526,15 +520,16 @@ export const createCheckout = onCall<CheckoutRequest>(async (request) => {
         },
         rawPin,
         signedQrPayload,
-        gatewayOrderId,
         amountPaise: calculatedTotalPaise,
-        keyId: getRequiredSecret('PAYMENT_GATEWAY_KEY_ID'),
       };
     });
 
 
-    // Asynchronously synchronize the single ephemeral publicLiveQueue/current document
-    await updatePublicLiveQueueProjection(db);
+    // A projection is not checkout authority. Never report a committed order as
+    // failed, losing its one-time PIN response, because this optional update failed.
+    await updatePublicLiveQueueProjection(db).catch(() => {
+      console.warn('Checkout committed; public queue projection requires a refresh.');
+    });
 
     return checkoutResult;
   } catch (error: any) {

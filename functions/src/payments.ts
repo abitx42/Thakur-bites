@@ -20,7 +20,7 @@ import { logSecurityEvent } from './security_logger';
 import { enforceAppCheck } from './app_check';
 import { assertActiveWorkstationSession } from './shift_pins';
 import { enforceAppVersionPolicy } from './version_policy';
-import { assertCapability } from './authorization_policy';
+import { assertCapability, isOperationalStaffRole } from './authorization_policy';
 import { isProduction, isSimulationAllowed } from './env_config';
 import { createSanitizedHttpsError } from './security_responses';
 import { inspectPayloadForHoneytokens, handleHoneypotTripwire, assertNoHoneytokens } from './honeypot_defense';
@@ -36,6 +36,25 @@ export interface RefundResult {
   refundId: string;
   status: 'processed' | 'pending';
   amountPaise: number;
+  gatewayPaymentId: string;
+  currency: string;
+}
+
+/** Only an explicit gateway rejection proves that no refund was executed. */
+export class RefundGatewayError extends Error {
+  constructor(message: string, readonly gatewayOutcome: 'rejected' | 'unknown') {
+    super(message);
+    this.name = 'RefundGatewayError';
+  }
+}
+
+function validPaymentDocumentId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 && !!value.trim() &&
+    value !== '.' && value !== '..' && !/[/\u0000-\u001f\u007f]/.test(value);
+}
+
+function validGatewayId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{4,64}$/.test(value);
 }
 
 export interface PaymentGatewayAdapter {
@@ -146,15 +165,27 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
     return await res.json();
   }
 
-  async ensurePaymentCaptured(gatewayPaymentId: string, amountPaise: number, currency: string = 'INR'): Promise<void> {
-    if (!this.isProduction()) return;
-    try {
-      const details = await this.getPaymentDetails(gatewayPaymentId);
-      if (details && details.status === 'authorized') {
-        await this.capturePayment(gatewayPaymentId, amountPaise, currency);
+  async ensurePaymentCaptured(gatewayPaymentId: string, amountPaise: number, currency: string, gatewayOrderId: string): Promise<void> {
+    if (!validGatewayId(gatewayPaymentId) || !validGatewayId(gatewayOrderId) ||
+        !Number.isSafeInteger(amountPaise) || amountPaise <= 0 || !/^[A-Z]{3}$/.test(currency)) {
+      throw new Error('INVALID_CAPTURE_ARGUMENTS');
+    }
+    // Client verification always checks the real gateway, including test-mode keys.
+    // Explicit simulation has a separate, environment-gated callable.
+    const assertBinding = (details: any): void => {
+      if (!details || details.id !== gatewayPaymentId || details.order_id !== gatewayOrderId ||
+          details.amount !== amountPaise || details.currency !== currency) {
+        throw new Error('GATEWAY_PAYMENT_BINDING_MISMATCH');
       }
-    } catch (e) {
-      console.warn(`[RazorpayPaymentAdapter] ensurePaymentCaptured non-fatal notice: ${e}`);
+    };
+    let details = await this.getPaymentDetails(gatewayPaymentId);
+    assertBinding(details);
+    if (details.status === 'authorized') {
+      details = await this.capturePayment(gatewayPaymentId, amountPaise, currency);
+      assertBinding(details);
+    }
+    if (details.status !== 'captured' || details.captured !== true) {
+      throw new Error('GATEWAY_PAYMENT_NOT_CAPTURED');
     }
   }
 
@@ -162,25 +193,19 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
     gatewayPaymentId: string,
     amountPaise: number,
     reason: string,
-    idempotencyKey?: string
+    idempotencyKey?: string,
+    currency: string = 'INR'
   ): Promise<RefundResult> {
+    if (!validGatewayId(gatewayPaymentId) || !Number.isSafeInteger(amountPaise) || amountPaise <= 0 ||
+        !/^[A-Z]{3}$/.test(currency)) {
+      throw new RefundGatewayError('INVALID_REFUND_ARGUMENTS', 'rejected');
+    }
     if (this.isProduction()) {
       if (typeof gatewayPaymentId !== 'string' || !/^[a-zA-Z0-9_-]{4,64}$/.test(gatewayPaymentId)) {
         throw new Error('INVALID_GATEWAY_PAYMENT_ID: Format mismatch or forbidden characters');
       }
       const keyId = getRequiredSecret('PAYMENT_GATEWAY_KEY_ID');
       const authHeader = `Basic ${Buffer.from(`${keyId}:${this.secret}`).toString('base64')}`;
-
-      // Auto-remedy: If payment is in 'authorized' status, auto-capture it first
-      // In Razorpay, only 'captured' payments can be refunded via API.
-      try {
-        const details = await this.getPaymentDetails(gatewayPaymentId);
-        if (details && details.status === 'authorized') {
-          await this.capturePayment(gatewayPaymentId, amountPaise, details.currency || 'INR');
-        }
-      } catch (capErr) {
-        console.warn(`[RazorpayPaymentAdapter] Pre-refund auto-capture attempt notice: ${capErr}`);
-      }
 
       const res = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(gatewayPaymentId)}/refund`, {
         method: 'POST',
@@ -198,15 +223,21 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
       });
 
       if (!res.ok) {
-        const errBody = await res.text();
-        throw new Error(`GATEWAY_REFUND_FAILED: HTTP ${res.status} - ${errBody}`);
+        const definiteRejection = res.status >= 400 && res.status < 500 && ![408, 409, 429].includes(res.status);
+        throw new RefundGatewayError(`GATEWAY_REFUND_FAILED: HTTP ${res.status}`, definiteRejection ? 'rejected' : 'unknown');
       }
 
       const json = await res.json() as any;
+      if (!json || !validGatewayId(json.id) || json.payment_id !== gatewayPaymentId ||
+          json.amount !== amountPaise || json.currency !== currency || !['processed', 'pending'].includes(json.status)) {
+        throw new RefundGatewayError('GATEWAY_REFUND_RESPONSE_MISMATCH', 'unknown');
+      }
       return {
-        refundId: json.id || `rfnd_${crypto.randomBytes(8).toString('hex')}`,
-        status: json.status === 'processed' ? 'processed' : 'pending',
-        amountPaise: Number(json.amount || amountPaise),
+        refundId: json.id,
+        status: json.status,
+        amountPaise: json.amount,
+        gatewayPaymentId: json.payment_id,
+        currency: json.currency,
       };
     }
 
@@ -218,6 +249,8 @@ export class RazorpayPaymentAdapter implements PaymentGatewayAdapter {
       refundId,
       status: 'processed',
       amountPaise,
+      gatewayPaymentId,
+      currency,
     };
   }
 }
@@ -234,6 +267,9 @@ export function computeGatewaySignature(gatewayOrderId: string, gatewayPaymentId
  * 1. Creates an authoritative, idempotent payment session for checkout.
  */
 export const createPaymentSession = onCall<PaymentSessionRequest>(async (request) => {
+  if (!request.data || typeof request.data !== 'object' || Array.isArray(request.data) || !validPaymentDocumentId(request.data.orderId)) {
+    throw new HttpsError('invalid-argument', 'A valid orderId (one document ID, max 128 characters) is required.');
+  }
   enforceAppCheck(request);
   await enforceAppVersionPolicy((request.data as any)?.appVersion);
   await assertOperationalMode('payment');
@@ -258,121 +294,177 @@ export const createPaymentSession = onCall<PaymentSessionRequest>(async (request
 
   await enforceRateLimit(studentId, 'payment_session');
 
-  const userDoc = await db.collection('users').doc(studentId).get();
-  if (userDoc.exists && userDoc.data()?.accountDisabled === true) {
-    throw new HttpsError('permission-denied', 'Account has been deactivated.');
-  }
-
   const { orderId } = request.data;
-  if (!orderId) {
-    throw new HttpsError('invalid-argument', 'orderId is required.');
-  }
-
   const orderRef = db.collection('orders').doc(orderId);
-  let gatewayOrderId = '';
-
-  const { totalPaise, currency, tokenNumber } = await db.runTransaction(async (transaction) => {
-    const orderDoc = await transaction.get(orderRef);
-    if (!orderDoc.exists) {
-      throw new HttpsError('not-found', 'Order not found.');
-    }
-
-    const orderData = orderDoc.data()!;
-    if (orderData.studentId !== studentId) {
-      throw new HttpsError('permission-denied', 'Cannot pay for another student’s order.');
-    }
-
-    // Phase 1 Invariant: Online payment session only for online orders
-    if (orderData.paymentMethod === 'counter_cash') {
-      throw new HttpsError('failed-precondition', 'Cannot create digital payment session for an order designated as counter-cash.');
-    }
-
-    if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
-      throw new HttpsError('already-exists', 'Order is already paid.');
-    }
-
-    // Idempotency Lock inside transaction: If an active gatewayOrderId exists on the order, reuse it
-    if (!orderData.gatewayOrderId || typeof orderData.gatewayOrderId !== 'string') {
-      gatewayOrderId = `order_${crypto.randomBytes(8).toString('hex')}`;
-      transaction.update(orderRef, {
-        paymentStatus: 'pending',
-        status: 'payment_pending',
-        gatewayOrderId,
-        paymentSessionCreatedAt: Timestamp.now(),
-      });
-    } else {
-      gatewayOrderId = orderData.gatewayOrderId;
-    }
-
-    const totalPaiseCalc = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
-    return {
-      totalPaise: totalPaiseCalc,
-      currency: orderData.currency || 'INR',
-      tokenNumber: orderData.tokenNumber || 'TB-XXX',
-    };
-  });
-
-  const isProduction = process.env.NODE_ENV === 'production';
-  let razorpayKeyId = process.env.RAZORPAY_KEY_ID;
-  if (!razorpayKeyId && isProduction) {
-    throw new Error('FATAL: RAZORPAY_KEY_ID is missing in production environment.');
-  }
-  razorpayKeyId = razorpayKeyId || 'rzp_test_TcNKt0X7OsnsXu';
-
-  // Authoritative Razorpay Order Creation with Auto-Capture enabled
-  const gatewaySecret = process.env.PAYMENT_GATEWAY_SECRET || process.env.RAZORPAY_KEY_SECRET;
-  if (razorpayKeyId && gatewaySecret && gatewayOrderId.startsWith('order_') && gatewayOrderId.length === 22) {
-    try {
-      const authHeader = `Basic ${Buffer.from(`${razorpayKeyId}:${gatewaySecret}`).toString('base64')}`;
-      const orderReq = await fetch('https://api.razorpay.com/v1/orders', {
-        method: 'POST',
-        headers: {
-          'Authorization': authHeader,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          amount: totalPaise,
-          currency: currency || 'INR',
-          receipt: orderId.slice(0, 40),
-          payment_capture: 1,
-          notes: {
-            orderId,
-            studentId,
-            tokenNumber,
-          },
-        }),
-      });
-
-      if (orderReq.ok) {
-        const orderRes = await orderReq.json() as any;
-        if (orderRes && orderRes.id) {
-          gatewayOrderId = orderRes.id;
-          await orderRef.update({ gatewayOrderId });
-        }
-      }
-    } catch (e) {
-      console.warn('[createPaymentSession] Razorpay Orders API fallback notice:', e);
-    }
-  }
-
-  const response: PaymentSessionResponse = {
-    orderId,
-    gatewayOrderId,
-    razorpayOrderId: gatewayOrderId, // Backward compatibility alias
-    amount: totalPaise / 100,
-    amountPaise: totalPaise,
-    currency,
-    keyId: razorpayKeyId,
-    adapterMode: isProduction ? 'PRODUCTION_GATEWAY' : 'SIMULATION_ADAPTER',
-    notes: {
-      orderId,
-      studentId,
-      tokenNumber,
-      college: 'TCET Mumbai',
-    },
+  const reservationRef = db.collection('inventoryReservations').doc(orderId);
+  const userRef = db.collection('users').doc(studentId);
+  const simulation = !isProduction() && isSimulationAllowed() && process.env.K_SERVICE === undefined;
+  const adapterMode: PaymentSessionResponse['adapterMode'] = simulation ? 'SIMULATION_ADAPTER' : 'PRODUCTION_GATEWAY';
+  const sessionError = (phase: string, gatewayOrderId?: string): HttpsError => {
+    logSecurityEvent({ eventType: 'PAYMENT_SESSION_RECONCILIATION_REQUIRED', severity: 'HIGH', orderId, actorUid: studentId,
+      details: { phase, ...(gatewayOrderId ? { gatewayOrderId } : {}) } }).catch(() => {});
+    // failed-precondition also prevents older clients from treating this as an
+    // undeployed function and launching an unbound client-side checkout.
+    return new HttpsError('failed-precondition', 'Payment session could not be confirmed. Please contact the counter for reconciliation before starting another payment.');
   };
 
-  return response;
+  let keyId: string;
+  let gatewaySecret: string;
+  try {
+    keyId = getRequiredSecret('PAYMENT_GATEWAY_KEY_ID');
+    gatewaySecret = getRequiredSecret('PAYMENT_GATEWAY_SECRET');
+    if (typeof keyId !== 'string' || !/^[A-Za-z0-9_-]{4,128}$/.test(keyId) ||
+        typeof gatewaySecret !== 'string' || !gatewaySecret.trim()) throw new Error('Invalid gateway configuration');
+  } catch (_) {
+    throw sessionError('configuration');
+  }
+
+  const readEligibleOrder = async (transaction: admin.firestore.Transaction) => {
+    const [orderSnap, reservationSnap, userSnap] = await Promise.all([
+      transaction.get(orderRef), transaction.get(reservationRef), transaction.get(userRef),
+    ]);
+    if (!orderSnap.exists) throw new HttpsError('not-found', 'Order not found.');
+    const order = orderSnap.data()!;
+    if (order.studentId !== studentId) throw new HttpsError('permission-denied', 'Cannot pay for another customer’s order.');
+    if (userSnap.exists && userSnap.data()?.accountDisabled === true) throw new HttpsError('permission-denied', 'Account has been deactivated.');
+    if (order.paymentMethod !== 'online' || order.status !== 'payment_pending' ||
+        !['unpaid', 'pending', 'initiated'].includes(order.paymentStatus) || order.isCancellationPending === true || order.gatewayPaymentId) {
+      throw new HttpsError('failed-precondition', 'Order is not eligible for a new online payment session.');
+    }
+    if (!Number.isSafeInteger(order.totalAmountPaise) || order.totalAmountPaise <= 0 || order.currency !== 'INR') {
+      throw new HttpsError('failed-precondition', 'Order has invalid authoritative payment amount or currency.');
+    }
+    const reservation = reservationSnap.exists ? reservationSnap.data()! : null;
+    const orderExpiresAtMs = order.reservationExpiresAt?.toMillis?.();
+    const reservationExpiresAtMs = reservation?.expiresAt?.toMillis?.();
+    if (!reservation || reservation.orderId !== orderId || reservation.studentId !== studentId || reservation.status !== 'RESERVED' ||
+        !Number.isSafeInteger(orderExpiresAtMs) || orderExpiresAtMs <= Date.now() ||
+        !Number.isSafeInteger(reservationExpiresAtMs) || reservationExpiresAtMs <= Date.now()) {
+      throw new HttpsError('failed-precondition', 'The matching stock reservation is missing, invalid or expired.');
+    }
+    return { order, amountPaise: order.totalAmountPaise as number, currency: 'INR', orderExpiresAtMs: orderExpiresAtMs as number,
+      reservationExpiresAtMs: reservationExpiresAtMs as number,
+      tokenNumber: typeof order.tokenNumber === 'string' ? order.tokenNumber : '' };
+  };
+  type EligibleOrder = Awaited<ReturnType<typeof readEligibleOrder>>;
+  const assertSessionBinding = (session: Record<string, any> | undefined, current: EligibleOrder): void => {
+    if (!session || session.version !== 1 || typeof session.nonce !== 'string' || !/^[a-f0-9]{32}$/.test(session.nonce) ||
+        session.ownerId !== studentId || session.amountPaise !== current.amountPaise || session.currency !== current.currency ||
+        session.adapterMode !== adapterMode || session.keyId !== keyId || session.tokenNumber !== current.tokenNumber ||
+        session.orderExpiresAtMs !== current.orderExpiresAtMs || session.reservationExpiresAtMs !== current.reservationExpiresAtMs) {
+      throw sessionError('binding');
+    }
+  };
+  const validCreatedId = (id: unknown): id is string => typeof id === 'string' &&
+    (simulation ? /^sim_order_[a-f0-9]{32}$/.test(id) : /^order_[A-Za-z0-9]{1,58}$/.test(id));
+  const responseFor = (session: Record<string, any>): PaymentSessionResponse => ({
+    orderId, gatewayOrderId: session.gatewayOrderId, razorpayOrderId: session.gatewayOrderId,
+    amount: session.amountPaise / 100, amountPaise: session.amountPaise, currency: session.currency,
+    keyId, adapterMode, notes: { orderId, studentId, tokenNumber: session.tokenNumber, college: 'TCET Mumbai' },
+  });
+
+  const nonce = crypto.randomBytes(16).toString('hex');
+  let claim: { reused: boolean; session: Record<string, any> };
+  try {
+    claim = await db.runTransaction(async transaction => {
+      const current = await readEligibleOrder(transaction);
+      const existing = current.order.paymentSession;
+      if (existing !== undefined && existing !== null) {
+        assertSessionBinding(existing, current);
+        if (existing.state !== 'CREATED' || !validCreatedId(existing.gatewayOrderId) || current.order.gatewayOrderId !== existing.gatewayOrderId) {
+          throw sessionError('existing_claim');
+        }
+        return { reused: true, session: existing };
+      }
+      // Older checkout/session code published placeholders indistinguishably from
+      // unrecorded remote orders. Neither may be reused or overwritten on trust.
+      if (current.order.gatewayOrderId !== undefined && current.order.gatewayOrderId !== null) throw sessionError('legacy_binding');
+      const session = {
+        version: 1, state: 'CREATING', nonce, ownerId: studentId, amountPaise: current.amountPaise, currency: current.currency,
+        adapterMode, keyId, tokenNumber: current.tokenNumber, orderExpiresAtMs: current.orderExpiresAtMs,
+        reservationExpiresAtMs: current.reservationExpiresAtMs,
+        receipt: `TB-PAY-${crypto.createHash('sha256').update(`${orderId}:${nonce}`).digest('hex').slice(0, 32)}`,
+        claimedAt: Timestamp.now(),
+      };
+      // No fabricated gateway ID or operational/payment status is published.
+      transaction.update(orderRef, { paymentSession: session });
+      return { reused: false, session };
+    });
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    throw sessionError('claim');
+  }
+  if (claim.reused) return responseFor(claim.session);
+
+  const markUnknown = async (phase: string): Promise<void> => {
+    try {
+      await db.runTransaction(async transaction => {
+        const snap = await transaction.get(orderRef);
+        const session = snap.exists ? snap.data()?.paymentSession : null;
+        if (session?.nonce === nonce && session.ownerId === studentId && session.state === 'CREATING') {
+          transaction.update(orderRef, { paymentSession: { ...session, state: 'OUTCOME_UNKNOWN', failurePhase: phase, updatedAt: Timestamp.now() } });
+        }
+      });
+    } catch (_) {
+      // The original CREATING claim also blocks retries if this marker cannot persist.
+    }
+  };
+
+  let gatewayOrderId: string;
+  try {
+    if (simulation) {
+      gatewayOrderId = `sim_order_${nonce}`;
+    } else {
+      const result = await fetch('https://api.razorpay.com/v1/orders', {
+        method: 'POST', signal: AbortSignal.timeout(15000),
+        headers: { Authorization: `Basic ${Buffer.from(`${keyId}:${gatewaySecret}`).toString('base64')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: claim.session.amountPaise, currency: claim.session.currency, receipt: claim.session.receipt,
+          payment_capture: 1, notes: { orderId, studentId, tokenNumber: claim.session.tokenNumber } }),
+      });
+      if (!result.ok) throw new Error('Gateway creation rejected');
+      const created = await result.json() as any;
+      if (!created || !validCreatedId(created.id) || created.amount !== claim.session.amountPaise || created.currency !== claim.session.currency ||
+          (created.status !== undefined && created.status !== 'created') || (created.entity !== undefined && created.entity !== 'order') ||
+          (created.receipt !== undefined && created.receipt !== claim.session.receipt) ||
+          (created.amount_paid !== undefined && created.amount_paid !== 0) ||
+          (created.amount_due !== undefined && created.amount_due !== claim.session.amountPaise)) throw new Error('Gateway creation response mismatch');
+      gatewayOrderId = created.id;
+    }
+  } catch (_) {
+    await markUnknown('gateway');
+    throw sessionError('gateway');
+  }
+
+  try {
+    const completed = await db.runTransaction(async transaction => {
+      const current = await readEligibleOrder(transaction);
+      const session = current.order.paymentSession;
+      assertSessionBinding(session, current);
+      if (session.nonce !== nonce || session.state !== 'CREATING' ||
+          (current.order.gatewayOrderId !== undefined && current.order.gatewayOrderId !== null)) throw sessionError('publication_claim');
+      const completedSession = { ...session, state: 'CREATED', gatewayOrderId, completedAt: Timestamp.now() };
+      transaction.update(orderRef, { gatewayOrderId, paymentSession: completedSession, paymentSessionCreatedAt: completedSession.completedAt });
+      return completedSession;
+    });
+    return responseFor(completed);
+  } catch (_) {
+    // A lost commit acknowledgement is resolved by an independent read, not by
+    // another gateway call or by overwriting a different worker's binding.
+    try {
+      const confirmed = await db.runTransaction(async transaction => {
+        const current = await readEligibleOrder(transaction);
+        const session = current.order.paymentSession;
+        assertSessionBinding(session, current);
+        if (session.nonce !== nonce || session.state !== 'CREATED' || session.gatewayOrderId !== gatewayOrderId ||
+            current.order.gatewayOrderId !== gatewayOrderId) throw sessionError('publication_unconfirmed');
+        return session;
+      });
+      return responseFor(confirmed);
+    } catch (_) {
+      await markUnknown('publication');
+      throw sessionError('publication', gatewayOrderId);
+    }
+  }
 });
 
 /**
@@ -398,19 +490,45 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
     await handleHoneypotTripwire(request.auth.uid, 'verifyPayment', honeypotCheck.detectedTokens, clientIp);
   }
 
-  const rawData = (request.data || {}) as any;
+  if (!request.data || typeof request.data !== 'object' || Array.isArray(request.data)) {
+    throw new HttpsError('invalid-argument', 'Payment verification data must be an object.');
+  }
+  const rawData = request.data as any;
   const orderId = rawData.orderId;
-  const gatewayOrderId = rawData.gatewayOrderId || rawData.razorpayOrderId;
-  const gatewayPaymentId = rawData.gatewayPaymentId || rawData.razorpayPaymentId;
-  const gatewaySignature = rawData.gatewaySignature || rawData.razorpaySignature;
+  const alias = (primary: string, legacy: string): unknown => {
+    if (rawData[primary] !== undefined && rawData[legacy] !== undefined && rawData[primary] !== rawData[legacy]) {
+      throw new HttpsError('invalid-argument', 'Conflicting payment verification aliases.');
+    }
+    return rawData[primary] ?? rawData[legacy];
+  };
+  const gatewayOrderId = alias('gatewayOrderId', 'razorpayOrderId');
+  const gatewayPaymentId = alias('gatewayPaymentId', 'razorpayPaymentId');
+  const gatewaySignature = alias('gatewaySignature', 'razorpaySignature');
 
   if (
-    typeof orderId !== 'string' || !orderId.trim() || orderId.length > 128 ||
-    typeof gatewayOrderId !== 'string' || !gatewayOrderId.trim() || gatewayOrderId.length > 128 ||
-    typeof gatewayPaymentId !== 'string' || !gatewayPaymentId.trim() || gatewayPaymentId.length > 128 ||
-    typeof gatewaySignature !== 'string' || !gatewaySignature.trim() || gatewaySignature.length > 256
+    !validPaymentDocumentId(orderId) || !validGatewayId(gatewayOrderId) || !validGatewayId(gatewayPaymentId) ||
+    typeof gatewaySignature !== 'string' || gatewaySignature.length > 256 || !/^[a-fA-F0-9]{64}$/.test(gatewaySignature.trim())
   ) {
     throw new HttpsError('invalid-argument', 'All payment verification arguments must be non-empty strings within acceptable bounds.');
+  }
+
+  // Ownership and the immutable gateway binding precede gateway work and are
+  // checked again transactionally by the finalizer after that work completes.
+  const orderDoc = await db.collection('orders').doc(orderId).get();
+  if (!orderDoc.exists) throw new HttpsError('not-found', 'Order not found.');
+  const orderData = orderDoc.data()!;
+  if (orderData.studentId !== request.auth.uid) {
+    throw new HttpsError('permission-denied', 'Cannot verify payment for another customer’s order.');
+  }
+  if (orderData.paymentMethod !== 'online' || !validGatewayId(orderData.gatewayOrderId) || orderData.gatewayOrderId !== gatewayOrderId) {
+    throw new HttpsError('failed-precondition', 'Payment is not bound to this order and gateway session.');
+  }
+  const amountPaise = orderData.totalAmountPaise !== undefined
+    ? orderData.totalAmountPaise
+    : (typeof orderData.totalAmount === 'number' ? Math.round(orderData.totalAmount * 100) : NaN);
+  const currency = orderData.currency ?? 'INR';
+  if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0 || currency !== 'INR') {
+    throw new HttpsError('failed-precondition', 'Order has invalid payment amount or currency.');
   }
 
   const adapter = new RazorpayPaymentAdapter();
@@ -428,25 +546,15 @@ export const verifyPayment = onCall<PaymentVerificationRequest>(async (request) 
     throw new HttpsError('permission-denied', 'Payment verification failed: Invalid cryptographic signature.');
   }
 
-  // Fetch order to get authoritative amountPaise and currency
-  const orderDoc = await db.collection('orders').doc(orderId).get();
-  if (!orderDoc.exists) {
-    throw new HttpsError('not-found', 'Order not found.');
-  }
-  const orderData = orderDoc.data()!;
-  const amountPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
-
-  // Ensure payment is captured on Razorpay gateway (if currently in authorized state)
-  await adapter.ensurePaymentCaptured(gatewayPaymentId, amountPaise, orderData.currency || 'INR');
-
   // Single authoritative payment finalization (Phase 1 Hardened)
   try {
+    await adapter.ensurePaymentCaptured(gatewayPaymentId, amountPaise, currency, gatewayOrderId);
     const result = await finalizeSuccessfulPayment({
       orderId,
       gatewayOrderId,
       gatewayPaymentId,
       amountPaise,
-      currency: orderData.currency || 'INR',
+      currency,
       source: 'client_verification',
       actorId: request.auth.uid,
       signatureOrRef: gatewaySignature,
@@ -501,7 +609,7 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
   }
 
   const eventPayload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-  if (!eventPayload || !eventPayload.id || typeof eventPayload.id !== 'string' || eventPayload.id.trim().length === 0) {
+  if (!eventPayload || !validPaymentDocumentId(eventPayload.id)) {
     await logSecurityEvent({
       eventType: 'MALFORMED_WEBHOOK_PAYLOAD',
       severity: 'HIGH',
@@ -567,10 +675,15 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
       if (!paymentEntity) {
         throw new Error('Invalid payment payload in captured event.');
       }
+      if (paymentEntity.status !== 'captured' || paymentEntity.captured !== true ||
+          !validGatewayId(paymentEntity.id) || !validGatewayId(paymentEntity.order_id) ||
+          !Number.isSafeInteger(paymentEntity.amount) || paymentEntity.amount <= 0 || paymentEntity.currency !== 'INR') {
+        throw new Error('Captured webhook payment state or binding mismatch.');
+      }
 
       let orderId = paymentEntity.notes?.orderId;
-      const gatewayPaymentAmountPaise = Number(paymentEntity.amount || 0);
-      const gatewayCurrency = paymentEntity.currency || 'INR';
+      const gatewayPaymentAmountPaise = paymentEntity.amount;
+      const gatewayCurrency = paymentEntity.currency;
       const gatewayOrderId = paymentEntity.order_id;
       const gatewayPaymentId = paymentEntity.id;
 
@@ -581,7 +694,7 @@ export const handlePaymentWebhook = onRequest({ cors: false }, async (req, res) 
         }
       }
 
-      if (!orderId) {
+      if (!validPaymentDocumentId(orderId)) {
         throw new Error('Missing orderId in payment notes and no matching order found for gatewayOrderId.');
       }
 
@@ -673,9 +786,10 @@ export const recordCashPayment = onCall<{ orderId: string; idempotencyKey?: stri
 
   await enforceRateLimit(request.auth.uid, 'cash_payment');
 
-  const { orderId, idempotencyKey } = request.data;
-  if (!orderId) {
-    throw new HttpsError('invalid-argument', 'orderId is required.');
+  const { orderId, idempotencyKey } = request.data || {};
+  if (!validPaymentDocumentId(orderId) || (idempotencyKey !== undefined &&
+      (typeof idempotencyKey !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(idempotencyKey)))) {
+    throw new HttpsError('invalid-argument', 'Valid bounded orderId and optional idempotency key are required.');
   }
 
   const orderDoc = await db.collection('orders').doc(orderId).get();
@@ -708,8 +822,10 @@ export const recordCashPayment = onCall<{ orderId: string; idempotencyKey?: stri
   }
 
   const amountPaise = orderData.totalAmountPaise || Math.round(Number(orderData.totalAmount || 0) * 100);
-  const gatewayOrderId = orderData.gatewayOrderId || `cash_ord_${orderId}`;
-  const gatewayPaymentId = idempotencyKey ? `cash_pay_${idempotencyKey}` : `cash_pay_${crypto.randomBytes(6).toString('hex')}`;
+  const cashIdentity = crypto.createHash('sha256').update(orderId).digest('hex').slice(0, 32);
+  const gatewayOrderId = orderData.gatewayOrderId || `cash_ord_${cashIdentity}`;
+  // Cash settlement is once per order, independently of caller retry keys.
+  const gatewayPaymentId = `cash_pay_${cashIdentity}`;
 
   return await finalizeSuccessfulPayment({
     orderId,
@@ -910,13 +1026,24 @@ export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: s
 
   await enforceRateLimit(request.auth.uid, 'payment_session');
 
-  const { orderId, reason = 'PAYMENT_SESSION_CANCELLED' } = request.data;
-  if (!orderId) {
-    throw new HttpsError('invalid-argument', 'orderId is required.');
+  const { orderId, reason = 'PAYMENT_SESSION_CANCELLED' } = request.data || {};
+  if (!validPaymentDocumentId(orderId) || typeof reason !== 'string' || !reason.trim() || reason.length > 200) {
+    throw new HttpsError('invalid-argument', 'A valid orderId and bounded cancellation reason are required.');
   }
 
   const orderRef = db.collection('orders').doc(orderId);
   const now = Timestamp.now();
+
+  // Validate non-owner authority outside retryable transaction callbacks. This
+  // includes current Auth revocation for permanent staff and live PIN/hardware
+  // binding for operational workstation accounts.
+  const initialOrder = await orderRef.get();
+  if (!initialOrder.exists) throw new HttpsError('not-found', 'Order not found.');
+  const actorRole = (request.auth.token.role as UserRole) || 'student';
+  if (initialOrder.data()?.studentId !== request.auth.uid) {
+    assertCapability(actorRole, 'cancel_staff_order', 'Only the owner or authorized staff can cancel a payment session.');
+    await assertActiveWorkstationSession(request.auth.uid, request.auth.token);
+  }
 
   return await db.runTransaction(async (transaction) => {
     const orderSnap = await transaction.get(orderRef);
@@ -926,20 +1053,28 @@ export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: s
 
     const orderData = orderSnap.data()!;
     const isOwner = orderData.studentId === request.auth!.uid;
-    const actorRole = (request.auth!.token.role as UserRole) || 'student';
-    const isStaff = actorRole === 'manager' || actorRole === 'admin' || actorRole === 'security_admin';
+    const isStaff = initialOrder.data()?.studentId !== request.auth!.uid && isOperationalStaffRole(actorRole);
 
     if (!isOwner && !isStaff) {
       throw new HttpsError('permission-denied', 'Only order owner or staff can cancel payment session.');
     }
 
-    if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
+    if (['paid', 'captured', 'refunded', 'partially_refunded'].includes(orderData.paymentStatus) ||
+        orderData.gatewayPaymentId || orderData.amountPaidPaise > 0 ||
+        orderData.isCancellationPending === true || orderData.pendingRefundPaise > 0) {
       throw new HttpsError('failed-precondition', 'Cannot cancel a payment session for an already paid order.');
     }
 
     if (orderData.status === 'cancelled') {
       return { success: true, alreadyCancelled: true, orderId };
     }
+    if (orderData.paymentMethod !== 'online' || orderData.status !== 'payment_pending' ||
+        !['pending', 'initiated', 'failed'].includes(orderData.paymentStatus)) {
+      throw new HttpsError('failed-precondition', 'Only an unpaid pending online payment session can be cancelled.');
+    }
+
+    const lockRef = db.collection('facultyPriorityLocks').doc(orderData.studentId);
+    const lockSnap = await transaction.get(lockRef);
 
     // 1. Release Inventory Reservation (Phase 2 Invariant: Releases stock back to available pool)
     await releaseInventoryInTransaction(transaction, db, orderId, reason, request.auth!.uid);
@@ -949,14 +1084,13 @@ export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: s
       status: 'cancelled',
       paymentStatus: 'cancelled',
       cancelledAt: now,
-      cancellationReason: reason,
+      cancellationReason: reason.trim(),
       cancelledBy: request.auth!.uid,
       updatedAt: now,
     });
 
     // 2b. Release Faculty Priority Lock if held (TB-R2-013)
-    if (orderData.studentId) {
-      const lockRef = db.collection('facultyPriorityLocks').doc(orderData.studentId);
+    if (lockSnap.exists && lockSnap.data()?.activeOrderId === orderId) {
       transaction.delete(lockRef);
     }
 
@@ -969,7 +1103,7 @@ export const cancelOrExpirePaymentSession = onCall<{ orderId: string; reason?: s
       actorId: request.auth!.uid,
       actorRole,
       timestamp: now,
-      reason,
+      reason: reason.trim(),
     });
 
     return {
@@ -997,7 +1131,7 @@ export const reconcileOrderPayment = onCall<ReconcilePaymentRequest>(async (requ
   const actorUid = request.auth.uid;
   await enforceRateLimit(actorUid, 'payment_session');
   const { orderId } = request.data || {};
-  if (!orderId || typeof orderId !== 'string') {
+  if (!validPaymentDocumentId(orderId)) {
     throw new HttpsError('invalid-argument', 'Valid orderId is required.');
   }
 
@@ -1009,22 +1143,23 @@ export const reconcileOrderPayment = onCall<ReconcilePaymentRequest>(async (requ
 
   const orderData = orderSnap.data()!;
   const isOwner = orderData.studentId === actorUid;
-  const callerRole = ((request.auth.token.role || '') as string).toLowerCase();
-  const isStaff = ['cashier', 'kitchen', 'pickup', 'manager', 'admin', 'developer', 'security_admin'].includes(callerRole);
+  const callerRole = request.auth.token.role;
+  const isStaff = typeof callerRole === 'string' && isOperationalStaffRole(callerRole);
 
   if (!isOwner && !isStaff) {
     throw new HttpsError('permission-denied', 'You do not have permission to inspect or reconcile this order.');
   }
+  if (!isOwner) await assertActiveWorkstationSession(actorUid, request.auth.token);
 
   // 1. If order is already confirmed / paid
-  if (orderData.paymentStatus === 'paid' || orderData.paymentStatus === 'captured') {
+  if (['paid', 'captured', 'refunded', 'partially_refunded'].includes(orderData.paymentStatus)) {
     return {
       success: true,
       orderId,
       orderStatus: orderData.status,
       paymentStatus: orderData.paymentStatus,
       tokenNumber: orderData.tokenNumber,
-      message: 'Payment is confirmed and verified.',
+      message: 'Returning the authoritative recorded payment state.',
       isReconciled: true,
     };
   }
@@ -1042,40 +1177,11 @@ export const reconcileOrderPayment = onCall<ReconcilePaymentRequest>(async (requ
     };
   }
 
-  // 3. Check if a financial ledger entry already posted for this order (e.g. Webhook captured while client crashed)
-  const finTxQuery = await db.collection('financialTransactions')
-    .where('orderId', '==', orderId)
-    .limit(1)
-    .get();
-
-  if (!finTxQuery.empty) {
-    const finTx = finTxQuery.docs[0].data();
-    if (finTx.status !== 'ORPHANED') {
-      const targetStatus = orderData.status === 'payment_pending'
-        ? (orderData.isOnlyReadyMade === true ? 'ready' : 'confirmed')
-        : orderData.status;
-      const updateData: Record<string, any> = {
-        paymentStatus: 'paid',
-        status: targetStatus,
-        updatedAt: Timestamp.now(),
-      };
-      if (targetStatus === 'ready' && !orderData.readyAt) {
-        updateData.readyAt = Timestamp.now();
-      }
-      // Reconcile order document to paid & confirmed/ready
-      await orderRef.update(updateData);
-
-      return {
-        success: true,
-        orderId,
-        orderStatus: targetStatus,
-        paymentStatus: 'paid',
-        tokenNumber: orderData.tokenNumber,
-        message: 'Payment reconciled authoritatively from financial ledger record.',
-        isReconciled: true,
-      };
-    }
-  }
+  // The payment finalizer commits capture, inventory and order state atomically.
+  // A random ledger entry (including a refund) is NOT proof of a valid capture.
+  // This polling endpoint must never race a cancellation/refund or bypass the
+  // finalizer by rewriting an order from a stale snapshot. Legacy inconsistent
+  // records require trusted reconciliation, not an unverified paid upgrade.
 
   // 4. Check inventory reservation expiration
   const reservationRef = db.collection('inventoryReservations').doc(orderId);
@@ -1109,4 +1215,3 @@ export const reconcileOrderPayment = onCall<ReconcilePaymentRequest>(async (requ
     isReconciled: false,
   };
 });
-

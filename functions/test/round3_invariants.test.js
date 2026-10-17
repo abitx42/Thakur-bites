@@ -165,17 +165,14 @@ describe('Round 3: Security & Architectural Invariants Test Suite', () => {
   it('7. Invariant: Firestore Security Rules strictly lockdown TV projection and canteen singletons', () => {
     const rulesContent = fs.readFileSync(path.join(__dirname, '../../firestore/firestore.rules'), 'utf8');
 
-    // 1. /publicLiveQueue/current writes permitted to operational staff only (VULN-03 hardened)
-    assert.ok(rulesContent.includes('match /publicLiveQueue/current {\n      allow read: if true;\n      allow write: if isOperationalStaff();'),
-      '/publicLiveQueue/current must enforce operational staff writes');
+    // The trusted backend alone publishes the PII-minimized projection.
+    assert.match(rulesContent, /match \/publicLiveQueue\/current \{\s*allow read: if true;\s*allow write: if false;/);
 
     // 2. /canteenConfig/{configId} forbids deletion
-    assert.ok(rulesContent.includes('match /canteenConfig/{configId} {\n      allow read: if true;\n      allow create, update: if isOperationalStaff();\n      allow delete: if false;'),
-      '/canteenConfig must forbid client deletion');
+    assert.match(rulesContent, /match \/canteenConfig\/\{configId\} \{[\s\S]*?allow create, update: if configId == 'dailyMenuBoard'[\s\S]*?allow delete: if false;/);
 
     // 3. /dailyBoard/{docId} forbids deletion
-    assert.ok(rulesContent.includes('match /dailyBoard/{docId} {\n      allow read: if true;\n      allow create, update: if isOperationalStaff();\n      allow delete: if false;'),
-      '/dailyBoard must forbid client deletion');
+    assert.match(rulesContent, /match \/dailyBoard\/\{docId\} \{[\s\S]*?allow create, update: if docId == 'today'[\s\S]*?allow delete: if false;/);
 
     // 4. /userPreferences/{userId} has explicit allow delete
     assert.ok(rulesContent.includes('match /userPreferences/{userId} {\n      allow read: if isOwner(userId);\n      allow create, update: if isOwner(userId)') &&
