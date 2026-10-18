@@ -43,7 +43,7 @@ function createServer({ root = __dirname } = {}) {
       return reply(400, 'Bad Request');
     }
     if (pathname.length > 1) pathname = pathname.replace(/\/+$/, '');
-    const route = ROUTES[pathname] || Object.entries(ROUTES).find(([name]) => name !== '/' && pathname.startsWith(`${name}/`))?.[1];
+    const route = ROUTES[pathname] || (!path.extname(pathname) && Object.entries(ROUTES).find(([name]) => name !== '/' && pathname.startsWith(`${name}/`))?.[1]);
     let relative = route || pathname.slice(1);
     if (!isPublicPath(relative)) {
       // Unknown extensionless client routes may use the SPA; repository paths never do.

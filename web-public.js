@@ -28,6 +28,7 @@ const ROUTES = Object.freeze({
   '/cashier': 'staff.html', '/admin': 'admin.html', '/developer': 'developer.html', '/tv': 'tv.html',
   '/portal': 'portal.html', '/gateway': 'portal.html', '/copilot': 'copilot.html', '/ai': 'copilot.html',
   '/privacy': 'privacy.html', '/web_tv': 'web_tv/index.html',
+  '/styles.css': 'web_tv/styles.css', '/tv.js': 'web_tv/tv.js',
 });
 
 const CSP = [

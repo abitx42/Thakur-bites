@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.firebaseapp.com https://cloudflareinsights.com https://*.cloudflareinsights.com wss://*.firebaseio.com wss://*.googleapis.com; img-src 'self' data: https:;">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <title>Thakur Bites — Canteen Live Order Dispatch Board</title>
+  
+  <!-- High-Contrast Display Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- TV Stylesheet & Manifest -->
+  <link rel="stylesheet" href="/web_tv/styles.css">
+  <link rel="manifest" href="/web_tv/manifest.json">
+
+  <!-- Pre-Bootstrap Anti-Tamper & Integrity Seal -->
+  <script>
+    (function() {
+      try {
+        if (window.top !== window.self) {
+          window.top.location = window.self.location;
+        }
+      } catch (_) {
+        document.documentElement.innerHTML = '';
+      }
+      try {
+        sessionStorage.removeItem('tb_tamper_lockdown_active');
+        localStorage.removeItem('tb_tamper_lockdown_active');
+        sessionStorage.removeItem('tb_web_lockdown_active');
+        localStorage.removeItem('tb_web_lockdown_active');
+      } catch (_) {}
+      try {
+        ['isAdminCanary', 'isSuperUserCanary', 'bypassAuthCanary'].forEach(function(prop) {
+          var _v = undefined;
+          Object.defineProperty(Object.prototype, prop, {
+            configurable: true,
+            get: function() { return _v; },
+            set: function(v) {
+              try { sessionStorage.setItem('tb_tamper_lockdown_active', 'PROTOTYPE_POLLUTION_ATTACK'); } catch(_) {}
+              window.location.reload();
+            }
+          });
+        });
+      } catch (_) {}
+      try {
+        if ('serviceWorker' in navigator && navigator.serviceWorker) {
+          navigator.serviceWorker.register = function() {
+            return Promise.reject(new Error('ServiceWorker disabled by security policy'));
+          };
+        }
+      } catch (_) {}
+    })();
+  </script>
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="tv-header">
+    <div class="header-left">
+      <div class="brand-logo">TB</div>
+      <div>
+        <h1 class="brand-title">THAKUR BITES · CANTEEN ORDER BOARD</h1>
+        <div class="brand-subtitle">TCET ENGINEERING CAMPUS · GROUND FLOOR STATION</div>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <button id="voice-toggle-btn" class="tv-voice-btn" title="Toggle Voice Announcements">
+        <span id="voice-toggle-icon">📢</span>
+        <span id="voice-toggle-text">Voice: ON</span>
+      </button>
+      <div id="connection-status-pill" class="status-pill live">
+        <span class="status-dot"></span>
+        <span id="status-text">LIVE DISPATCH</span>
+      </div>
+      <div id="clock-display" class="clock-display">--:--:--</div>
+    </div>
+  </header>
+
+  <!-- Reconnecting Warning Banner (Non-intrusive) -->
+  <div id="reconnecting-banner" class="reconnecting-banner hidden">
+    ⚡️ Reconnecting to canteen server... Showing cached queue.
+  </div>
+
+  <!-- Main 3-Stage Pipeline Display Grid -->
+  <main id="tv-main-content" class="tv-container">
+    
+    <!-- 1. ORDER CONFIRMED (QUEUED) -->
+    <section class="queue-section confirmed-section">
+      <div class="section-header confirmed-header">
+        <div class="section-title-wrap">
+          <span class="section-icon">🟡</span>
+          <h2 class="section-title">ORDER CONFIRMED</h2>
+        </div>
+        <span id="confirmed-count" class="count-badge confirmed-badge">0</span>
+      </div>
+
+      <div id="confirmed-grid" class="tokens-grid">
+        <!-- Confirmed tokens inserted dynamically -->
+      </div>
+    </section>
+
+    <!-- 2. NOW PREPARING IN KITCHEN -->
+    <section class="queue-section preparing-section">
+      <div class="section-header preparing-header">
+        <div class="section-title-wrap">
+          <span class="section-icon">⏳</span>
+          <h2 class="section-title">NOW PREPARING</h2>
+        </div>
+        <span id="preparing-count" class="count-badge preparing-badge">0</span>
+      </div>
+
+      <div id="preparing-grid" class="tokens-grid">
+        <!-- Preparing tokens inserted dynamically -->
+      </div>
+    </section>
+
+    <!-- 3. READY FOR PICKUP -->
+    <section class="queue-section ready-section">
+      <div class="section-header ready-header">
+        <div class="section-title-wrap">
+          <span class="section-icon">🟢</span>
+          <h2 class="section-title">READY FOR PICKUP</h2>
+        </div>
+        <span id="ready-count" class="count-badge ready-badge">0</span>
+      </div>
+
+      <div id="ready-grid" class="tokens-grid">
+        <!-- Ready tokens inserted dynamically -->
+      </div>
+    </section>
+  </main>
+
+  <!-- Off-Hours / Empty Queue Standby Graphic -->
+  <div id="standby-overlay" class="standby-overlay hidden">
+    <div class="standby-card">
+      <div class="standby-icon">🍱</div>
+      <h2 class="standby-title">CANTEEN IS ALL CAUGHT UP</h2>
+      <p class="standby-desc">All student and faculty orders have been collected.<br>Operating Hours: 8:00 AM – 5:30 PM</p>
+      <div class="standby-badge">TCET DIGITAL CANTEEN</div>
+    </div>
+  </div>
+
+  <!-- Audio Prompt Bar (Allows User Interaction to Enable Web Audio API Chime) -->
+  <div id="audio-enable-banner" class="audio-banner">
+    <span>🔔 Click anywhere on screen to enable audible pickup chimes</span>
+  </div>
+
+  <!-- Big Screen TV Token Board Script -->
+  <script type="module" src="/web_tv/tv.js"></script>
+</body>
+</html>

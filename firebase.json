@@ -55,6 +55,22 @@
           "destination": "/tv.html"
         },
         {
+          "source": "/tv/**",
+          "destination": "/tv.html"
+        },
+        {
+          "source": "/web_tv",
+          "destination": "/web_tv/index.html"
+        },
+        {
+          "source": "/styles.css",
+          "destination": "/web_tv/styles.css"
+        },
+        {
+          "source": "/tv.js",
+          "destination": "/web_tv/tv.js"
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }
@@ -123,6 +139,9 @@
         { "source": "/developer/**", "destination": "/developer.html" },
         { "source": "/tv", "destination": "/tv.html" },
         { "source": "/tv/**", "destination": "/tv.html" },
+        { "source": "/web_tv", "destination": "/web_tv/index.html" },
+        { "source": "/styles.css", "destination": "/web_tv/styles.css" },
+        { "source": "/tv.js", "destination": "/web_tv/tv.js" },
         { "source": "/copilot", "destination": "/copilot.html" },
         { "source": "/copilot/**", "destination": "/copilot.html" },
         { "source": "/ai", "destination": "/copilot.html" },

@@ -77,7 +77,7 @@ function showKdsToast(message) {
     `;
     document.body.appendChild(toastEl);
   }
-  toastEl.innerHTML = message;
+  toastEl.textContent = message;
   toastEl.style.opacity = '1';
   toastEl.style.transform = 'translateY(0)';
   clearTimeout(toastEl._timer);

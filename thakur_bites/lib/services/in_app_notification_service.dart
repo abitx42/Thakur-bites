@@ -177,7 +177,11 @@ class InAppNotificationService {
   void dismiss() {
     _autoDismissTimer?.cancel();
     _autoDismissTimer = null;
-    _currentEntry?.remove();
+    try {
+      if (_currentEntry?.mounted == true) {
+        _currentEntry?.remove();
+      }
+    } catch (_) {}
     _currentEntry = null;
   }
 }
