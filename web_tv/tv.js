@@ -1,8 +1,10 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { 
-  getFirestore, 
+  getFirestore,
+  initializeFirestore,
   doc, 
-  onSnapshot 
+  onSnapshot,
+  getDocFromServer
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 // Public Configuration (Zero Privileges Required)
@@ -12,7 +14,7 @@ const firebaseConfig = {
   projectId: "adi-thakur-bite",
   storageBucket: "adi-thakur-bite.firebasestorage.app",
   messagingSenderId: "391012293021",
-  appId: "1:391012293021:web:94d50c950a753ce38be819"
+  appId: "1:391012293021:web:72dfeb37658ab087c97774"
 };
 
 // ─── Kiosk Security Sentinel & Anti-Tamper Perimeter ─────────────────────────
@@ -64,7 +66,14 @@ try {
 } catch (_) {}
 
 const app = initializeApp(firebaseConfig, 'TB_TV_DISPLAY');
-const db = getFirestore(app);
+let db;
+try {
+  db = initializeFirestore(app, {
+    experimentalAutoDetectLongPolling: true,
+  });
+} catch (_) {
+  db = getFirestore(app);
+}
 
 // DOM Elements
 const confirmedGrid = document.getElementById('confirmed-grid');
@@ -297,13 +306,46 @@ function sanitizeToken(token) {
 
 const MAX_PER_SECTION = 8;
 
+let lastPayloadFingerprint = '';
+
+function normalizeTickets(list, fallbackTokens) {
+  if (Array.isArray(list) && list.length > 0) {
+    return list.map(item => {
+      const raw = typeof item === 'string' ? item : (item?.token || item?.tokenNumber || '');
+      return {
+        token: sanitizeToken(raw),
+        estimatedMinutes: typeof item?.estimatedMinutes === 'number' && item.estimatedMinutes > 0 ? item.estimatedMinutes : null,
+      };
+    }).filter(t => t.token && t.token !== 'TB-???');
+  }
+  if (Array.isArray(fallbackTokens) && fallbackTokens.length > 0) {
+    return fallbackTokens.map(token => ({
+      token: sanitizeToken(String(token)),
+      estimatedMinutes: null,
+    })).filter(t => t.token && t.token !== 'TB-???');
+  }
+  return [];
+}
+
 /**
  * Render Tokens from the single sanitized publicLiveQueue/current projection
  */
 function renderQueueData(data) {
-  const confirmedTickets = Array.isArray(data?.confirmed) ? data.confirmed : [];
-  const preparingTickets = Array.isArray(data?.preparing) ? data.preparing : [];
-  const readyTickets = Array.isArray(data?.ready) ? data.ready : [];
+  const confirmedTickets = normalizeTickets(data?.confirmed, data?.confirmedTokens);
+  const preparingTickets = normalizeTickets(data?.preparing, data?.preparingTokens);
+  const readyTickets = normalizeTickets(data?.ready, data?.readyTokens);
+
+  const currentFingerprint = JSON.stringify({
+    c: confirmedTickets.map(t => t.token),
+    p: preparingTickets.map(t => `${t.token}:${t.estimatedMinutes}`),
+    r: readyTickets.map(t => t.token),
+  });
+
+  // Skip redundant DOM rewrites when queue contents have not changed
+  if (!isFirstLoad && currentFingerprint === lastPayloadFingerprint) {
+    return;
+  }
+  lastPayloadFingerprint = currentFingerprint;
 
   const MAX_VISIBLE_CONFIRMED = 6;
   const visibleConfirmed = confirmedTickets.slice(0, MAX_VISIBLE_CONFIRMED);
@@ -575,6 +617,39 @@ function startTVStream() {
     setTimeout(startTVStream, nextDelay);
   }
 }
+
+let isSyncing = false;
+
+/**
+ * Fast Authoritative Direct Server Poll (Sub-3s Zero-Lag Invariant)
+ * Runs alongside real-time onSnapshot to bypass any campus firewall/NAT proxy socket freezes.
+ * Guarantees queue is updated instantly without ever requiring manual page reloads.
+ */
+async function syncQueueAuthoritative() {
+  if (isSyncing || !navigator.onLine) return;
+  isSyncing = true;
+  try {
+    const queueDocRef = doc(db, 'publicLiveQueue', 'current');
+    const snap = await getDocFromServer(queueDocRef);
+    if (snap.exists()) {
+      lastDataReceivedAt = Date.now();
+      isStreamHealthy = true;
+      if (statusPill && statusText) {
+        statusPill.className = 'status-pill live';
+        statusText.textContent = 'LIVE DISPATCH';
+      }
+      if (reconnectBanner) reconnectBanner.classList.add('hidden');
+      renderQueueData(snap.data());
+    }
+  } catch (err) {
+    // Network or server error handled gracefully by onSnapshot/offline listener
+  } finally {
+    isSyncing = false;
+  }
+}
+
+// Background sync every 3 seconds for instant sub-3s delivery
+setInterval(syncQueueAuthoritative, 3000);
 
 // Real-time network connectivity listeners
 window.addEventListener('offline', () => {

@@ -1,6 +1,6 @@
 // Big Screen TV Token Board View for Canteen Wall Display connected to publicLiveQueue/current
 import { db } from '../firebase.js?v=6';
-import { doc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { doc, onSnapshot, getDocFromServer } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { escapeHtml } from './escapeHtml.js';
 
 let unsubscribeQueue = null;
@@ -9,6 +9,7 @@ let preparingTickets = [];
 let readyTickets = [];
 let clockInterval = null;
 let staleInterval = null;
+let syncInterval = null;
 let lastDataReceivedAt = Date.now();
 let isStale = false;
 let lastFormattedTime = '';
@@ -76,6 +77,10 @@ export function renderTvDisplayView(container) {
   if (staleInterval) {
     clearInterval(staleInterval);
     staleInterval = null;
+  }
+  if (syncInterval) {
+    clearInterval(syncInterval);
+    syncInterval = null;
   }
 
   function getFormattedTime() {
@@ -282,6 +287,43 @@ export function renderTvDisplayView(container) {
     }
   }, 1000);
 
+  function updateQueueData(data) {
+    confirmedTickets = Array.isArray(data?.confirmed) && data.confirmed.length > 0 
+      ? data.confirmed 
+      : (Array.isArray(data?.confirmedTokens) ? data.confirmedTokens.map(t => ({ token: t })) : []);
+    preparingTickets = Array.isArray(data?.preparing) && data.preparing.length > 0 
+      ? data.preparing 
+      : (Array.isArray(data?.preparingTokens) ? data.preparingTokens.map(t => ({ token: t })) : []);
+    readyTickets = Array.isArray(data?.ready) && data.ready.length > 0 
+      ? data.ready 
+      : (Array.isArray(data?.readyTokens) ? data.readyTokens.map(t => ({ token: t })) : []);
+
+    // Check for newly ready tickets to trigger chime
+    let hasNewReady = false;
+    readyTickets.forEach(item => {
+      const token = item.token || item.tokenNumber;
+      if (token && !knownReadyTokens.has(token)) {
+        knownReadyTokens.add(token);
+        if (!isFirstLoad) {
+          hasNewReady = true;
+        }
+      }
+    });
+    if (hasNewReady) {
+      playReadyChime();
+    }
+    isFirstLoad = false;
+
+    // Clean up departed tokens
+    const currentReadySet = new Set(readyTickets.map(item => item.token || item.tokenNumber));
+    for (const t of knownReadyTokens) {
+      if (!currentReadySet.has(t)) {
+        knownReadyTokens.delete(t);
+      }
+    }
+    render();
+  }
+
   // Network connectivity monitor
   staleInterval = setInterval(() => {
     if (!navigator.onLine && !isStale) {
@@ -303,45 +345,35 @@ export function renderTvDisplayView(container) {
     lastFormattedTime = getFormattedTime();
 
     if (snap.exists()) {
-      const data = snap.data();
-      confirmedTickets = Array.isArray(data.confirmed) ? data.confirmed : [];
-      preparingTickets = Array.isArray(data.preparing) ? data.preparing : [];
-      readyTickets = Array.isArray(data.ready) ? data.ready : [];
-
-      // Check for newly ready tickets to trigger chime
-      let hasNewReady = false;
-      readyTickets.forEach(item => {
-        const token = item.token || item.tokenNumber;
-        if (token && !knownReadyTokens.has(token)) {
-          knownReadyTokens.add(token);
-          if (!isFirstLoad) {
-            hasNewReady = true;
-          }
-        }
-      });
-      if (hasNewReady) {
-        playReadyChime();
-      }
-      isFirstLoad = false;
-
-      // Clean up departed tokens
-      const currentReadySet = new Set(readyTickets.map(item => item.token || item.tokenNumber));
-      for (const t of knownReadyTokens) {
-        if (!currentReadySet.has(t)) {
-          knownReadyTokens.delete(t);
-        }
-      }
+      updateQueueData(snap.data());
     } else {
-      confirmedTickets = [];
-      preparingTickets = [];
-      readyTickets = [];
+      updateQueueData({ confirmed: [], preparing: [], ready: [] });
     }
-    render();
   }, (err) => {
     console.warn("TV live queue subscription notice:", err);
     isStale = true;
     render();
   });
+
+  // Fast 3-second authoritative direct server poll to guarantee sub-3s updates without reloading
+  let isSyncing = false;
+  async function syncQueue() {
+    if (isSyncing || !navigator.onLine) return;
+    isSyncing = true;
+    try {
+      const snap = await getDocFromServer(queueDocRef);
+      if (snap.exists()) {
+        lastDataReceivedAt = Date.now();
+        isStale = false;
+        lastFormattedTime = getFormattedTime();
+        updateQueueData(snap.data());
+      }
+    } catch (_) {
+    } finally {
+      isSyncing = false;
+    }
+  }
+  syncInterval = setInterval(syncQueue, 3000);
 }
 
 export function cleanupTvDisplayView() {
@@ -352,6 +384,10 @@ export function cleanupTvDisplayView() {
   if (staleInterval) {
     clearInterval(staleInterval);
     staleInterval = null;
+  }
+  if (syncInterval) {
+    clearInterval(syncInterval);
+    syncInterval = null;
   }
   if (unsubscribeQueue) {
     try { unsubscribeQueue(); } catch (_) {}
