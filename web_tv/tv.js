@@ -455,17 +455,34 @@ function renderQueueData(data) {
   }
 }
 
+let isStreamHealthy = false;
 let lastDataReceivedAt = Date.now();
 let lastFormattedUpdateTime = '';
 
-// Check for stale data every 10 seconds (TB-TV-STALE-TIMER)
+// Check for network drop or silent stream freeze every 10 seconds
 setInterval(() => {
-  const elapsedSec = Math.floor((Date.now() - lastDataReceivedAt) / 1000);
-  if (elapsedSec > 60) {
+  if (!navigator.onLine) {
     statusPill.className = 'status-pill reconnecting';
-    statusText.textContent = 'STALE DATA';
-    reconnectBanner.textContent = `⚡️ Connection stale (${elapsedSec}s ago). Showing last known queue from ${lastFormattedUpdateTime || 'cache'}.`;
+    statusText.textContent = 'OFFLINE';
+    reconnectBanner.textContent = '⚠️ No Internet Connection — TV Display is offline. Please check canteen Wi-Fi/network.';
     reconnectBanner.classList.remove('hidden');
+    return;
+  }
+
+  if (!isStreamHealthy) {
+    statusPill.className = 'status-pill reconnecting';
+    statusText.textContent = 'RECONNECTING';
+    reconnectBanner.textContent = '⚡️ Reconnecting to canteen server... Showing cached queue.';
+    reconnectBanner.classList.remove('hidden');
+    return;
+  }
+
+  // Guard against silent stream socket freezes:
+  // If more than 10 minutes elapsed without any snapshot, actively restart stream to ensure websocket isn't stale
+  const elapsedSec = Math.floor((Date.now() - lastDataReceivedAt) / 1000);
+  if (elapsedSec > 600) {
+    console.log('[TV] Proactively refreshing live stream subscription...');
+    startTVStream();
   }
 }, 10000);
 
@@ -486,8 +503,14 @@ function startTVStream() {
 
     currentUnsubscribe = onSnapshot(
       queueDocRef,
+      { includeMetadataChanges: true },
       (snapshot) => {
-        lastDataReceivedAt = Date.now();
+        const isFromCache = snapshot.metadata ? snapshot.metadata.fromCache : false;
+        if (!isFromCache) {
+          lastDataReceivedAt = Date.now();
+          isStreamHealthy = true;
+        }
+
         const d = new Date();
         const hrs = d.getHours() % 12 || 12;
         const mins = String(d.getMinutes()).padStart(2, '0');
@@ -495,11 +518,21 @@ function startTVStream() {
         const ampm = d.getHours() >= 12 ? 'PM' : 'AM';
         lastFormattedUpdateTime = `${hrs}:${mins}:${secs} ${ampm}`;
 
-        // State 1: Live Stream Active
-        statusPill.className = 'status-pill live';
-        statusText.textContent = 'LIVE DISPATCH';
-        reconnectBanner.textContent = '⚡️ Reconnecting to canteen server... Showing cached queue.';
-        reconnectBanner.classList.add('hidden');
+        if (isFromCache || !navigator.onLine) {
+          // Serving from offline cache
+          statusPill.className = 'status-pill reconnecting';
+          statusText.textContent = navigator.onLine ? 'OFFLINE CACHE' : 'OFFLINE';
+          reconnectBanner.textContent = navigator.onLine
+            ? `⚡️ Reconnecting to canteen server... Showing cached queue from ${lastFormattedUpdateTime || 'cache'}.`
+            : '⚠️ No Internet Connection — TV Display is offline. Please check canteen Wi-Fi/network.';
+          reconnectBanner.classList.remove('hidden');
+        } else {
+          // State 1: Live Stream Active
+          statusPill.className = 'status-pill live';
+          statusText.textContent = 'LIVE DISPATCH';
+          reconnectBanner.textContent = '⚡️ Reconnecting to canteen server... Showing cached queue.';
+          reconnectBanner.classList.add('hidden');
+        }
         
         // Reset exponential backoff on healthy snapshot
         reconnectDelayMs = 5000;
@@ -512,6 +545,7 @@ function startTVStream() {
       },
       (error) => {
         // State 2: Reconnecting / Stale Data State
+        isStreamHealthy = false;
         console.warn("TV Stream connection interrupted:", error);
         statusPill.className = 'status-pill reconnecting';
         statusText.textContent = navigator.onLine ? 'RECONNECTING' : 'OFFLINE';
@@ -527,6 +561,7 @@ function startTVStream() {
       }
     );
   } catch (e) {
+    isStreamHealthy = false;
     console.warn("TV Init error:", e);
     statusPill.className = 'status-pill reconnecting';
     statusText.textContent = navigator.onLine ? 'RECONNECTING' : 'OFFLINE';

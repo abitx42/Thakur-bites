@@ -282,10 +282,9 @@ export function renderTvDisplayView(container) {
     }
   }, 1000);
 
-  // Stale data heartbeat monitor (TB-TV-STALE-TIMER)
+  // Network connectivity monitor
   staleInterval = setInterval(() => {
-    const elapsedSec = Math.floor((Date.now() - lastDataReceivedAt) / 1000);
-    if (elapsedSec > 60 && !isStale) {
+    if (!navigator.onLine && !isStale) {
       isStale = true;
       render();
     }
@@ -293,9 +292,14 @@ export function renderTvDisplayView(container) {
 
   // Authoritative real-time public live queue subscription (Zero PII, Zero credentials needed)
   const queueDocRef = doc(db, 'publicLiveQueue', 'current');
-  unsubscribeQueue = onSnapshot(queueDocRef, (snap) => {
-    lastDataReceivedAt = Date.now();
-    isStale = false;
+  unsubscribeQueue = onSnapshot(queueDocRef, { includeMetadataChanges: true }, (snap) => {
+    const isFromCache = snap.metadata ? snap.metadata.fromCache : false;
+    if (!isFromCache && navigator.onLine) {
+      lastDataReceivedAt = Date.now();
+      isStale = false;
+    } else {
+      isStale = true;
+    }
     lastFormattedTime = getFormattedTime();
 
     if (snap.exists()) {
